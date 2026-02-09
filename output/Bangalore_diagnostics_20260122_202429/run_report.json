@@ -1,0 +1,12 @@
+{
+  "started_at": "2026-01-22T14:54:31.351983",
+  "city": "Bangalore",
+  "niche": "diagnostics",
+  "target_count": 10,
+  "discovered": 9,
+  "enriched": 9,
+  "hot": 9,
+  "warm": 0,
+  "cold": 0,
+  "errors": 0
+}

@@ -1,0 +1,339 @@
+{
+  "run_id": "20260205_065744",
+  "timestamp": "2026-02-05T06:59:00.693364+00:00",
+  "config": {
+    "niche": "coaching center",
+    "city": "Hyderabad",
+    "country": "India",
+    "target": 3
+  },
+  "summary": {
+    "discovered": 6,
+    "processed": 3,
+    "hot": 0,
+    "warm": 3,
+    "cold": 0,
+    "total_opportunity_inr": 900000,
+    "total_opportunity_annual_inr": 10800000
+  },
+  "leads": [
+    {
+      "lead_id": "0638807f8e1989f1",
+      "business_name": "Indian Academy Of Competitive Exams",
+      "category": "coaching center",
+      "city": "Hyderabad",
+      "area": "Hyderabad",
+      "website": "http://www.iace.co.in/",
+      "phone": "+91 97000 77411",
+      "google_maps_url": "https://www.google.com/maps/search/?api=1&query=Indian%20Academy%20Of%20Competitive%20Exams&query_place_id=ChIJT09SFMOZyzsR81QP1KxMEIw",
+      "rating": 4.8,
+      "reviews_count": 129,
+      "address": "Flat No: 303 Sri Enclave Apartments Above KVB Bank, Nagarjuna Nagar Colony, Ameerpet, Hyderabad, Telangana 500029, India",
+      "contacts": {
+        "emails": [],
+        "phones": [],
+        "decision_makers": [],
+        "social_links": {}
+      },
+      "tech_stack": {
+        "cms": "wordpress",
+        "booking_system": null,
+        "chat_widget": null,
+        "crm": null,
+        "analytics": [],
+        "payment": [],
+        "marketing": []
+      },
+      "website_title": "Best Coaching Institute for Government Exams, SSC, Bank PO, RRB - IACE",
+      "website_description": "IACE Best Coaching Institute for Government Exams, SSC, Bank PO, RRB. Get test series, video courses, books, live batches for IBPS PO, SSC CGL, SBI PO, Clerk, RRB, and more",
+      "website_content_summary": "[Skip to content](https://iace.co.in/#content)\n\n- [TS SI/CONSTABLE PRE FINAL EXAM DETAILS](https://www.youtube.com/watch?v=2AQr_omHuBg&t=100s)\n\n\n\n\n[Click on view updates for more details](https://www.youtube.com/watch?v=2AQr_omHuBg&t=100s)\n\n- [SSC NOTIFICATIONS 2023-2024 CALENDAR](https://iace.co.in/wp-content/uploads/2023/03/SSC-NOTIFICATIONS-2023-24-CALENDAR-OUT-_-IACE.pdf)\n\n\n\n\n[Click on view updates for more details](https://iace.co.in/wp-content/uploads/2023/03/SSC-NOTIFICATIONS-2023-24-CALE",
+      "services_offered": [],
+      "has_booking_system": false,
+      "has_whatsapp": true,
+      "has_lead_form": true,
+      "has_chat_widget": false,
+      "has_click_to_call": true,
+      "has_online_payment": false,
+      "has_reviews_management": false,
+      "has_follow_up_automation": false,
+      "ads_detected": false,
+      "has_slow_response_risk": true,
+      "has_after_hours_leak": true,
+      "has_lead_capture_gap": false,
+      "has_competition_vulnerability": false,
+      "data_quality_score": 85,
+      "reachability_score": 60,
+      "opportunity_score": 55,
+      "urgency_score": 80,
+      "final_score": 67,
+      "ai_reasoning": "Indian Academy Of Competitive Exams is a real coaching center in Hyderabad with a strong Google rating (4.8/5 from 129 reviews) and a functional website. The high data quality (85/100) and reachability (60/100) scores, combined with a significant opportunity size (55/100) and urgency level (80/100), make it a worthwhile lead to pursue.",
+      "reasoning_verdict": "ACCEPT",
+      "pain_points": [
+        "Indian Academy Of Competitive Exams is losing potential students due to the absence of an online booking system, creating friction in the enrollment process.",
+        "The estimated 30% leakage in monthly inquiries translates to a revenue loss of ₹225,000 for Indian Academy Of Competitive Exams, directly impacting their profitability.",
+        "Without live chat or immediate online payment options, Indian Academy Of Competitive Exams risks losing prospects who expect instant responses and convenient transaction methods."
+      ],
+      "selling_angles": [
+        "Implement our online booking and payment system to streamline enrollment for Indian Academy Of Competitive Exams, capturing more leads and reducing administrative overhead.",
+        "Leverage your existing positive reputation (4.8 stars from 129 reviews) by integrating a live chat feature to instantly address inquiries and convert website visitors into paying students.",
+        "By addressing the ₹225,000 monthly revenue leakage, our Enterprise tier solution offers a projected ROI of 1.1x for Indian Academy Of Competitive Exams, making it a financially sound investment."
+      ],
+      "objection_handlers": {
+        "price": "I understand the Enterprise tier seems like a significant investment. However, consider that your current leakage is costing you ₹225,000 each month. Our solution helps you recover ₹157,500 of that, making the ₹1.5L/month cost a worthwhile investment with a 1.1x ROI.",
+        "timing": "Given the high urgency level (80/100) and the competitive exam season, delaying implementation means continuing to lose potential students and revenue. Every month you wait, you're essentially leaving ₹225,000 on the table.",
+        "need": "While your current system may seem adequate, the missing online booking, live chat, and online payment options are causing a 30% lead leakage. Addressing these gaps will significantly improve your conversion rates and overall revenue."
+      },
+      "validation_issues": [],
+      "estimated_monthly_leads": 100,
+      "estimated_missed_pct": 0.3,
+      "estimated_revenue_loss_inr": 225000,
+      "recoverable_amount_inr": 157500,
+      "recommended_tier": "Enterprise ₹1.5L/month",
+      "roi_multiple": 1.05,
+      "payback_days": 28,
+      "tier": "WARM",
+      "priority": "HIGH",
+      "email_subject": "Quick question about Indian Academy Of Competitive Exams",
+      "email_body": "Hi,\n\nNoticed Indian Academy Of Competitive Exams on Google - 129 reviews, solid presence.\n\nQuick analysis: you're likely losing ₹2.2L/month in Indian Academy Of Competitive Exams is losing potential students due to the absence of an online booking system, creating friction in the enrollment process..\n\nWe've helped similar coaching center businesses recover ₹1.6L/month with Implement our online booking and payment system to streamline enrollment for Indian Academy Of Competitive Exams, capturing more leads and reducing administrative overhead..\n\nROI: 1.1x (payback in ~28 days)\n\n2-min call to discuss?\n\nBest,\n[Your Name]\n\nP.S. Happy to share a free audit showing exact ₹ being lost.",
+      "whatsapp_msg": "Hi! Quick note about Indian Academy Of Competitive Exams.\n\nBased on your 129 Google reviews, you're likely missing ₹2.2L/month in Indian Academy Of Competitive Exams is losing potential students due to the absence of an online booking system, creating friction in the enrollment process..\n\nWe can recover ₹1.6L/month with Implement our online booking and payment system to streamline enrollment for Indian Academy Of Competitive Exams, capturing more leads and reducing administrative overhead..\n\nROI: 1.1x\n\nWant a free audit? Reply YES",
+      "call_script": "Hi, is this [Owner/Manager] from Indian Academy Of Competitive Exams?\n\nGreat! I'm [Name] from [Company]. I help coaching center businesses recover lost revenue.\n\nI noticed from your Google listing you're getting good traffic - 129 reviews.\n\nQuick question: how are you currently handling Indian Academy Of Competitive Exams is losing potential students due to the absence of an online booking system, creating friction in the enrollment process.?\n\n[Listen]\n\nGot it. What we've found is businesses like yours typically lose ₹2.2L/month there.\n\nWe can recover about ₹1.6L with Implement our online booking and payment system to streamline enrollment for Indian Academy Of Competitive Exams, capturing more leads and reducing administrative overhead..\n\nWould you be open to a quick audit? It's free and shows exact ₹ being lost.",
+      "loom_script": "[60 seconds]\n\nHey! Found Indian Academy Of Competitive Exams while researching coaching center businesses in Hyderabad.\n\n129 reviews - clearly you're doing something right.\n\nBut I noticed something: Indian Academy Of Competitive Exams is losing potential students due to the absence of an online booking system, creating friction in the enrollment process..\n\nQuick math:\n- 100 leads/month\n- ~30% missed\n- ₹2.2L/month gone\n\nWe can recover ₹1.6L with Implement our online booking and payment system to streamline enrollment for Indian Academy Of Competitive Exams, capturing more leads and reducing administrative overhead..\n\nROI: 1.1x\n\nWant a free audit? Email me at [email]",
+      "linkedin_note": "Hi! Came across Indian Academy Of Competitive Exams - impressive 129 reviews.\n\nI help coaching center businesses recover lost revenue. Noticed a few gaps that might be costing you ₹2.2L/month.\n\nWorth a quick chat?",
+      "follow_up_sequence": [
+        {
+          "day": 3,
+          "channel": "email",
+          "subject": "Re: Indian Academy Of Competitive Exams - the ₹2.2L/month question"
+        },
+        {
+          "day": 7,
+          "channel": "whatsapp",
+          "message": "Following up - still interested in that free audit for Indian Academy Of Competitive Exams?"
+        },
+        {
+          "day": 14,
+          "channel": "email",
+          "subject": "Last check: ₹1.6L recovery for Indian Academy Of Competitive Exams"
+        }
+      ],
+      "status": "enriched",
+      "enrichment_source": "firecrawl",
+      "created_at": "2026-02-05T06:58:15.720229+00:00",
+      "updated_at": "2026-02-05T06:58:33.390742+00:00"
+    },
+    {
+      "lead_id": "2fa9d183aceab442",
+      "business_name": "IACE - BANK / SSC-CGL / RRB Coaching in Dilsukhnagar Hyderabad Coaching Center",
+      "category": "coaching center",
+      "city": "Hyderabad",
+      "area": "Hyderabad",
+      "website": "http://www.iace.co.in/",
+      "phone": "+91 97000 77422",
+      "google_maps_url": "https://www.google.com/maps/search/?api=1&query=IACE%20-%20BANK%20%2F%20SSC-CGL%20%2F%20RRB%20Coaching%20in%20Dilsukhnagar%20Hyderabad%20Coaching%20Center&query_place_id=ChIJe-bmLeSYyzsRXVcRKbMB96o",
+      "rating": 4.9,
+      "reviews_count": 6490,
+      "address": "17-109,2nd Floor, above Indian Bank, Chaitanyapuri, Dilsukhnagar, Hyderabad, Telangana 500060, India",
+      "contacts": {
+        "emails": [],
+        "phones": [],
+        "decision_makers": [],
+        "social_links": {}
+      },
+      "tech_stack": {
+        "cms": "wordpress",
+        "booking_system": null,
+        "chat_widget": null,
+        "crm": null,
+        "analytics": [],
+        "payment": [],
+        "marketing": []
+      },
+      "website_title": "Best Coaching Institute for Government Exams, SSC, Bank PO, RRB - IACE",
+      "website_description": "IACE Best Coaching Institute for Government Exams, SSC, Bank PO, RRB. Get test series, video courses, books, live batches for IBPS PO, SSC CGL, SBI PO, Clerk, RRB, and more",
+      "website_content_summary": "[Skip to content](https://iace.co.in/#content)\n\n- [TS SI/CONSTABLE PRE FINAL EXAM DETAILS](https://www.youtube.com/watch?v=2AQr_omHuBg&t=100s)\n\n\n\n\n[Click on view updates for more details](https://www.youtube.com/watch?v=2AQr_omHuBg&t=100s)\n\n- [SSC NOTIFICATIONS 2023-2024 CALENDAR](https://iace.co.in/wp-content/uploads/2023/03/SSC-NOTIFICATIONS-2023-24-CALENDAR-OUT-_-IACE.pdf)\n\n\n\n\n[Click on view updates for more details](https://iace.co.in/wp-content/uploads/2023/03/SSC-NOTIFICATIONS-2023-24-CALE",
+      "services_offered": [],
+      "has_booking_system": false,
+      "has_whatsapp": true,
+      "has_lead_form": true,
+      "has_chat_widget": false,
+      "has_click_to_call": true,
+      "has_online_payment": false,
+      "has_reviews_management": false,
+      "has_follow_up_automation": false,
+      "ads_detected": false,
+      "has_slow_response_risk": true,
+      "has_after_hours_leak": true,
+      "has_lead_capture_gap": false,
+      "has_competition_vulnerability": false,
+      "data_quality_score": 85,
+      "reachability_score": 60,
+      "opportunity_score": 55,
+      "urgency_score": 80,
+      "final_score": 67,
+      "ai_reasoning": "IACE - BANK / SSC-CGL / RRB Coaching in Dilsukhnagar Hyderabad Coaching Center is a real coaching center with a strong online presence (4.9 rating from 6490 reviews). The high data quality (85/100) and reachability (60/100) scores, combined with a significant opportunity size (55/100), make it a worthwhile lead to pursue.",
+      "reasoning_verdict": "ACCEPT",
+      "pain_points": [
+        "IACE Coaching in Hyderabad is losing potential students due to the absence of an online booking system, creating friction in the enrollment process.",
+        "The estimated 30% leakage translates to a monthly revenue loss of ₹337,500 for IACE, indicating a significant opportunity to improve conversion rates.",
+        "Without live chat or online payment options, IACE is missing opportunities to engage with prospective students in real-time and streamline the payment process, potentially impacting enrollment numbers."
+      ],
+      "selling_angles": [
+        "Implement our booking system to capture more leads and streamline enrollment for IACE, reducing the current 30% leakage.",
+        "Leverage IACE's impressive 4.9-star rating from 6490 reviews by integrating a live chat feature to instantly address inquiries and convert website visitors into paying students.",
+        "By investing ₹1.5L/month in our solution, IACE can recover ₹236,249 of lost revenue, resulting in a projected ROI of 1.6x."
+      ],
+      "objection_handlers": {
+        "price": "I understand your concern about the price. However, consider that IACE is currently losing ₹337,500 each month due to inefficiencies in your online processes. Our solution helps you recover a significant portion of that, making the investment worthwhile.",
+        "timing": "Given the upcoming exam season and the high urgency level (80/100), implementing our solution now will allow IACE to capture a larger share of the market and maximize enrollment numbers before your competitors do.",
+        "need": "While IACE is currently successful, the lack of online booking and payment options is causing a 30% lead leakage. Our solution addresses these gaps, allowing you to capture more leads and increase revenue without significantly changing your existing successful strategies."
+      },
+      "validation_issues": [],
+      "estimated_monthly_leads": 150,
+      "estimated_missed_pct": 0.3,
+      "estimated_revenue_loss_inr": 337500,
+      "recoverable_amount_inr": 236249,
+      "recommended_tier": "Enterprise ₹1.5L/month",
+      "roi_multiple": 1.5749933333333332,
+      "payback_days": 19,
+      "tier": "WARM",
+      "priority": "HIGH",
+      "email_subject": "Quick question about IACE - BANK / SSC-CGL / RRB Coaching in Dilsukhnagar Hyderabad Coaching Center",
+      "email_body": "Hi,\n\nNoticed IACE - BANK / SSC-CGL / RRB Coaching in Dilsukhnagar Hyderabad Coaching Center on Google - 6490 reviews, solid presence.\n\nQuick analysis: you're likely losing ₹3.4L/month in IACE Coaching in Hyderabad is losing potential students due to the absence of an online booking system, creating friction in the enrollment process..\n\nWe've helped similar coaching center businesses recover ₹2.4L/month with Implement our booking system to capture more leads and streamline enrollment for IACE, reducing the current 30% leakage..\n\nROI: 1.6x (payback in ~19 days)\n\n2-min call to discuss?\n\nBest,\n[Your Name]\n\nP.S. Happy to share a free audit showing exact ₹ being lost.",
+      "whatsapp_msg": "Hi! Quick note about IACE - BANK / SSC-CGL / RRB Coaching in Dilsukhnagar Hyderabad Coaching Center.\n\nBased on your 6490 Google reviews, you're likely missing ₹3.4L/month in IACE Coaching in Hyderabad is losing potential students due to the absence of an online booking system, creating friction in the enrollment process..\n\nWe can recover ₹2.4L/month with Implement our booking system to capture more leads and streamline enrollment for IACE, reducing the current 30% leakage..\n\nROI: 1.6x\n\nWant a free audit? Reply YES",
+      "call_script": "Hi, is this [Owner/Manager] from IACE - BANK / SSC-CGL / RRB Coaching in Dilsukhnagar Hyderabad Coaching Center?\n\nGreat! I'm [Name] from [Company]. I help coaching center businesses recover lost revenue.\n\nI noticed from your Google listing you're getting good traffic - 6490 reviews.\n\nQuick question: how are you currently handling IACE Coaching in Hyderabad is losing potential students due to the absence of an online booking system, creating friction in the enrollment process.?\n\n[Listen]\n\nGot it. What we've found is businesses like yours typically lose ₹3.4L/month there.\n\nWe can recover about ₹2.4L with Implement our booking system to capture more leads and streamline enrollment for IACE, reducing the current 30% leakage..\n\nWould you be open to a quick audit? It's free and shows exact ₹ being lost.",
+      "loom_script": "[60 seconds]\n\nHey! Found IACE - BANK / SSC-CGL / RRB Coaching in Dilsukhnagar Hyderabad Coaching Center while researching coaching center businesses in Hyderabad.\n\n6490 reviews - clearly you're doing something right.\n\nBut I noticed something: IACE Coaching in Hyderabad is losing potential students due to the absence of an online booking system, creating friction in the enrollment process..\n\nQuick math:\n- 150 leads/month\n- ~30% missed\n- ₹3.4L/month gone\n\nWe can recover ₹2.4L with Implement our booking system to capture more leads and streamline enrollment for IACE, reducing the current 30% leakage..\n\nROI: 1.6x\n\nWant a free audit? Email me at [email]",
+      "linkedin_note": "Hi! Came across IACE - BANK / SSC-CGL / RRB Coaching in Dilsukhnagar Hyderabad Coaching Center - impressive 6490 reviews.\n\nI help coaching center businesses recover lost revenue. Noticed a few gaps that might be costing you ₹3.4L/month.\n\nWorth a quick chat?",
+      "follow_up_sequence": [
+        {
+          "day": 3,
+          "channel": "email",
+          "subject": "Re: IACE - BANK / SSC-CGL / RRB Coaching in Dilsukhnagar Hyderabad Coaching Center - the ₹3.4L/month question"
+        },
+        {
+          "day": 7,
+          "channel": "whatsapp",
+          "message": "Following up - still interested in that free audit for IACE - BANK / SSC-CGL / RRB Coaching in Dilsukhnagar Hyderabad Coaching Center?"
+        },
+        {
+          "day": 14,
+          "channel": "email",
+          "subject": "Last check: ₹2.4L recovery for IACE - BANK / SSC-CGL / RRB Coaching in Dilsukhnagar Hyderabad Coaching Center"
+        }
+      ],
+      "status": "enriched",
+      "enrichment_source": "firecrawl",
+      "created_at": "2026-02-05T06:58:33.390884+00:00",
+      "updated_at": "2026-02-05T06:58:37.966944+00:00"
+    },
+    {
+      "lead_id": "067fc7ce49fb3a72",
+      "business_name": "AKS IAS Academy - Best UPSC Coaching Centre in Hyderabad for IAS Coaching | Top IAS Coaching in India",
+      "category": "coaching center",
+      "city": "Hyderabad",
+      "area": "Hyderabad",
+      "website": "https://aksias.com/",
+      "phone": "+91 84484 49709",
+      "google_maps_url": "https://www.google.com/maps/search/?api=1&query=AKS%20IAS%20Academy%20-%20Best%20UPSC%20Coaching%20Centre%20in%20Hyderabad%20for%20IAS%20Coaching%20%7C%20Top%20IAS%20Coaching%20in%20India&query_place_id=ChIJr3U8kCCZyzsRhdS76uX_E7Q",
+      "rating": 4.7,
+      "reviews_count": 1146,
+      "address": "AKS IAS (Head Office),House.no:1-10-249/1/1,Near Sub Registrar Office Main Road, Street No. 1, near Eswar Lakshmi Hospital, RTC Cross Road, Hyderabad, Telangana 500080, India",
+      "contacts": {
+        "emails": [],
+        "phones": [
+          "4308705833",
+          "1707483746",
+          "3957799999",
+          "5160392509",
+          "5144999999"
+        ],
+        "decision_makers": [],
+        "social_links": {}
+      },
+      "tech_stack": {
+        "cms": "wordpress",
+        "booking_system": null,
+        "chat_widget": null,
+        "crm": null,
+        "analytics": [],
+        "payment": [],
+        "marketing": []
+      },
+      "website_title": "Best IAS Coaching in Hyderabad & UPSC Prep - AKS IAS",
+      "website_description": "AKS IAS Academy offers expert IAS coaching in Hyderabad for UPSC, State PSC & CLAT with top mentors, test series, and proven results.",
+      "website_content_summary": "[Skip to content](https://aksias.com/#content)\n\n# Home\n\n![](https://aksias.com/wp-content/uploads/2025/11/WhatsApp-Image-2025-11-21-at-18.34.06-1.webp)\n\n![](https://aksias.com/wp-content/uploads/2025/11/WhatsApp-Image-2025-11-21-at-18.34.05.webp)\n\n![](https://aksias.com/wp-content/uploads/2025/11/WhatsApp-Image-2025-11-21-at-18.34.05-3.webp)\n\n![](https://aksias.com/wp-content/uploads/2025/11/WhatsApp-Image-2025-11-21-at-18.34.05-4.webp)\n\n![](https://aksias.com/wp-content/uploads/2025/11/WhatsApp",
+      "services_offered": [],
+      "has_booking_system": false,
+      "has_whatsapp": true,
+      "has_lead_form": true,
+      "has_chat_widget": false,
+      "has_click_to_call": true,
+      "has_online_payment": false,
+      "has_reviews_management": false,
+      "has_follow_up_automation": false,
+      "ads_detected": false,
+      "has_slow_response_risk": true,
+      "has_after_hours_leak": true,
+      "has_lead_capture_gap": false,
+      "has_competition_vulnerability": false,
+      "data_quality_score": 85,
+      "reachability_score": 60,
+      "opportunity_score": 55,
+      "urgency_score": 80,
+      "final_score": 67,
+      "ai_reasoning": "AKS IAS Academy appears to be a legitimate coaching center in Hyderabad with a strong Google rating (4.7/5 from 1146 reviews) and a functional website. The high data quality (85/100) and reachability (60/100) scores, combined with a significant opportunity size (55/100) and urgency level (80/100), make it a worthwhile lead to pursue.",
+      "reasoning_verdict": "ACCEPT",
+      "pain_points": [
+        "AKS IAS Academy is likely losing potential students due to the absence of an online booking system, making it difficult for prospective students to easily schedule consultations or enroll in courses.",
+        "The estimated monthly revenue loss of ₹337,500 due to leakage indicates a significant inefficiency in their lead conversion process, impacting their overall profitability.",
+        "The lack of a live chat feature on their website means AKS IAS Academy may be missing opportunities to engage with website visitors in real-time, answer their questions instantly, and guide them towards enrollment."
+      ],
+      "selling_angles": [
+        "Implement our booking system to streamline enrollment for AKS IAS Academy, capturing more leads and reducing administrative overhead, allowing your team to focus on delivering quality coaching.",
+        "Leverage your impressive 4.7-star rating from over 1100 reviews by showcasing testimonials and success stories prominently on your website through our platform, building trust and driving conversions.",
+        "By addressing your lead leakage, our solution can recover an estimated ₹236,249 monthly, providing AKS IAS Academy with a projected ROI of 1.6x on our Enterprise tier investment."
+      ],
+      "objection_handlers": {
+        "price": "I understand your concern about the investment. However, consider that the ₹1.5L/month Enterprise tier is designed to recover a portion of the ₹337,500 you're currently losing each month due to lead leakage. By capturing and converting more leads, the system essentially pays for itself and generates additional revenue.",
+        "timing": "Given the high urgency level (80/100) and the competitive nature of IAS coaching, delaying implementation means continuing to lose potential students to competitors who offer more convenient online experiences. The sooner we implement the system, the sooner you'll start seeing a return on your investment.",
+        "need": "While AKS IAS Academy is already successful, the missing online booking and live chat features represent untapped potential. These additions can significantly improve lead capture and conversion rates, leading to increased enrollment and revenue. Think of it as optimizing a high-performing engine for even greater efficiency."
+      },
+      "validation_issues": [],
+      "estimated_monthly_leads": 150,
+      "estimated_missed_pct": 0.3,
+      "estimated_revenue_loss_inr": 337500,
+      "recoverable_amount_inr": 236249,
+      "recommended_tier": "Enterprise ₹1.5L/month",
+      "roi_multiple": 1.5749933333333332,
+      "payback_days": 19,
+      "tier": "WARM",
+      "priority": "HIGH",
+      "email_subject": "Quick question about AKS IAS Academy - Best UPSC Coaching Centre in Hyderabad for IAS Coaching | Top IAS Coaching in India",
+      "email_body": "Hi,\n\nNoticed AKS IAS Academy - Best UPSC Coaching Centre in Hyderabad for IAS Coaching | Top IAS Coaching in India on Google - 1146 reviews, solid presence.\n\nQuick analysis: you're likely losing ₹3.4L/month in AKS IAS Academy is likely losing potential students due to the absence of an online booking system, making it difficult for prospective students to easily schedule consultations or enroll in courses..\n\nWe've helped similar coaching center businesses recover ₹2.4L/month with Implement our booking system to streamline enrollment for AKS IAS Academy, capturing more leads and reducing administrative overhead, allowing your team to focus on delivering quality coaching..\n\nROI: 1.6x (payback in ~19 days)\n\n2-min call to discuss?\n\nBest,\n[Your Name]\n\nP.S. Happy to share a free audit showing exact ₹ being lost.",
+      "whatsapp_msg": "Hi! Quick note about AKS IAS Academy - Best UPSC Coaching Centre in Hyderabad for IAS Coaching | Top IAS Coaching in India.\n\nBased on your 1146 Google reviews, you're likely missing ₹3.4L/month in AKS IAS Academy is likely losing potential students due to the absence of an online booking system, making it difficult for prospective students to easily schedule consultations or enroll in courses..\n\nWe can recover ₹2.4L/month with Implement our booking system to streamline enrollment for AKS IAS Academy, capturing more leads and reducing administrative overhead, allowing your team to focus on delivering quality coaching..\n\nROI: 1.6x\n\nWant a free audit? Reply YES",
+      "call_script": "Hi, is this [Owner/Manager] from AKS IAS Academy - Best UPSC Coaching Centre in Hyderabad for IAS Coaching | Top IAS Coaching in India?\n\nGreat! I'm [Name] from [Company]. I help coaching center businesses recover lost revenue.\n\nI noticed from your Google listing you're getting good traffic - 1146 reviews.\n\nQuick question: how are you currently handling AKS IAS Academy is likely losing potential students due to the absence of an online booking system, making it difficult for prospective students to easily schedule consultations or enroll in courses.?\n\n[Listen]\n\nGot it. What we've found is businesses like yours typically lose ₹3.4L/month there.\n\nWe can recover about ₹2.4L with Implement our booking system to streamline enrollment for AKS IAS Academy, capturing more leads and reducing administrative overhead, allowing your team to focus on delivering quality coaching..\n\nWould you be open to a quick audit? It's free and shows exact ₹ being lost.",
+      "loom_script": "[60 seconds]\n\nHey! Found AKS IAS Academy - Best UPSC Coaching Centre in Hyderabad for IAS Coaching | Top IAS Coaching in India while researching coaching center businesses in Hyderabad.\n\n1146 reviews - clearly you're doing something right.\n\nBut I noticed something: AKS IAS Academy is likely losing potential students due to the absence of an online booking system, making it difficult for prospective students to easily schedule consultations or enroll in courses..\n\nQuick math:\n- 150 leads/month\n- ~30% missed\n- ₹3.4L/month gone\n\nWe can recover ₹2.4L with Implement our booking system to streamline enrollment for AKS IAS Academy, capturing more leads and reducing administrative overhead, allowing your team to focus on delivering quality coaching..\n\nROI: 1.6x\n\nWant a free audit? Email me at [email]",
+      "linkedin_note": "Hi! Came across AKS IAS Academy - Best UPSC Coaching Centre in Hyderabad for IAS Coaching | Top IAS Coaching in India - impressive 1146 reviews.\n\nI help coaching center businesses recover lost revenue. Noticed a few gaps that might be costing you ₹3.4L/month.\n\nWorth a quick chat?",
+      "follow_up_sequence": [
+        {
+          "day": 3,
+          "channel": "email",
+          "subject": "Re: AKS IAS Academy - Best UPSC Coaching Centre in Hyderabad for IAS Coaching | Top IAS Coaching in India - the ₹3.4L/month question"
+        },
+        {
+          "day": 7,
+          "channel": "whatsapp",
+          "message": "Following up - still interested in that free audit for AKS IAS Academy - Best UPSC Coaching Centre in Hyderabad for IAS Coaching | Top IAS Coaching in India?"
+        },
+        {
+          "day": 14,
+          "channel": "email",
+          "subject": "Last check: ₹2.4L recovery for AKS IAS Academy - Best UPSC Coaching Centre in Hyderabad for IAS Coaching | Top IAS Coaching in India"
+        }
+      ],
+      "status": "enriched",
+      "enrichment_source": "firecrawl",
+      "created_at": "2026-02-05T06:58:37.967096+00:00",
+      "updated_at": "2026-02-05T06:59:00.693221+00:00"
+    }
+  ]
+}

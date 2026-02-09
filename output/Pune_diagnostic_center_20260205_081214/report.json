@@ -1,0 +1,362 @@
+{
+  "run_id": "20260205_081214",
+  "timestamp": "2026-02-05T08:13:20.328584+00:00",
+  "config": {
+    "niche": "diagnostic center",
+    "city": "Pune",
+    "target": 3,
+    "enable_ai": true,
+    "enable_ads_check": false
+  },
+  "summary": {
+    "discovered": 6,
+    "processed": 3,
+    "whale": 0,
+    "hot": 0,
+    "warm": 1,
+    "cold": 2,
+    "total_opportunity_inr": 229687
+  },
+  "leads": [
+    {
+      "lead_id": "b2c48815a138258a",
+      "business_name": "Diagnopein Diagnostic Center - Sadashiv Peth, Pune",
+      "category": "diagnostic center",
+      "city": "Pune",
+      "state": "",
+      "country": "India",
+      "address": "Diagnopein, Alka Talkies, signal, Lal Bahadur Shastri Rd, Joshi Wada, Sadashiv Peth, Pune, Maharashtra 411030, India",
+      "website": "https://www.diagnopein.com/",
+      "google_maps_url": "https://www.google.com/maps/search/?api=1&query=Diagnopein%20Diagnostic%20Center%20-%20Sadashiv%20Peth%2C%20Pune&query_place_id=ChIJqTGnutTBwjsRRVm6wmYxwN4",
+      "rating": 4.7,
+      "reviews_count": 1110,
+      "tracking": {
+        "has_gtm": true,
+        "gtm_id": "GTM-MTG8B355",
+        "has_ga4": false,
+        "ga4_id": null,
+        "has_ua": false,
+        "ua_id": null,
+        "has_fb_pixel": false,
+        "fb_pixel_id": null,
+        "has_google_ads": false,
+        "google_ads_id": null
+      },
+      "contacts": {
+        "emails": [],
+        "phones": [
+          "+91 92041 08108"
+        ],
+        "whatsapp": {
+          "detected": false,
+          "detection_type": "NONE",
+          "phone_number": null,
+          "click_to_chat_url": null,
+          "confidence": 0.0
+        },
+        "social_links": {},
+        "contact_form_url": null,
+        "booking_url": null
+      },
+      "tech_stack": {
+        "cms": null,
+        "booking_system": null,
+        "chat_widget": null,
+        "crm": null,
+        "payment_systems": [],
+        "marketing_tools": [],
+        "ecommerce_platform": null
+      },
+      "ad_intel": {
+        "is_running_fb_ads": false,
+        "fb_ad_count": 0,
+        "fb_ads": [],
+        "is_running_google_ads": false,
+        "google_ad_count": 0,
+        "google_ads": [],
+        "estimated_monthly_spend": null,
+        "ad_platforms": []
+      },
+      "scores": {
+        "data_quality": 70,
+        "reachability": 30,
+        "money_signal": 35,
+        "opportunity": 70,
+        "urgency": 65,
+        "final_score": 52
+      },
+      "outreach": {
+        "angle": "scale_ready",
+        "email_subject": "Ready to scale Diagnopein Diagnostic Center - Sadashiv Peth, Pune?",
+        "email_body": "Hi,\n\nI noticed Diagnopein Diagnostic Center - Sadashiv Peth, Pune has analytics set up properly.\n\nBefore you start paid ads, let me show you how to capture 30% more leads.\n\nWe can fix this with:\n✅ WhatsApp lead capture\n✅ Missed call automation\n✅ Follow-up sequences\n\nROI: 2.0x\n\n2-min call?\n\n[Your Name]",
+        "whatsapp_message": "Hi! Quick note about Diagnopein Diagnostic Center - Sadashiv Peth, Pune.\n\nBefore you start paid ads, let me show you how to capture 30% more leads.\n\nWe can recover this with WhatsApp automation.\n\nWant a free audit? Reply YES",
+        "call_script": "Hi, is this [Owner] from Diagnopein Diagnostic Center - Sadashiv Peth, Pune?\n\nI'm [Name], I help diagnostic center businesses recover lost revenue.\n\nBefore you start paid ads, let me show you how to capture 30% more leads.\n\nDo you have 2 minutes?",
+        "linkedin_note": "",
+        "follow_up_sequence": []
+      },
+      "tier": "WARM",
+      "budget_tier": "MEDIUM",
+      "priority_rank": 1,
+      "ai_summary": "Diagnopein Diagnostic Center in Pune, despite a strong online reputation (4.7 stars, 1110 reviews), is losing revenue and missing key digital engagement opportunities. Their lack of online booking, chat, and WhatsApp integration, coupled with the absence of GA4 and FB Pixel, hinders their ability to capture and convert potential B2B clients.",
+      "pain_points": [
+        "Significant monthly revenue loss (₹98,437) indicates inefficiencies in attracting and retaining B2B clients.",
+        "Absence of GA4 and FB Pixel limits their ability to track marketing campaign performance and optimize for B2B lead generation.",
+        "Lack of online booking, chat, and WhatsApp creates friction for potential B2B partners seeking convenient and immediate communication."
+      ],
+      "selling_angles": [
+        "Highlight the potential to recover ₹68,905/month by implementing a robust B2B lead generation and nurturing strategy, focusing on digital engagement.",
+        "Offer a comprehensive digital marketing solution that includes GA4 and FB Pixel implementation to track B2B campaign ROI and optimize for conversions.",
+        "Propose integrating online booking, chat, and WhatsApp to streamline communication and improve the B2B client experience, leading to increased partnerships."
+      ],
+      "objection_handlers": {
+        "price": "Emphasize the long-term ROI of the proposed solution, showcasing how increased B2B partnerships and revenue generation will outweigh the initial investment. Offer flexible payment plans or phased implementation to mitigate upfront costs.",
+        "timing": "Acknowledge their busy schedule and propose a streamlined implementation process with minimal disruption to their existing operations. Offer dedicated support and training to ensure a smooth transition and quick realization of benefits."
+      },
+      "estimated_monthly_leads": 750,
+      "estimated_missed_pct": 0.35,
+      "estimated_revenue_loss": 98437,
+      "recoverable_amount": 68905,
+      "recommended_solution": "Growth ₹35K/month",
+      "roi_multiple": 1.9687142857142856,
+      "is_actively_acquiring": false,
+      "is_leaking_leads": true,
+      "is_ready_to_scale": true,
+      "has_automation": false,
+      "data_sources": [
+        "google_maps",
+        "raw_html",
+        "firecrawl"
+      ],
+      "enrichment_complete": true,
+      "validation_issues": [],
+      "created_at": "2026-02-05T08:12:55.664137+00:00",
+      "updated_at": "2026-02-05T08:12:55.664155+00:00"
+    },
+    {
+      "lead_id": "52f6095265a57a5e",
+      "business_name": "S M DIAGNOSTIC",
+      "category": "diagnostic center",
+      "city": "Pune",
+      "state": "",
+      "country": "India",
+      "address": "SHOP NO.08, PAWALE CHOUK, beside SHIVSHANKAR DAIRY, Lunanagar, Kasba Peth, Pune, Maharashtra 411011, India",
+      "website": "http://www.smdiagnostic.com/",
+      "google_maps_url": "https://www.google.com/maps/search/?api=1&query=S%20M%20DIAGNOSTIC&query_place_id=ChIJZWc-4tjBwjsRUCao3DU6vms",
+      "rating": 4.8,
+      "reviews_count": 119,
+      "tracking": {
+        "has_gtm": false,
+        "gtm_id": null,
+        "has_ga4": false,
+        "ga4_id": null,
+        "has_ua": false,
+        "ua_id": null,
+        "has_fb_pixel": false,
+        "fb_pixel_id": null,
+        "has_google_ads": false,
+        "google_ads_id": null
+      },
+      "contacts": {
+        "emails": [],
+        "phones": [
+          "+91 83299 67196"
+        ],
+        "whatsapp": {
+          "detected": false,
+          "detection_type": "NONE",
+          "phone_number": null,
+          "click_to_chat_url": null,
+          "confidence": 0.0
+        },
+        "social_links": {},
+        "contact_form_url": null,
+        "booking_url": null
+      },
+      "tech_stack": {
+        "cms": "WordPress",
+        "booking_system": null,
+        "chat_widget": null,
+        "crm": null,
+        "payment_systems": [],
+        "marketing_tools": [],
+        "ecommerce_platform": null
+      },
+      "ad_intel": {
+        "is_running_fb_ads": false,
+        "fb_ad_count": 0,
+        "fb_ads": [],
+        "is_running_google_ads": false,
+        "google_ad_count": 0,
+        "google_ads": [],
+        "estimated_monthly_spend": null,
+        "ad_platforms": []
+      },
+      "scores": {
+        "data_quality": 70,
+        "reachability": 30,
+        "money_signal": 10,
+        "opportunity": 50,
+        "urgency": 30,
+        "final_score": 35
+      },
+      "outreach": {
+        "angle": "leak_fix",
+        "email_subject": "₹65K/month leak at S M DIAGNOSTIC",
+        "email_body": "Hi,\n\nFound S M DIAGNOSTIC on Google - 119 reviews.\n\nQuick analysis: you're losing ₹65K/month.\n\nWe can fix this with:\n✅ WhatsApp lead capture\n✅ Missed call automation\n✅ Follow-up sequences\n\nROI: 1.3x\n\n2-min call?\n\n[Your Name]",
+        "whatsapp_message": "Hi! Quick note about S M DIAGNOSTIC.\n\nQuick analysis: you're losing ₹65K/month.\n\nWe can recover this with WhatsApp automation.\n\nWant a free audit? Reply YES",
+        "call_script": "Hi, is this [Owner] from S M DIAGNOSTIC?\n\nI'm [Name], I help diagnostic center businesses recover lost revenue.\n\nQuick analysis: you're losing ₹65K/month.\n\nDo you have 2 minutes?",
+        "linkedin_note": "",
+        "follow_up_sequence": []
+      },
+      "tier": "COLD",
+      "budget_tier": "LOW",
+      "priority_rank": 2,
+      "ai_summary": "S M Diagnostic in Pune, despite a strong 4.8 rating, is significantly underperforming due to a lack of modern digital infrastructure and B2C accessibility. They are losing revenue monthly and have a substantial opportunity to improve profitability through strategic B2B partnerships and improved online presence.",
+      "pain_points": [
+        "Lack of online booking system hinders patient acquisition and convenience for referring doctors.",
+        "Absence of tracking (GTM, GA4, FB Pixel) prevents data-driven decision-making and targeted marketing efforts to potential B2B partners.",
+        "Missed revenue recovery opportunities indicate inefficiencies in current B2B sales processes and potential for improved contract negotiation with existing partners."
+      ],
+      "selling_angles": [
+        "Partner with S M Diagnostic to offer your clients/patients a wider range of diagnostic services with preferential rates and streamlined referral processes, increasing your value proposition.",
+        "Leverage our advanced diagnostic equipment and experienced team to enhance your research capabilities or clinical trial support, providing accurate and reliable data.",
+        "Improve patient outcomes and reduce hospital readmissions by partnering with S M Diagnostic for timely and accurate diagnostic testing, leading to faster and more effective treatment plans."
+      ],
+      "objection_handlers": {
+        "price": "Highlight the long-term ROI through increased patient referrals, improved operational efficiency, and access to advanced diagnostic technology, ultimately justifying the investment.",
+        "timing": "Offer a phased implementation approach, starting with a pilot program or a limited set of services to demonstrate the value and minimize disruption to their existing workflow."
+      },
+      "estimated_monthly_leads": 500,
+      "estimated_missed_pct": 0.35,
+      "estimated_revenue_loss": 65625,
+      "recoverable_amount": 45937,
+      "recommended_solution": "Growth ₹35K/month",
+      "roi_multiple": 1.3124857142857143,
+      "is_actively_acquiring": false,
+      "is_leaking_leads": true,
+      "is_ready_to_scale": false,
+      "has_automation": false,
+      "data_sources": [
+        "google_maps",
+        "raw_html",
+        "firecrawl"
+      ],
+      "enrichment_complete": true,
+      "validation_issues": [],
+      "created_at": "2026-02-05T08:12:55.664185+00:00",
+      "updated_at": "2026-02-05T08:12:55.664186+00:00"
+    },
+    {
+      "lead_id": "8dd0f3f5020bf7b0",
+      "business_name": "AVD Alliance Diagnostic Centre",
+      "category": "diagnostic center",
+      "city": "Pune",
+      "state": "",
+      "country": "India",
+      "address": "387/5, Shankar Sheth Rd, near SBI Bank, Ekbote Colony, New Timber Market, Bhawani Peth, Pune, Maharashtra 411042, India",
+      "website": "",
+      "google_maps_url": "https://www.google.com/maps/search/?api=1&query=AVD%20Alliance%20Diagnostic%20Centre&query_place_id=ChIJC8eTRXPBwjsRH6Fcz56rQ-Y",
+      "rating": 5,
+      "reviews_count": 95,
+      "tracking": {
+        "has_gtm": false,
+        "gtm_id": null,
+        "has_ga4": false,
+        "ga4_id": null,
+        "has_ua": false,
+        "ua_id": null,
+        "has_fb_pixel": false,
+        "fb_pixel_id": null,
+        "has_google_ads": false,
+        "google_ads_id": null
+      },
+      "contacts": {
+        "emails": [],
+        "phones": [
+          "+91 70535 74444"
+        ],
+        "whatsapp": {
+          "detected": false,
+          "detection_type": "NONE",
+          "phone_number": null,
+          "click_to_chat_url": null,
+          "confidence": 0.0
+        },
+        "social_links": {},
+        "contact_form_url": null,
+        "booking_url": null
+      },
+      "tech_stack": {
+        "cms": null,
+        "booking_system": null,
+        "chat_widget": null,
+        "crm": null,
+        "payment_systems": [],
+        "marketing_tools": [],
+        "ecommerce_platform": null
+      },
+      "ad_intel": {
+        "is_running_fb_ads": false,
+        "fb_ad_count": 0,
+        "fb_ads": [],
+        "is_running_google_ads": false,
+        "google_ad_count": 0,
+        "google_ads": [],
+        "estimated_monthly_spend": null,
+        "ad_platforms": []
+      },
+      "scores": {
+        "data_quality": 55,
+        "reachability": 30,
+        "money_signal": 0,
+        "opportunity": 50,
+        "urgency": 30,
+        "final_score": 29
+      },
+      "outreach": {
+        "angle": "leak_fix",
+        "email_subject": "₹65K/month leak at AVD Alliance Diagnostic Centre",
+        "email_body": "Hi,\n\nFound AVD Alliance Diagnostic Centre on Google - 95 reviews.\n\nQuick analysis: you're losing ₹65K/month.\n\nWe can fix this with:\n✅ WhatsApp lead capture\n✅ Missed call automation\n✅ Follow-up sequences\n\nROI: 1.3x\n\n2-min call?\n\n[Your Name]",
+        "whatsapp_message": "Hi! Quick note about AVD Alliance Diagnostic Centre.\n\nQuick analysis: you're losing ₹65K/month.\n\nWe can recover this with WhatsApp automation.\n\nWant a free audit? Reply YES",
+        "call_script": "Hi, is this [Owner] from AVD Alliance Diagnostic Centre?\n\nI'm [Name], I help diagnostic center businesses recover lost revenue.\n\nQuick analysis: you're losing ₹65K/month.\n\nDo you have 2 minutes?",
+        "linkedin_note": "",
+        "follow_up_sequence": []
+      },
+      "tier": "COLD",
+      "budget_tier": "LOW",
+      "priority_rank": 3,
+      "ai_summary": "AVD Alliance Diagnostic Centre in Pune, despite a strong 5-star rating, is significantly underperforming due to a lack of online presence and modern customer engagement tools. They are currently operating at a loss, indicating a need for improved efficiency and revenue generation strategies.",
+      "pain_points": [
+        "Lack of online booking system leads to missed appointments and inefficient scheduling.",
+        "Absence of tracking (GTM, GA4, FB Pixel) prevents data-driven decision-making and targeted marketing efforts.",
+        "Limited communication channels (no chat, WhatsApp) hinders customer engagement and responsiveness."
+      ],
+      "selling_angles": [
+        "Implement a comprehensive digital marketing strategy, including website development, SEO, and paid advertising, to increase online visibility and attract new patients.",
+        "Integrate an online booking system and multiple communication channels (chat, WhatsApp) to improve customer experience and streamline appointment scheduling, leading to increased revenue.",
+        "Leverage data analytics (GTM, GA4) to track marketing performance, identify areas for improvement, and optimize resource allocation for maximum ROI."
+      ],
+      "objection_handlers": {
+        "price": "Highlight the long-term ROI of the proposed solutions, emphasizing increased revenue, improved efficiency, and enhanced customer satisfaction. Offer flexible payment plans or phased implementation to manage upfront costs.",
+        "timing": "Emphasize the urgency of addressing the current financial losses and the potential for immediate improvements with a phased implementation approach. Offer a quick setup and training process to minimize disruption to daily operations."
+      },
+      "estimated_monthly_leads": 500,
+      "estimated_missed_pct": 0.35,
+      "estimated_revenue_loss": 65625,
+      "recoverable_amount": 45937,
+      "recommended_solution": "Growth ₹35K/month",
+      "roi_multiple": 1.3124857142857143,
+      "is_actively_acquiring": false,
+      "is_leaking_leads": true,
+      "is_ready_to_scale": false,
+      "has_automation": false,
+      "data_sources": [
+        "google_maps"
+      ],
+      "enrichment_complete": false,
+      "validation_issues": [],
+      "created_at": "2026-02-05T08:12:55.664174+00:00",
+      "updated_at": "2026-02-05T08:12:55.664175+00:00"
+    }
+  ]
+}

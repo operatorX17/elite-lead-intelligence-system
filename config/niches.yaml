@@ -1,0 +1,149 @@
+# Niche Configuration for ZRAI Lead OS
+# Requirements: 6 (Config-Driven Everything)
+
+niches:
+  # HVAC Services
+  hvac:
+    name: "HVAC Services"
+    keywords:
+      - "hvac"
+      - "air conditioning"
+      - "heating"
+      - "furnace repair"
+      - "ac repair"
+      - "hvac contractor"
+    geo_filters:
+      - "US"
+    high_ticket: true
+    consideration_cycle_days: 7
+    seasonal: true
+    peak_seasons:
+      - "summer"
+      - "winter"
+    scoring_weights:
+      ad_activity: 0.20
+      intent: 0.25
+      leak: 0.30
+      reactivation: 0.10
+      contact_quality: 0.10
+      business_size: 0.05
+    disqualification_rules:
+      min_review_count: 5
+      min_rating: 3.0
+      exclude_emergency_only: true
+
+  # Plumbing Services
+  plumbing:
+    name: "Plumbing Services"
+    keywords:
+      - "plumber"
+      - "plumbing"
+      - "drain cleaning"
+      - "water heater"
+      - "pipe repair"
+    geo_filters:
+      - "US"
+    high_ticket: true
+    consideration_cycle_days: 3
+    seasonal: false
+    scoring_weights:
+      ad_activity: 0.15
+      intent: 0.30
+      leak: 0.30
+      reactivation: 0.10
+      contact_quality: 0.10
+      business_size: 0.05
+    disqualification_rules:
+      min_review_count: 3
+      min_rating: 3.5
+      exclude_emergency_only: true
+
+  # Roofing Services
+  roofing:
+    name: "Roofing Services"
+    keywords:
+      - "roofing"
+      - "roof repair"
+      - "roof replacement"
+      - "roofer"
+      - "roof contractor"
+    geo_filters:
+      - "US"
+    high_ticket: true
+    consideration_cycle_days: 14
+    seasonal: true
+    peak_seasons:
+      - "spring"
+      - "fall"
+    scoring_weights:
+      ad_activity: 0.25
+      intent: 0.20
+      leak: 0.25
+      reactivation: 0.15
+      contact_quality: 0.10
+      business_size: 0.05
+    disqualification_rules:
+      min_review_count: 10
+      min_rating: 4.0
+      exclude_emergency_only: false
+
+  # Dental Services
+  dental:
+    name: "Dental Services"
+    keywords:
+      - "dentist"
+      - "dental"
+      - "teeth whitening"
+      - "dental implants"
+      - "orthodontist"
+    geo_filters:
+      - "US"
+    high_ticket: true
+    consideration_cycle_days: 30
+    seasonal: false
+    scoring_weights:
+      ad_activity: 0.20
+      intent: 0.25
+      leak: 0.25
+      reactivation: 0.15
+      contact_quality: 0.10
+      business_size: 0.05
+    disqualification_rules:
+      min_review_count: 20
+      min_rating: 4.0
+      exclude_emergency_only: false
+
+  # Legal Services
+  legal:
+    name: "Legal Services"
+    keywords:
+      - "lawyer"
+      - "attorney"
+      - "law firm"
+      - "personal injury"
+      - "family law"
+    geo_filters:
+      - "US"
+    high_ticket: true
+    consideration_cycle_days: 14
+    seasonal: false
+    scoring_weights:
+      ad_activity: 0.30
+      intent: 0.25
+      leak: 0.20
+      reactivation: 0.10
+      contact_quality: 0.10
+      business_size: 0.05
+    disqualification_rules:
+      min_review_count: 5
+      min_rating: 4.0
+      exclude_emergency_only: false
+
+# Default weights for niches not explicitly configured
+default_weights:
+  ad_activity: 0.20
+  intent: 0.25
+  leak: 0.30
+  reactivation: 0.10
+  contact_quality: 0.10
+  business_size: 0.05

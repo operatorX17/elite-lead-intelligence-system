@@ -1,0 +1,230 @@
+[
+  {
+    "lead_id": "3f2b7566488267e2",
+    "business_name": "Dr Mittal's Diagnostic Centre",
+    "category": "diagnostic center",
+    "city": "Delhi",
+    "area": "New Delhi, Delhi",
+    "website": "https://www.mittalsdiagnostic.in/",
+    "phone": "+91 98115 52279",
+    "google_maps_url": "https://www.google.com/maps/search/?api=1&query=Dr%20Mittal's%20Diagnostic%20Centre&query_place_id=ChIJhacLXN4DDTkRSeeS5zufiPQ",
+    "rating": 4.2,
+    "reviews_count": 218,
+    "address": "193, Pocket 8, Sector 8, Rohini, New Delhi, Delhi, 110085, India",
+    "contacts": {
+      "emails": [],
+      "phones": [
+        "+91 98115 52279"
+      ],
+      "decision_makers": [],
+      "social_links": {}
+    },
+    "tech_stack": {
+      "cms": null,
+      "booking_system": null,
+      "chat_widget": null,
+      "crm": null,
+      "analytics": [],
+      "payment": [],
+      "marketing": []
+    },
+    "website_title": "",
+    "website_description": "",
+    "website_content_summary": "",
+    "services_offered": [],
+    "has_booking_system": false,
+    "has_whatsapp": false,
+    "has_lead_form": false,
+    "has_chat_widget": false,
+    "has_click_to_call": true,
+    "has_online_payment": false,
+    "has_reviews_management": false,
+    "has_follow_up_automation": false,
+    "ads_detected": false,
+    "has_google_ads": false,
+    "has_facebook_ads": false,
+    "google_tag_manager_id": "",
+    "google_analytics_id": "",
+    "google_ads_id": "",
+    "facebook_pixel_id": "",
+    "whatsapp_number": "",
+    "has_slow_response_risk": true,
+    "has_after_hours_leak": true,
+    "has_lead_capture_gap": true,
+    "has_competition_vulnerability": false,
+    "data_quality_score": 85,
+    "reachability_score": 30,
+    "opportunity_score": 100,
+    "urgency_score": 85,
+    "final_score": 76,
+    "ai_reasoning": "Dr Mittal's Diagnostic Centre appears to be a legitimate business with a strong Google rating (4.2/5 from 218 reviews) and a high opportunity score (100/100). The data quality is also high (85/100), suggesting reliable contact information despite the missing email and LinkedIn profile.",
+    "reasoning_verdict": "ACCEPT",
+    "pain_points": [
+      "Dr Mittal's Diagnostic Centre is missing online booking, potentially losing patients who prefer the convenience of scheduling appointments online.",
+      "The estimated leakage of 44% in monthly inquiries translates to a revenue loss of ₹101,250 for Dr Mittal's Diagnostic Centre, indicating a significant opportunity to improve patient acquisition and revenue.",
+      "Without a live chat or WhatsApp Business integration, Dr Mittal's Diagnostic Centre may be missing opportunities to engage with potential patients in real-time and answer their queries promptly."
+    ],
+    "selling_angles": [
+      "Implement our online booking system to capture more appointments and reduce phone call volume for Dr Mittal's Diagnostic Centre, improving patient experience and staff efficiency.",
+      "Leverage Dr Mittal's Diagnostic Centre's positive Google reviews (4.2/5) by showcasing them prominently on your website and using them in marketing materials to build trust and attract new patients.",
+      "Invest in our Pro tier solution for ₹60K/month and recover ₹70,875 in lost revenue, resulting in a projected ROI of 1.2x for Dr Mittal's Diagnostic Centre."
+    ],
+    "objection_handlers": {
+      "price": "I understand that the ₹60K/month investment might seem significant. However, consider that Dr Mittal's Diagnostic Centre is currently losing ₹101,250 each month due to leakage. Our solution helps you recover a substantial portion of that, making it a worthwhile investment.",
+      "timing": "Given the high urgency level (85/100) and the ongoing revenue loss, delaying implementation means continuing to lose potential revenue. Implementing our solution now allows Dr Mittal's Diagnostic Centre to capitalize on immediate opportunities and improve patient acquisition.",
+      "need": "While Dr Mittal's Diagnostic Centre may be currently operating, the missing online booking, live chat, and other critical features are causing significant leakage. Addressing these gaps will enhance patient experience, improve lead capture, and ultimately boost revenue."
+    },
+    "validation_issues": [],
+    "estimated_monthly_leads": 600,
+    "estimated_missed_pct": 0.44999999999999996,
+    "estimated_revenue_loss_inr": 101250,
+    "recoverable_amount_inr": 70875,
+    "recommended_tier": "Pro ₹60K/month",
+    "roi_multiple": 1.18125,
+    "payback_days": 25,
+    "tier": "HOT",
+    "priority": "CRITICAL",
+    "email_subject": "Quick question about Dr Mittal's Diagnostic Centre",
+    "email_body": "Hi,\n\nNoticed Dr Mittal's Diagnostic Centre on Google - 218 reviews, solid presence.\n\nQuick analysis: you're likely losing ₹1.0L/month in Dr Mittal's Diagnostic Centre is missing online booking, potentially losing patients who prefer the convenience of scheduling appointments online..\n\nWe've helped similar diagnostic center businesses recover ₹71K/month with Implement our online booking system to capture more appointments and reduce phone call volume for Dr Mittal's Diagnostic Centre, improving patient experience and staff efficiency..\n\nROI: 1.2x (payback in ~25 days)\n\n2-min call to discuss?\n\nBest,\n[Your Name]\n\nP.S. Happy to share a free audit showing exact ₹ being lost.",
+    "whatsapp_msg": "Hi! Quick note about Dr Mittal's Diagnostic Centre.\n\nBased on your 218 Google reviews, you're likely missing ₹1.0L/month in Dr Mittal's Diagnostic Centre is missing online booking, potentially losing patients who prefer the convenience of scheduling appointments online..\n\nWe can recover ₹71K/month with Implement our online booking system to capture more appointments and reduce phone call volume for Dr Mittal's Diagnostic Centre, improving patient experience and staff efficiency..\n\nROI: 1.2x\n\nWant a free audit? Reply YES",
+    "call_script": "Hi, is this [Owner/Manager] from Dr Mittal's Diagnostic Centre?\n\nGreat! I'm [Name] from [Company]. I help diagnostic center businesses recover lost revenue.\n\nI noticed from your Google listing you're getting good traffic - 218 reviews.\n\nQuick question: how are you currently handling Dr Mittal's Diagnostic Centre is missing online booking, potentially losing patients who prefer the convenience of scheduling appointments online.?\n\n[Listen]\n\nGot it. What we've found is businesses like yours typically lose ₹1.0L/month there.\n\nWe can recover about ₹71K with Implement our online booking system to capture more appointments and reduce phone call volume for Dr Mittal's Diagnostic Centre, improving patient experience and staff efficiency..\n\nWould you be open to a quick audit? It's free and shows exact ₹ being lost.",
+    "loom_script": "[60 seconds]\n\nHey! Found Dr Mittal's Diagnostic Centre while researching diagnostic center businesses in Delhi.\n\n218 reviews - clearly you're doing something right.\n\nBut I noticed something: Dr Mittal's Diagnostic Centre is missing online booking, potentially losing patients who prefer the convenience of scheduling appointments online..\n\nQuick math:\n- 600 leads/month\n- ~44% missed\n- ₹1.0L/month gone\n\nWe can recover ₹71K with Implement our online booking system to capture more appointments and reduce phone call volume for Dr Mittal's Diagnostic Centre, improving patient experience and staff efficiency..\n\nROI: 1.2x\n\nWant a free audit? Email me at [email]",
+    "linkedin_note": "Hi! Came across Dr Mittal's Diagnostic Centre - impressive 218 reviews.\n\nI help diagnostic center businesses recover lost revenue. Noticed a few gaps that might be costing you ₹1.0L/month.\n\nWorth a quick chat?",
+    "follow_up_sequence": [
+      {
+        "day": 3,
+        "channel": "email",
+        "subject": "Re: Dr Mittal's Diagnostic Centre - the ₹1.0L/month question"
+      },
+      {
+        "day": 7,
+        "channel": "whatsapp",
+        "message": "Following up - still interested in that free audit for Dr Mittal's Diagnostic Centre?"
+      },
+      {
+        "day": 14,
+        "channel": "email",
+        "subject": "Last check: ₹71K recovery for Dr Mittal's Diagnostic Centre"
+      }
+    ],
+    "status": "enriched",
+    "enrichment_source": "steel",
+    "created_at": "2026-02-05T07:17:54.974309+00:00",
+    "updated_at": "2026-02-05T07:18:44.373242+00:00"
+  },
+  {
+    "lead_id": "ca5a98e0c8bbd6ad",
+    "business_name": "SGD Diagnostic Centre",
+    "category": "diagnostic center",
+    "city": "Delhi",
+    "area": "New Delhi, Delhi",
+    "website": "",
+    "phone": "+91 78272 96993",
+    "google_maps_url": "https://www.google.com/maps/search/?api=1&query=SGD%20Diagnostic%20Centre&query_place_id=ChIJ8WIM33r9DDkRkyjPO_eTKtk",
+    "rating": 4,
+    "reviews_count": 117,
+    "address": "16, Rani Jhansi Road, Rani Jhansi Flyover, Model Basti, New Delhi, Delhi 110005, India",
+    "contacts": {
+      "emails": [],
+      "phones": [
+        "+91 78272 96993"
+      ],
+      "decision_makers": [],
+      "social_links": {}
+    },
+    "tech_stack": {
+      "cms": null,
+      "booking_system": null,
+      "chat_widget": null,
+      "crm": null,
+      "analytics": [],
+      "payment": [],
+      "marketing": []
+    },
+    "website_title": "",
+    "website_description": "",
+    "website_content_summary": "",
+    "services_offered": [],
+    "has_booking_system": false,
+    "has_whatsapp": false,
+    "has_lead_form": false,
+    "has_chat_widget": false,
+    "has_click_to_call": true,
+    "has_online_payment": false,
+    "has_reviews_management": false,
+    "has_follow_up_automation": false,
+    "ads_detected": false,
+    "has_google_ads": false,
+    "has_facebook_ads": false,
+    "google_tag_manager_id": "",
+    "google_analytics_id": "",
+    "google_ads_id": "",
+    "facebook_pixel_id": "",
+    "whatsapp_number": "",
+    "has_slow_response_risk": true,
+    "has_after_hours_leak": true,
+    "has_lead_capture_gap": true,
+    "has_competition_vulnerability": false,
+    "data_quality_score": 70,
+    "reachability_score": 30,
+    "opportunity_score": 100,
+    "urgency_score": 85,
+    "final_score": 73,
+    "ai_reasoning": "SGD Diagnostic Centre appears to be a real business based on its Google rating and review count. The high opportunity score (100/100) and data quality (70/100) suggest it's worth pursuing, especially given the significant revenue leakage.",
+    "reasoning_verdict": "ACCEPT",
+    "pain_points": [
+      "SGD Diagnostic Centre is missing online booking, leading to potential patients choosing competitors with easier scheduling options.",
+      "The estimated 44% leakage translates to a monthly revenue loss of ₹84,000 for SGD Diagnostic Centre due to missed online opportunities.",
+      "Without live chat or a lead capture form, SGD Diagnostic Centre is missing opportunities to engage with potential patients and capture valuable leads directly from their website."
+    ],
+    "selling_angles": [
+      "Implement our online booking system to capture a larger share of the Delhi diagnostic market, allowing patients to easily schedule appointments with SGD Diagnostic Centre 24/7.",
+      "Leverage SGD Diagnostic Centre's existing positive reputation (4/5 stars from 117 reviews) by showcasing patient testimonials and building trust through a modern, user-friendly website with integrated chat.",
+      "Invest in our Growth tier at ₹35K/month and recover ₹58,799 in lost revenue, resulting in a projected ROI of 1.7x for SGD Diagnostic Centre."
+    ],
+    "objection_handlers": {
+      "price": "I understand budget is a concern. However, consider that the ₹35,000 investment in our Growth tier is significantly less than the ₹84,000 SGD Diagnostic Centre is currently losing each month due to missed online opportunities. We can help you recoup those losses and generate a positive ROI.",
+      "timing": "I appreciate that you're busy. However, the urgency score of 85/100 indicates that patients are actively searching for diagnostic services *now*. Delaying implementation means continuing to lose potential revenue to competitors who offer online booking and immediate support. We can get you set up quickly and start capturing those leads.",
+      "need": "I understand you might feel you're doing fine. However, the lack of online booking, live chat, and lead capture forms means SGD Diagnostic Centre is missing out on a significant portion of the market. These tools are essential for modern diagnostic centers to attract and retain patients in a competitive environment."
+    },
+    "validation_issues": [
+      "Lack of website makes it difficult to fully assess their current online presence and marketing efforts."
+    ],
+    "estimated_monthly_leads": 500,
+    "estimated_missed_pct": 0.44999999999999996,
+    "estimated_revenue_loss_inr": 84000,
+    "recoverable_amount_inr": 58799,
+    "recommended_tier": "Growth ₹35K/month",
+    "roi_multiple": 1.6799714285714287,
+    "payback_days": 17,
+    "tier": "HOT",
+    "priority": "CRITICAL",
+    "email_subject": "Quick question about SGD Diagnostic Centre",
+    "email_body": "Hi,\n\nNoticed SGD Diagnostic Centre on Google - 117 reviews, solid presence.\n\nQuick analysis: you're likely losing ₹84K/month in SGD Diagnostic Centre is missing online booking, leading to potential patients choosing competitors with easier scheduling options..\n\nWe've helped similar diagnostic center businesses recover ₹59K/month with Implement our online booking system to capture a larger share of the Delhi diagnostic market, allowing patients to easily schedule appointments with SGD Diagnostic Centre 24/7..\n\nROI: 1.7x (payback in ~17 days)\n\n2-min call to discuss?\n\nBest,\n[Your Name]\n\nP.S. Happy to share a free audit showing exact ₹ being lost.",
+    "whatsapp_msg": "Hi! Quick note about SGD Diagnostic Centre.\n\nBased on your 117 Google reviews, you're likely missing ₹84K/month in SGD Diagnostic Centre is missing online booking, leading to potential patients choosing competitors with easier scheduling options..\n\nWe can recover ₹59K/month with Implement our online booking system to capture a larger share of the Delhi diagnostic market, allowing patients to easily schedule appointments with SGD Diagnostic Centre 24/7..\n\nROI: 1.7x\n\nWant a free audit? Reply YES",
+    "call_script": "Hi, is this [Owner/Manager] from SGD Diagnostic Centre?\n\nGreat! I'm [Name] from [Company]. I help diagnostic center businesses recover lost revenue.\n\nI noticed from your Google listing you're getting good traffic - 117 reviews.\n\nQuick question: how are you currently handling SGD Diagnostic Centre is missing online booking, leading to potential patients choosing competitors with easier scheduling options.?\n\n[Listen]\n\nGot it. What we've found is businesses like yours typically lose ₹84K/month there.\n\nWe can recover about ₹59K with Implement our online booking system to capture a larger share of the Delhi diagnostic market, allowing patients to easily schedule appointments with SGD Diagnostic Centre 24/7..\n\nWould you be open to a quick audit? It's free and shows exact ₹ being lost.",
+    "loom_script": "[60 seconds]\n\nHey! Found SGD Diagnostic Centre while researching diagnostic center businesses in Delhi.\n\n117 reviews - clearly you're doing something right.\n\nBut I noticed something: SGD Diagnostic Centre is missing online booking, leading to potential patients choosing competitors with easier scheduling options..\n\nQuick math:\n- 500 leads/month\n- ~44% missed\n- ₹84K/month gone\n\nWe can recover ₹59K with Implement our online booking system to capture a larger share of the Delhi diagnostic market, allowing patients to easily schedule appointments with SGD Diagnostic Centre 24/7..\n\nROI: 1.7x\n\nWant a free audit? Email me at [email]",
+    "linkedin_note": "Hi! Came across SGD Diagnostic Centre - impressive 117 reviews.\n\nI help diagnostic center businesses recover lost revenue. Noticed a few gaps that might be costing you ₹84K/month.\n\nWorth a quick chat?",
+    "follow_up_sequence": [
+      {
+        "day": 3,
+        "channel": "email",
+        "subject": "Re: SGD Diagnostic Centre - the ₹84K/month question"
+      },
+      {
+        "day": 7,
+        "channel": "whatsapp",
+        "message": "Following up - still interested in that free audit for SGD Diagnostic Centre?"
+      },
+      {
+        "day": 14,
+        "channel": "email",
+        "subject": "Last check: ₹59K recovery for SGD Diagnostic Centre"
+      }
+    ],
+    "status": "enriched",
+    "enrichment_source": "",
+    "created_at": "2026-02-05T07:17:44.386073+00:00",
+    "updated_at": "2026-02-05T07:17:48.733521+00:00"
+  }
+]

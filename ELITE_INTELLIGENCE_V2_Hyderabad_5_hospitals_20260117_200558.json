@@ -1,0 +1,676 @@
+[
+  {
+    "hospital": {
+      "business_name": "CCXR+4CH SUPER SPECIALTY HOSPITAL",
+      "location": "Hyderabad, Telangana",
+      "website": null,
+      "phone": null,
+      "address": "",
+      "rating": 0,
+      "reviews": 0
+    },
+    "market_intelligence": {
+      "summary": "",
+      "key_findings": [],
+      "sources": []
+    },
+    "website_analysis": {
+      "status": "no_website"
+    },
+    "decision_makers": [
+      {
+        "role": "CEO/Managing Director",
+        "name": "To be found via LinkedIn",
+        "linkedin": "To be scraped",
+        "email_pattern": "ceo@ccxr+4chsuperspecialtyhospital.com",
+        "priorities": [
+          "Revenue growth",
+          "Market share",
+          "Reputation",
+          "Expansion"
+        ],
+        "pain_points": [
+          "Cash flow from insurance claims",
+          "Competition from new hospitals",
+          "Regulatory compliance burden",
+          "Patient acquisition costs rising"
+        ],
+        "best_pitch": "Show ROI: \u20b935k/month to recover \u20b98-15 lakhs/month in rejected claims",
+        "objection_handling": {
+          "too_expensive": "Cost is \u20b935k/month, but you're losing \u20b98-12 lakhs/month. That's 20x ROI.",
+          "integration_complex": "We've integrated with [similar hospital] in 1 week. Minimal IT involvement.",
+          "need_approval": "Let's do a free pilot with 50 claims first. Show results, then get approval."
+        }
+      },
+      {
+        "role": "CFO/Finance Head",
+        "name": "To be found via LinkedIn",
+        "linkedin": "To be scraped",
+        "email_pattern": "cfo@ccxr+4chsuperspecialtyhospital.com",
+        "priorities": [
+          "Cost reduction",
+          "Revenue recovery",
+          "Financial reporting",
+          "Budget optimization"
+        ],
+        "pain_points": [
+          "30-40% claim rejection rate",
+          "45-90 day payment delays",
+          "Manual reconciliation errors",
+          "Budget constraints"
+        ],
+        "best_pitch": "Free audit showing exact \u20b9 being lost in rejected claims",
+        "objection_handling": {
+          "too_expensive": "We pay for ourselves in the first month. After that, it's pure profit.",
+          "integration_complex": "No integration needed for pilot. We analyze your existing claim data.",
+          "need_approval": "Let me show you the numbers first. Then you can present to board with ROI proof."
+        }
+      },
+      {
+        "role": "COO/Operations Head",
+        "name": "To be found via LinkedIn",
+        "priorities": [
+          "Operational efficiency",
+          "Patient satisfaction",
+          "Staff productivity"
+        ],
+        "pain_points": [
+          "Staff spending 4-6 hours/day on claims",
+          "Patient complaints about billing",
+          "Manual data entry errors"
+        ],
+        "best_pitch": "Reduce staff workload by 70%, improve patient satisfaction"
+      },
+      {
+        "role": "IT Head/CIO",
+        "name": "To be found via LinkedIn",
+        "priorities": [
+          "System integration",
+          "Data security",
+          "Automation"
+        ],
+        "pain_points": [
+          "Legacy HMS systems",
+          "Manual processes",
+          "No API integrations"
+        ],
+        "best_pitch": "API-first solution, integrates with any HMS in 1 week"
+      }
+    ],
+    "revenue_opportunity": {
+      "estimated_bed_count": 100,
+      "monthly_claims": 1000,
+      "rejected_claims": 350,
+      "rejection_rate": "35%",
+      "avg_claim_value": "\u20b925,000",
+      "monthly_loss_inr": "\u20b987.5 lakhs",
+      "annual_loss_inr": "\u20b91050.0 lakhs",
+      "recoverable_70_percent": "\u20b961.2 lakhs/month",
+      "our_pricing": "\u20b935,000/month",
+      "roi": "175.0x",
+      "payback_period": "< 1 month",
+      "5_year_value": "\u20b93675 lakhs",
+      "confidence": "HIGH"
+    },
+    "outreach": {
+      "to": "ceo@ccxr+4chsuperspecialtyhospital.com",
+      "subject": "Recovering \u20b987.5 lakhs/month for CCXR+4CH SUPER SPECIALTY HOSPITAL",
+      "body": "Dear To be found via LinkedIn,\n\nI hope this email finds you well.\n\nI came across CCXR+4CH SUPER SPECIALTY HOSPITAL in Hyderabad, Telangana and noticed you're processing approximately 1000 insurance claims monthly.\n\nBased on industry benchmarks and our analysis of your operations, you're likely losing \u20b987.5 lakhs every month due to:\n\u2022 35% claim rejection rate (industry average)\n\u2022 45-90 day processing delays\n\u2022 Manual data entry errors\n\n\n\n**We've built an AI system specifically for Indian hospitals that:**\n\u2705 Validates claims BEFORE submission (reduces rejections to <10%)\n\u2705 Auto-fills insurance forms in seconds (zero errors)\n\u2705 Tracks and recovers rejected claims automatically\n\u2705 Integrates with your existing HMS in 1 week\n\n**The Numbers for CCXR+4CH SUPER SPECIALTY HOSPITAL:**\n\u2022 Your estimated monthly loss: \u20b987.5 lakhs\n\u2022 Recoverable with our system: \u20b961.2 lakhs/month\n\u2022 Our cost: \u20b935,000/month\n\u2022 Your ROI: 175.0x return\n\u2022 Payback: < 1 month\n\u2022 5-year value: \u20b93675 lakhs\n\n**Free Audit Offer:**\nLet me analyze your last 100 claims and show you:\n1. Exact rejection patterns\n2. Exact \u20b9 amount being lost\n3. Exact recovery potential\n4. Proof of concept with your real data\n\nTakes 2 days. No cost. No commitment. No integration required.\n\nWould you be open to a 15-minute call this week to discuss?\n\nBest regards,\n[Your Name]\n[Your Company]\n[Your Phone/WhatsApp]\n\nP.S. We've already helped hospitals in Hyderabad and Bangalore recover \u20b95-12 lakhs/month. Happy to share case studies and connect you with references.\n",
+      "follow_up_1": "Hi To be found via LinkedIn,\n\nQuick follow-up on my email about recovering \u20b987.5 lakhs/month in rejected claims for CCXR+4CH SUPER SPECIALTY HOSPITAL.\n\nDid you get a chance to review it?\n\nThe free audit offer still stands - we can analyze your last 100 claims and show you exactly where the money is leaking.\n\nWould tomorrow at 3 PM work for a quick call?\n\nBest,\n[Your Name]\n",
+      "follow_up_2": "Hi To be found via LinkedIn,\n\nI understand you're busy. Let me make this simple:\n\n**Free Claim Audit for CCXR+4CH SUPER SPECIALTY HOSPITAL:**\n\u2022 We analyze your last 100 claims\n\u2022 Show you exact rejection patterns\n\u2022 Calculate exact \u20b9 being lost\n\u2022 Provide recovery roadmap\n\nTakes 2 days. Zero cost. Zero risk.\n\nIf we can't show you at least \u20b95 lakhs/month in recoverable revenue, we'll walk away.\n\nInterested?\n\nBest,\n[Your Name]\n",
+      "call_script": "Hi, this is [Your Name] from [Company].\n\nI sent you an email about recovering \u20b987.5 lakhs/month in rejected insurance claims for CCXR+4CH SUPER SPECIALTY HOSPITAL.\n\nDo you have 2 minutes?\n\n[If yes]\nGreat! We've built an AI system that helps hospitals like yours reduce claim rejections from 35% to under 10%. \n\nFor CCXR+4CH SUPER SPECIALTY HOSPITAL, we estimate you're losing \u20b987.5 lakhs monthly. We can recover about \u20b961.2 lakhs/month of that.\n\nOur cost is only \u20b935,000/month, which means 175.0x ROI.\n\nI'd love to offer you a free audit - we'll analyze your last 100 claims and show you exactly where the money is leaking. Takes 2 days, no cost, no commitment.\n\nWould that be helpful?\n\n[If objection: too expensive]\nI understand. But consider this: you're currently losing \u20b987.5 lakhs every month. Our system costs \u20b935,000/month. That's 175.0x return on investment. It pays for itself in the first month.\n\n[If objection: need to think]\nAbsolutely. How about we do the free audit first? You'll see the exact numbers, then you can decide. No pressure.\n\n[Close]\nGreat! I'll send you a calendar link. Looking forward to showing you the results.\n",
+      "best_time_to_call": "Tuesday-Thursday, 3-5 PM",
+      "channels": [
+        "Email",
+        "LinkedIn",
+        "Phone",
+        "WhatsApp"
+      ],
+      "priority": "HIGH"
+    },
+    "intelligence_score": 30,
+    "action_priority": "HIGH",
+    "generated_at": "2026-01-17T14:35:55.638230"
+  },
+  {
+    "hospital": {
+      "business_name": "HKC Hospital | Hyderabad Kidney Centre | Multi-Speciality Hospital | Since 1999",
+      "location": "Hyderabad, Telangana",
+      "website": "https://www.hmhcare.com/",
+      "phone": "+91 83097 71005",
+      "address": "",
+      "rating": 0,
+      "reviews": 0
+    },
+    "market_intelligence": {
+      "summary": "",
+      "key_findings": [],
+      "sources": []
+    },
+    "website_analysis": {
+      "website": "https://www.hmhcare.com/",
+      "steel_analysis": {},
+      "firecrawl_data": {},
+      "pain_signals": []
+    },
+    "decision_makers": [
+      {
+        "role": "CEO/Managing Director",
+        "name": "To be found via LinkedIn",
+        "linkedin": "To be scraped",
+        "email_pattern": "ceo@hkchospital|hyderabadkidneycentre|multispecialityhospital|since1999.com",
+        "priorities": [
+          "Revenue growth",
+          "Market share",
+          "Reputation",
+          "Expansion"
+        ],
+        "pain_points": [
+          "Cash flow from insurance claims",
+          "Competition from new hospitals",
+          "Regulatory compliance burden",
+          "Patient acquisition costs rising"
+        ],
+        "best_pitch": "Show ROI: \u20b935k/month to recover \u20b98-15 lakhs/month in rejected claims",
+        "objection_handling": {
+          "too_expensive": "Cost is \u20b935k/month, but you're losing \u20b98-12 lakhs/month. That's 20x ROI.",
+          "integration_complex": "We've integrated with [similar hospital] in 1 week. Minimal IT involvement.",
+          "need_approval": "Let's do a free pilot with 50 claims first. Show results, then get approval."
+        }
+      },
+      {
+        "role": "CFO/Finance Head",
+        "name": "To be found via LinkedIn",
+        "linkedin": "To be scraped",
+        "email_pattern": "cfo@hkchospital|hyderabadkidneycentre|multispecialityhospital|since1999.com",
+        "priorities": [
+          "Cost reduction",
+          "Revenue recovery",
+          "Financial reporting",
+          "Budget optimization"
+        ],
+        "pain_points": [
+          "30-40% claim rejection rate",
+          "45-90 day payment delays",
+          "Manual reconciliation errors",
+          "Budget constraints"
+        ],
+        "best_pitch": "Free audit showing exact \u20b9 being lost in rejected claims",
+        "objection_handling": {
+          "too_expensive": "We pay for ourselves in the first month. After that, it's pure profit.",
+          "integration_complex": "No integration needed for pilot. We analyze your existing claim data.",
+          "need_approval": "Let me show you the numbers first. Then you can present to board with ROI proof."
+        }
+      },
+      {
+        "role": "COO/Operations Head",
+        "name": "To be found via LinkedIn",
+        "priorities": [
+          "Operational efficiency",
+          "Patient satisfaction",
+          "Staff productivity"
+        ],
+        "pain_points": [
+          "Staff spending 4-6 hours/day on claims",
+          "Patient complaints about billing",
+          "Manual data entry errors"
+        ],
+        "best_pitch": "Reduce staff workload by 70%, improve patient satisfaction"
+      },
+      {
+        "role": "IT Head/CIO",
+        "name": "To be found via LinkedIn",
+        "priorities": [
+          "System integration",
+          "Data security",
+          "Automation"
+        ],
+        "pain_points": [
+          "Legacy HMS systems",
+          "Manual processes",
+          "No API integrations"
+        ],
+        "best_pitch": "API-first solution, integrates with any HMS in 1 week"
+      }
+    ],
+    "revenue_opportunity": {
+      "estimated_bed_count": 100,
+      "monthly_claims": 1000,
+      "rejected_claims": 350,
+      "rejection_rate": "35%",
+      "avg_claim_value": "\u20b925,000",
+      "monthly_loss_inr": "\u20b987.5 lakhs",
+      "annual_loss_inr": "\u20b91050.0 lakhs",
+      "recoverable_70_percent": "\u20b961.2 lakhs/month",
+      "our_pricing": "\u20b935,000/month",
+      "roi": "175.0x",
+      "payback_period": "< 1 month",
+      "5_year_value": "\u20b93675 lakhs",
+      "confidence": "HIGH"
+    },
+    "outreach": {
+      "to": "ceo@hkchospital|hyderabadkidneycentre|multispecialityhospital|since1999.com",
+      "subject": "Recovering \u20b987.5 lakhs/month for HKC Hospital | Hyderabad Kidney Centre | Multi-Speciality Hospital | Since 1999",
+      "body": "Dear To be found via LinkedIn,\n\nI hope this email finds you well.\n\nI came across HKC Hospital | Hyderabad Kidney Centre | Multi-Speciality Hospital | Since 1999 in Hyderabad, Telangana and noticed you're processing approximately 1000 insurance claims monthly.\n\nBased on industry benchmarks and our analysis of your operations, you're likely losing \u20b987.5 lakhs every month due to:\n\u2022 35% claim rejection rate (industry average)\n\u2022 45-90 day processing delays\n\u2022 Manual data entry errors\n\n\n\n**We've built an AI system specifically for Indian hospitals that:**\n\u2705 Validates claims BEFORE submission (reduces rejections to <10%)\n\u2705 Auto-fills insurance forms in seconds (zero errors)\n\u2705 Tracks and recovers rejected claims automatically\n\u2705 Integrates with your existing HMS in 1 week\n\n**The Numbers for HKC Hospital | Hyderabad Kidney Centre | Multi-Speciality Hospital | Since 1999:**\n\u2022 Your estimated monthly loss: \u20b987.5 lakhs\n\u2022 Recoverable with our system: \u20b961.2 lakhs/month\n\u2022 Our cost: \u20b935,000/month\n\u2022 Your ROI: 175.0x return\n\u2022 Payback: < 1 month\n\u2022 5-year value: \u20b93675 lakhs\n\n**Free Audit Offer:**\nLet me analyze your last 100 claims and show you:\n1. Exact rejection patterns\n2. Exact \u20b9 amount being lost\n3. Exact recovery potential\n4. Proof of concept with your real data\n\nTakes 2 days. No cost. No commitment. No integration required.\n\nWould you be open to a 15-minute call this week to discuss?\n\nBest regards,\n[Your Name]\n[Your Company]\n[Your Phone/WhatsApp]\n\nP.S. We've already helped hospitals in Hyderabad and Bangalore recover \u20b95-12 lakhs/month. Happy to share case studies and connect you with references.\n",
+      "follow_up_1": "Hi To be found via LinkedIn,\n\nQuick follow-up on my email about recovering \u20b987.5 lakhs/month in rejected claims for HKC Hospital | Hyderabad Kidney Centre | Multi-Speciality Hospital | Since 1999.\n\nDid you get a chance to review it?\n\nThe free audit offer still stands - we can analyze your last 100 claims and show you exactly where the money is leaking.\n\nWould tomorrow at 3 PM work for a quick call?\n\nBest,\n[Your Name]\n",
+      "follow_up_2": "Hi To be found via LinkedIn,\n\nI understand you're busy. Let me make this simple:\n\n**Free Claim Audit for HKC Hospital | Hyderabad Kidney Centre | Multi-Speciality Hospital | Since 1999:**\n\u2022 We analyze your last 100 claims\n\u2022 Show you exact rejection patterns\n\u2022 Calculate exact \u20b9 being lost\n\u2022 Provide recovery roadmap\n\nTakes 2 days. Zero cost. Zero risk.\n\nIf we can't show you at least \u20b95 lakhs/month in recoverable revenue, we'll walk away.\n\nInterested?\n\nBest,\n[Your Name]\n",
+      "call_script": "Hi, this is [Your Name] from [Company].\n\nI sent you an email about recovering \u20b987.5 lakhs/month in rejected insurance claims for HKC Hospital | Hyderabad Kidney Centre | Multi-Speciality Hospital | Since 1999.\n\nDo you have 2 minutes?\n\n[If yes]\nGreat! We've built an AI system that helps hospitals like yours reduce claim rejections from 35% to under 10%. \n\nFor HKC Hospital | Hyderabad Kidney Centre | Multi-Speciality Hospital | Since 1999, we estimate you're losing \u20b987.5 lakhs monthly. We can recover about \u20b961.2 lakhs/month of that.\n\nOur cost is only \u20b935,000/month, which means 175.0x ROI.\n\nI'd love to offer you a free audit - we'll analyze your last 100 claims and show you exactly where the money is leaking. Takes 2 days, no cost, no commitment.\n\nWould that be helpful?\n\n[If objection: too expensive]\nI understand. But consider this: you're currently losing \u20b987.5 lakhs every month. Our system costs \u20b935,000/month. That's 175.0x return on investment. It pays for itself in the first month.\n\n[If objection: need to think]\nAbsolutely. How about we do the free audit first? You'll see the exact numbers, then you can decide. No pressure.\n\n[Close]\nGreat! I'll send you a calendar link. Looking forward to showing you the results.\n",
+      "best_time_to_call": "Tuesday-Thursday, 3-5 PM",
+      "channels": [
+        "Email",
+        "LinkedIn",
+        "Phone",
+        "WhatsApp"
+      ],
+      "priority": "HIGH"
+    },
+    "intelligence_score": 60,
+    "action_priority": "HIGH",
+    "generated_at": "2026-01-17T14:35:57.123639"
+  },
+  {
+    "hospital": {
+      "business_name": "Royal multi speciality hospital",
+      "location": "Hyderabad, Telangana",
+      "website": null,
+      "phone": "+91 99126 25247",
+      "address": "",
+      "rating": 0,
+      "reviews": 0
+    },
+    "market_intelligence": {
+      "summary": "",
+      "key_findings": [],
+      "sources": []
+    },
+    "website_analysis": {
+      "status": "no_website"
+    },
+    "decision_makers": [
+      {
+        "role": "CEO/Managing Director",
+        "name": "To be found via LinkedIn",
+        "linkedin": "To be scraped",
+        "email_pattern": "ceo@royalmultispecialityhospital.com",
+        "priorities": [
+          "Revenue growth",
+          "Market share",
+          "Reputation",
+          "Expansion"
+        ],
+        "pain_points": [
+          "Cash flow from insurance claims",
+          "Competition from new hospitals",
+          "Regulatory compliance burden",
+          "Patient acquisition costs rising"
+        ],
+        "best_pitch": "Show ROI: \u20b935k/month to recover \u20b98-15 lakhs/month in rejected claims",
+        "objection_handling": {
+          "too_expensive": "Cost is \u20b935k/month, but you're losing \u20b98-12 lakhs/month. That's 20x ROI.",
+          "integration_complex": "We've integrated with [similar hospital] in 1 week. Minimal IT involvement.",
+          "need_approval": "Let's do a free pilot with 50 claims first. Show results, then get approval."
+        }
+      },
+      {
+        "role": "CFO/Finance Head",
+        "name": "To be found via LinkedIn",
+        "linkedin": "To be scraped",
+        "email_pattern": "cfo@royalmultispecialityhospital.com",
+        "priorities": [
+          "Cost reduction",
+          "Revenue recovery",
+          "Financial reporting",
+          "Budget optimization"
+        ],
+        "pain_points": [
+          "30-40% claim rejection rate",
+          "45-90 day payment delays",
+          "Manual reconciliation errors",
+          "Budget constraints"
+        ],
+        "best_pitch": "Free audit showing exact \u20b9 being lost in rejected claims",
+        "objection_handling": {
+          "too_expensive": "We pay for ourselves in the first month. After that, it's pure profit.",
+          "integration_complex": "No integration needed for pilot. We analyze your existing claim data.",
+          "need_approval": "Let me show you the numbers first. Then you can present to board with ROI proof."
+        }
+      },
+      {
+        "role": "COO/Operations Head",
+        "name": "To be found via LinkedIn",
+        "priorities": [
+          "Operational efficiency",
+          "Patient satisfaction",
+          "Staff productivity"
+        ],
+        "pain_points": [
+          "Staff spending 4-6 hours/day on claims",
+          "Patient complaints about billing",
+          "Manual data entry errors"
+        ],
+        "best_pitch": "Reduce staff workload by 70%, improve patient satisfaction"
+      },
+      {
+        "role": "IT Head/CIO",
+        "name": "To be found via LinkedIn",
+        "priorities": [
+          "System integration",
+          "Data security",
+          "Automation"
+        ],
+        "pain_points": [
+          "Legacy HMS systems",
+          "Manual processes",
+          "No API integrations"
+        ],
+        "best_pitch": "API-first solution, integrates with any HMS in 1 week"
+      }
+    ],
+    "revenue_opportunity": {
+      "estimated_bed_count": 100,
+      "monthly_claims": 1000,
+      "rejected_claims": 350,
+      "rejection_rate": "35%",
+      "avg_claim_value": "\u20b925,000",
+      "monthly_loss_inr": "\u20b987.5 lakhs",
+      "annual_loss_inr": "\u20b91050.0 lakhs",
+      "recoverable_70_percent": "\u20b961.2 lakhs/month",
+      "our_pricing": "\u20b935,000/month",
+      "roi": "175.0x",
+      "payback_period": "< 1 month",
+      "5_year_value": "\u20b93675 lakhs",
+      "confidence": "HIGH"
+    },
+    "outreach": {
+      "to": "ceo@royalmultispecialityhospital.com",
+      "subject": "Recovering \u20b987.5 lakhs/month for Royal multi speciality hospital",
+      "body": "Dear To be found via LinkedIn,\n\nI hope this email finds you well.\n\nI came across Royal multi speciality hospital in Hyderabad, Telangana and noticed you're processing approximately 1000 insurance claims monthly.\n\nBased on industry benchmarks and our analysis of your operations, you're likely losing \u20b987.5 lakhs every month due to:\n\u2022 35% claim rejection rate (industry average)\n\u2022 45-90 day processing delays\n\u2022 Manual data entry errors\n\n\n\n**We've built an AI system specifically for Indian hospitals that:**\n\u2705 Validates claims BEFORE submission (reduces rejections to <10%)\n\u2705 Auto-fills insurance forms in seconds (zero errors)\n\u2705 Tracks and recovers rejected claims automatically\n\u2705 Integrates with your existing HMS in 1 week\n\n**The Numbers for Royal multi speciality hospital:**\n\u2022 Your estimated monthly loss: \u20b987.5 lakhs\n\u2022 Recoverable with our system: \u20b961.2 lakhs/month\n\u2022 Our cost: \u20b935,000/month\n\u2022 Your ROI: 175.0x return\n\u2022 Payback: < 1 month\n\u2022 5-year value: \u20b93675 lakhs\n\n**Free Audit Offer:**\nLet me analyze your last 100 claims and show you:\n1. Exact rejection patterns\n2. Exact \u20b9 amount being lost\n3. Exact recovery potential\n4. Proof of concept with your real data\n\nTakes 2 days. No cost. No commitment. No integration required.\n\nWould you be open to a 15-minute call this week to discuss?\n\nBest regards,\n[Your Name]\n[Your Company]\n[Your Phone/WhatsApp]\n\nP.S. We've already helped hospitals in Hyderabad and Bangalore recover \u20b95-12 lakhs/month. Happy to share case studies and connect you with references.\n",
+      "follow_up_1": "Hi To be found via LinkedIn,\n\nQuick follow-up on my email about recovering \u20b987.5 lakhs/month in rejected claims for Royal multi speciality hospital.\n\nDid you get a chance to review it?\n\nThe free audit offer still stands - we can analyze your last 100 claims and show you exactly where the money is leaking.\n\nWould tomorrow at 3 PM work for a quick call?\n\nBest,\n[Your Name]\n",
+      "follow_up_2": "Hi To be found via LinkedIn,\n\nI understand you're busy. Let me make this simple:\n\n**Free Claim Audit for Royal multi speciality hospital:**\n\u2022 We analyze your last 100 claims\n\u2022 Show you exact rejection patterns\n\u2022 Calculate exact \u20b9 being lost\n\u2022 Provide recovery roadmap\n\nTakes 2 days. Zero cost. Zero risk.\n\nIf we can't show you at least \u20b95 lakhs/month in recoverable revenue, we'll walk away.\n\nInterested?\n\nBest,\n[Your Name]\n",
+      "call_script": "Hi, this is [Your Name] from [Company].\n\nI sent you an email about recovering \u20b987.5 lakhs/month in rejected insurance claims for Royal multi speciality hospital.\n\nDo you have 2 minutes?\n\n[If yes]\nGreat! We've built an AI system that helps hospitals like yours reduce claim rejections from 35% to under 10%. \n\nFor Royal multi speciality hospital, we estimate you're losing \u20b987.5 lakhs monthly. We can recover about \u20b961.2 lakhs/month of that.\n\nOur cost is only \u20b935,000/month, which means 175.0x ROI.\n\nI'd love to offer you a free audit - we'll analyze your last 100 claims and show you exactly where the money is leaking. Takes 2 days, no cost, no commitment.\n\nWould that be helpful?\n\n[If objection: too expensive]\nI understand. But consider this: you're currently losing \u20b987.5 lakhs every month. Our system costs \u20b935,000/month. That's 175.0x return on investment. It pays for itself in the first month.\n\n[If objection: need to think]\nAbsolutely. How about we do the free audit first? You'll see the exact numbers, then you can decide. No pressure.\n\n[Close]\nGreat! I'll send you a calendar link. Looking forward to showing you the results.\n",
+      "best_time_to_call": "Tuesday-Thursday, 3-5 PM",
+      "channels": [
+        "Email",
+        "LinkedIn",
+        "Phone",
+        "WhatsApp"
+      ],
+      "priority": "HIGH"
+    },
+    "intelligence_score": 30,
+    "action_priority": "HIGH",
+    "generated_at": "2026-01-17T14:35:57.136605"
+  },
+  {
+    "hospital": {
+      "business_name": "MagnAid Hospitals | Best Multispeciality Hospital Near Yousufguda, Ameerpet, Hyderabad",
+      "location": "Hyderabad, Telangana",
+      "website": "https://www.magnaid.com/",
+      "phone": "+91 79939 99040",
+      "address": "",
+      "rating": 0,
+      "reviews": 0
+    },
+    "market_intelligence": {
+      "summary": "",
+      "key_findings": [],
+      "sources": []
+    },
+    "website_analysis": {
+      "website": "https://www.magnaid.com/",
+      "steel_analysis": {},
+      "firecrawl_data": {},
+      "pain_signals": []
+    },
+    "decision_makers": [
+      {
+        "role": "CEO/Managing Director",
+        "name": "To be found via LinkedIn",
+        "linkedin": "To be scraped",
+        "email_pattern": "ceo@magnaidhospitals|bestmultispecialityhospitalnearyousufguda,ameerpet,hyderabad.com",
+        "priorities": [
+          "Revenue growth",
+          "Market share",
+          "Reputation",
+          "Expansion"
+        ],
+        "pain_points": [
+          "Cash flow from insurance claims",
+          "Competition from new hospitals",
+          "Regulatory compliance burden",
+          "Patient acquisition costs rising"
+        ],
+        "best_pitch": "Show ROI: \u20b935k/month to recover \u20b98-15 lakhs/month in rejected claims",
+        "objection_handling": {
+          "too_expensive": "Cost is \u20b935k/month, but you're losing \u20b98-12 lakhs/month. That's 20x ROI.",
+          "integration_complex": "We've integrated with [similar hospital] in 1 week. Minimal IT involvement.",
+          "need_approval": "Let's do a free pilot with 50 claims first. Show results, then get approval."
+        }
+      },
+      {
+        "role": "CFO/Finance Head",
+        "name": "To be found via LinkedIn",
+        "linkedin": "To be scraped",
+        "email_pattern": "cfo@magnaidhospitals|bestmultispecialityhospitalnearyousufguda,ameerpet,hyderabad.com",
+        "priorities": [
+          "Cost reduction",
+          "Revenue recovery",
+          "Financial reporting",
+          "Budget optimization"
+        ],
+        "pain_points": [
+          "30-40% claim rejection rate",
+          "45-90 day payment delays",
+          "Manual reconciliation errors",
+          "Budget constraints"
+        ],
+        "best_pitch": "Free audit showing exact \u20b9 being lost in rejected claims",
+        "objection_handling": {
+          "too_expensive": "We pay for ourselves in the first month. After that, it's pure profit.",
+          "integration_complex": "No integration needed for pilot. We analyze your existing claim data.",
+          "need_approval": "Let me show you the numbers first. Then you can present to board with ROI proof."
+        }
+      },
+      {
+        "role": "COO/Operations Head",
+        "name": "To be found via LinkedIn",
+        "priorities": [
+          "Operational efficiency",
+          "Patient satisfaction",
+          "Staff productivity"
+        ],
+        "pain_points": [
+          "Staff spending 4-6 hours/day on claims",
+          "Patient complaints about billing",
+          "Manual data entry errors"
+        ],
+        "best_pitch": "Reduce staff workload by 70%, improve patient satisfaction"
+      },
+      {
+        "role": "IT Head/CIO",
+        "name": "To be found via LinkedIn",
+        "priorities": [
+          "System integration",
+          "Data security",
+          "Automation"
+        ],
+        "pain_points": [
+          "Legacy HMS systems",
+          "Manual processes",
+          "No API integrations"
+        ],
+        "best_pitch": "API-first solution, integrates with any HMS in 1 week"
+      }
+    ],
+    "revenue_opportunity": {
+      "estimated_bed_count": 100,
+      "monthly_claims": 1000,
+      "rejected_claims": 350,
+      "rejection_rate": "35%",
+      "avg_claim_value": "\u20b925,000",
+      "monthly_loss_inr": "\u20b987.5 lakhs",
+      "annual_loss_inr": "\u20b91050.0 lakhs",
+      "recoverable_70_percent": "\u20b961.2 lakhs/month",
+      "our_pricing": "\u20b935,000/month",
+      "roi": "175.0x",
+      "payback_period": "< 1 month",
+      "5_year_value": "\u20b93675 lakhs",
+      "confidence": "HIGH"
+    },
+    "outreach": {
+      "to": "ceo@magnaidhospitals|bestmultispecialityhospitalnearyousufguda,ameerpet,hyderabad.com",
+      "subject": "Recovering \u20b987.5 lakhs/month for MagnAid Hospitals | Best Multispeciality Hospital Near Yousufguda, Ameerpet, Hyderabad",
+      "body": "Dear To be found via LinkedIn,\n\nI hope this email finds you well.\n\nI came across MagnAid Hospitals | Best Multispeciality Hospital Near Yousufguda, Ameerpet, Hyderabad in Hyderabad, Telangana and noticed you're processing approximately 1000 insurance claims monthly.\n\nBased on industry benchmarks and our analysis of your operations, you're likely losing \u20b987.5 lakhs every month due to:\n\u2022 35% claim rejection rate (industry average)\n\u2022 45-90 day processing delays\n\u2022 Manual data entry errors\n\n\n\n**We've built an AI system specifically for Indian hospitals that:**\n\u2705 Validates claims BEFORE submission (reduces rejections to <10%)\n\u2705 Auto-fills insurance forms in seconds (zero errors)\n\u2705 Tracks and recovers rejected claims automatically\n\u2705 Integrates with your existing HMS in 1 week\n\n**The Numbers for MagnAid Hospitals | Best Multispeciality Hospital Near Yousufguda, Ameerpet, Hyderabad:**\n\u2022 Your estimated monthly loss: \u20b987.5 lakhs\n\u2022 Recoverable with our system: \u20b961.2 lakhs/month\n\u2022 Our cost: \u20b935,000/month\n\u2022 Your ROI: 175.0x return\n\u2022 Payback: < 1 month\n\u2022 5-year value: \u20b93675 lakhs\n\n**Free Audit Offer:**\nLet me analyze your last 100 claims and show you:\n1. Exact rejection patterns\n2. Exact \u20b9 amount being lost\n3. Exact recovery potential\n4. Proof of concept with your real data\n\nTakes 2 days. No cost. No commitment. No integration required.\n\nWould you be open to a 15-minute call this week to discuss?\n\nBest regards,\n[Your Name]\n[Your Company]\n[Your Phone/WhatsApp]\n\nP.S. We've already helped hospitals in Hyderabad and Bangalore recover \u20b95-12 lakhs/month. Happy to share case studies and connect you with references.\n",
+      "follow_up_1": "Hi To be found via LinkedIn,\n\nQuick follow-up on my email about recovering \u20b987.5 lakhs/month in rejected claims for MagnAid Hospitals | Best Multispeciality Hospital Near Yousufguda, Ameerpet, Hyderabad.\n\nDid you get a chance to review it?\n\nThe free audit offer still stands - we can analyze your last 100 claims and show you exactly where the money is leaking.\n\nWould tomorrow at 3 PM work for a quick call?\n\nBest,\n[Your Name]\n",
+      "follow_up_2": "Hi To be found via LinkedIn,\n\nI understand you're busy. Let me make this simple:\n\n**Free Claim Audit for MagnAid Hospitals | Best Multispeciality Hospital Near Yousufguda, Ameerpet, Hyderabad:**\n\u2022 We analyze your last 100 claims\n\u2022 Show you exact rejection patterns\n\u2022 Calculate exact \u20b9 being lost\n\u2022 Provide recovery roadmap\n\nTakes 2 days. Zero cost. Zero risk.\n\nIf we can't show you at least \u20b95 lakhs/month in recoverable revenue, we'll walk away.\n\nInterested?\n\nBest,\n[Your Name]\n",
+      "call_script": "Hi, this is [Your Name] from [Company].\n\nI sent you an email about recovering \u20b987.5 lakhs/month in rejected insurance claims for MagnAid Hospitals | Best Multispeciality Hospital Near Yousufguda, Ameerpet, Hyderabad.\n\nDo you have 2 minutes?\n\n[If yes]\nGreat! We've built an AI system that helps hospitals like yours reduce claim rejections from 35% to under 10%. \n\nFor MagnAid Hospitals | Best Multispeciality Hospital Near Yousufguda, Ameerpet, Hyderabad, we estimate you're losing \u20b987.5 lakhs monthly. We can recover about \u20b961.2 lakhs/month of that.\n\nOur cost is only \u20b935,000/month, which means 175.0x ROI.\n\nI'd love to offer you a free audit - we'll analyze your last 100 claims and show you exactly where the money is leaking. Takes 2 days, no cost, no commitment.\n\nWould that be helpful?\n\n[If objection: too expensive]\nI understand. But consider this: you're currently losing \u20b987.5 lakhs every month. Our system costs \u20b935,000/month. That's 175.0x return on investment. It pays for itself in the first month.\n\n[If objection: need to think]\nAbsolutely. How about we do the free audit first? You'll see the exact numbers, then you can decide. No pressure.\n\n[Close]\nGreat! I'll send you a calendar link. Looking forward to showing you the results.\n",
+      "best_time_to_call": "Tuesday-Thursday, 3-5 PM",
+      "channels": [
+        "Email",
+        "LinkedIn",
+        "Phone",
+        "WhatsApp"
+      ],
+      "priority": "HIGH"
+    },
+    "intelligence_score": 60,
+    "action_priority": "HIGH",
+    "generated_at": "2026-01-17T14:35:57.784867"
+  },
+  {
+    "hospital": {
+      "business_name": "TX Hospitals Corporate office",
+      "location": "Hyderabad, Telangana",
+      "website": "https://www.txhospitals.in/",
+      "phone": "+91 90894 89089",
+      "address": "",
+      "rating": 0,
+      "reviews": 0
+    },
+    "market_intelligence": {
+      "summary": "",
+      "key_findings": [],
+      "sources": []
+    },
+    "website_analysis": {
+      "website": "https://www.txhospitals.in/",
+      "steel_analysis": {},
+      "firecrawl_data": {},
+      "pain_signals": []
+    },
+    "decision_makers": [
+      {
+        "role": "CEO/Managing Director",
+        "name": "To be found via LinkedIn",
+        "linkedin": "To be scraped",
+        "email_pattern": "ceo@txhospitalscorporateoffice.com",
+        "priorities": [
+          "Revenue growth",
+          "Market share",
+          "Reputation",
+          "Expansion"
+        ],
+        "pain_points": [
+          "Cash flow from insurance claims",
+          "Competition from new hospitals",
+          "Regulatory compliance burden",
+          "Patient acquisition costs rising"
+        ],
+        "best_pitch": "Show ROI: \u20b935k/month to recover \u20b98-15 lakhs/month in rejected claims",
+        "objection_handling": {
+          "too_expensive": "Cost is \u20b935k/month, but you're losing \u20b98-12 lakhs/month. That's 20x ROI.",
+          "integration_complex": "We've integrated with [similar hospital] in 1 week. Minimal IT involvement.",
+          "need_approval": "Let's do a free pilot with 50 claims first. Show results, then get approval."
+        }
+      },
+      {
+        "role": "CFO/Finance Head",
+        "name": "To be found via LinkedIn",
+        "linkedin": "To be scraped",
+        "email_pattern": "cfo@txhospitalscorporateoffice.com",
+        "priorities": [
+          "Cost reduction",
+          "Revenue recovery",
+          "Financial reporting",
+          "Budget optimization"
+        ],
+        "pain_points": [
+          "30-40% claim rejection rate",
+          "45-90 day payment delays",
+          "Manual reconciliation errors",
+          "Budget constraints"
+        ],
+        "best_pitch": "Free audit showing exact \u20b9 being lost in rejected claims",
+        "objection_handling": {
+          "too_expensive": "We pay for ourselves in the first month. After that, it's pure profit.",
+          "integration_complex": "No integration needed for pilot. We analyze your existing claim data.",
+          "need_approval": "Let me show you the numbers first. Then you can present to board with ROI proof."
+        }
+      },
+      {
+        "role": "COO/Operations Head",
+        "name": "To be found via LinkedIn",
+        "priorities": [
+          "Operational efficiency",
+          "Patient satisfaction",
+          "Staff productivity"
+        ],
+        "pain_points": [
+          "Staff spending 4-6 hours/day on claims",
+          "Patient complaints about billing",
+          "Manual data entry errors"
+        ],
+        "best_pitch": "Reduce staff workload by 70%, improve patient satisfaction"
+      },
+      {
+        "role": "IT Head/CIO",
+        "name": "To be found via LinkedIn",
+        "priorities": [
+          "System integration",
+          "Data security",
+          "Automation"
+        ],
+        "pain_points": [
+          "Legacy HMS systems",
+          "Manual processes",
+          "No API integrations"
+        ],
+        "best_pitch": "API-first solution, integrates with any HMS in 1 week"
+      }
+    ],
+    "revenue_opportunity": {
+      "estimated_bed_count": 100,
+      "monthly_claims": 1000,
+      "rejected_claims": 350,
+      "rejection_rate": "35%",
+      "avg_claim_value": "\u20b925,000",
+      "monthly_loss_inr": "\u20b987.5 lakhs",
+      "annual_loss_inr": "\u20b91050.0 lakhs",
+      "recoverable_70_percent": "\u20b961.2 lakhs/month",
+      "our_pricing": "\u20b935,000/month",
+      "roi": "175.0x",
+      "payback_period": "< 1 month",
+      "5_year_value": "\u20b93675 lakhs",
+      "confidence": "HIGH"
+    },
+    "outreach": {
+      "to": "ceo@txhospitalscorporateoffice.com",
+      "subject": "Recovering \u20b987.5 lakhs/month for TX Hospitals Corporate office",
+      "body": "Dear To be found via LinkedIn,\n\nI hope this email finds you well.\n\nI came across TX Hospitals Corporate office in Hyderabad, Telangana and noticed you're processing approximately 1000 insurance claims monthly.\n\nBased on industry benchmarks and our analysis of your operations, you're likely losing \u20b987.5 lakhs every month due to:\n\u2022 35% claim rejection rate (industry average)\n\u2022 45-90 day processing delays\n\u2022 Manual data entry errors\n\n\n\n**We've built an AI system specifically for Indian hospitals that:**\n\u2705 Validates claims BEFORE submission (reduces rejections to <10%)\n\u2705 Auto-fills insurance forms in seconds (zero errors)\n\u2705 Tracks and recovers rejected claims automatically\n\u2705 Integrates with your existing HMS in 1 week\n\n**The Numbers for TX Hospitals Corporate office:**\n\u2022 Your estimated monthly loss: \u20b987.5 lakhs\n\u2022 Recoverable with our system: \u20b961.2 lakhs/month\n\u2022 Our cost: \u20b935,000/month\n\u2022 Your ROI: 175.0x return\n\u2022 Payback: < 1 month\n\u2022 5-year value: \u20b93675 lakhs\n\n**Free Audit Offer:**\nLet me analyze your last 100 claims and show you:\n1. Exact rejection patterns\n2. Exact \u20b9 amount being lost\n3. Exact recovery potential\n4. Proof of concept with your real data\n\nTakes 2 days. No cost. No commitment. No integration required.\n\nWould you be open to a 15-minute call this week to discuss?\n\nBest regards,\n[Your Name]\n[Your Company]\n[Your Phone/WhatsApp]\n\nP.S. We've already helped hospitals in Hyderabad and Bangalore recover \u20b95-12 lakhs/month. Happy to share case studies and connect you with references.\n",
+      "follow_up_1": "Hi To be found via LinkedIn,\n\nQuick follow-up on my email about recovering \u20b987.5 lakhs/month in rejected claims for TX Hospitals Corporate office.\n\nDid you get a chance to review it?\n\nThe free audit offer still stands - we can analyze your last 100 claims and show you exactly where the money is leaking.\n\nWould tomorrow at 3 PM work for a quick call?\n\nBest,\n[Your Name]\n",
+      "follow_up_2": "Hi To be found via LinkedIn,\n\nI understand you're busy. Let me make this simple:\n\n**Free Claim Audit for TX Hospitals Corporate office:**\n\u2022 We analyze your last 100 claims\n\u2022 Show you exact rejection patterns\n\u2022 Calculate exact \u20b9 being lost\n\u2022 Provide recovery roadmap\n\nTakes 2 days. Zero cost. Zero risk.\n\nIf we can't show you at least \u20b95 lakhs/month in recoverable revenue, we'll walk away.\n\nInterested?\n\nBest,\n[Your Name]\n",
+      "call_script": "Hi, this is [Your Name] from [Company].\n\nI sent you an email about recovering \u20b987.5 lakhs/month in rejected insurance claims for TX Hospitals Corporate office.\n\nDo you have 2 minutes?\n\n[If yes]\nGreat! We've built an AI system that helps hospitals like yours reduce claim rejections from 35% to under 10%. \n\nFor TX Hospitals Corporate office, we estimate you're losing \u20b987.5 lakhs monthly. We can recover about \u20b961.2 lakhs/month of that.\n\nOur cost is only \u20b935,000/month, which means 175.0x ROI.\n\nI'd love to offer you a free audit - we'll analyze your last 100 claims and show you exactly where the money is leaking. Takes 2 days, no cost, no commitment.\n\nWould that be helpful?\n\n[If objection: too expensive]\nI understand. But consider this: you're currently losing \u20b987.5 lakhs every month. Our system costs \u20b935,000/month. That's 175.0x return on investment. It pays for itself in the first month.\n\n[If objection: need to think]\nAbsolutely. How about we do the free audit first? You'll see the exact numbers, then you can decide. No pressure.\n\n[Close]\nGreat! I'll send you a calendar link. Looking forward to showing you the results.\n",
+      "best_time_to_call": "Tuesday-Thursday, 3-5 PM",
+      "channels": [
+        "Email",
+        "LinkedIn",
+        "Phone",
+        "WhatsApp"
+      ],
+      "priority": "HIGH"
+    },
+    "intelligence_score": 60,
+    "action_priority": "HIGH",
+    "generated_at": "2026-01-17T14:35:58.473720"
+  }
+]
