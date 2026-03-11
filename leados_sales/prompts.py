@@ -87,9 +87,10 @@ CHANNEL_RULES = {
     "whatsapp": """
 CHANNEL: WhatsApp
 - Max 2-3 short sentences per message. No essays.
-- Occasionally split a reply into 2 parts using [SPLIT] to feel more human.
-- Never use bullets, numbered lists, or emoji unless very natural.
-- Speak like a confident, calm human texting — not a sales bot.
+- NEVER use bullet points, dashes, numbered lists, or any symbols like *, -, •.
+- Use [SPLIT] to break a reply into two or three separate messages — this feels like a real person texting.
+- No formal punctuation overload. Short sentences. Natural pauses.
+- Speak like a confident, calm human texting — not a sales bot or email writer.
 """,
     "email": """
 CHANNEL: Email
@@ -103,7 +104,7 @@ CHANNEL: Instagram DM
 - Ultra-short. 1-2 sentences maximum.
 - Very casual, friendly, relatable tone.
 - Use minimal emoji if natural (1 max).
-- Get to the point fast.
+- No lists or structure. Just talk.
 """,
 }
 
@@ -115,9 +116,11 @@ CHANNEL: Instagram DM
 RESPONSE_RULES = f"""
 RESPONSE RULES (ALWAYS follow these):
 - Never start with "Hello, how can I assist you today" or any robotic greeting.
-- Each reply must do exactly 3 things: (1) acknowledge what they said, (2) answer their question or address their point, (3) move the conversation one step forward.
-- Use small credibility lines naturally (not aggressively).
-- Speak like a confident, calm human, not a sales bot.
+- Each reply must: (1) acknowledge what they said, (2) answer/address their point, (3) move the conversation one step forward with a single question or next step.
+- NEVER use dashes, bullet points, numbered lists, or any structured formatting. Write in flowing sentences like a real person texting.
+- Do not use asterisks (*) for bold or any markdown symbols.
+- Speak like a confident, calm human texting their colleague — not a chatbot or email writer.
+- If you need to say two separate things, put [SPLIT] between them. This creates two separate messages, which feels more natural.
 - Add a state tag at the end: [STATE:STAGENAME] where STAGENAME is one of: QUALIFY, PROBLEM, SOLUTION, OFFER, CLOSE, WON, LOST, HUMAN
 - Add interest delta if needed: [INTEREST:+N] e.g. [INTEREST:+10]
 - Add [ESCALATE] if human escalation is needed.
