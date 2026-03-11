@@ -213,7 +213,10 @@ def node_draft_response(state: dict) -> dict:
             max_tokens=350,
         )
         reply_text = resp.choices[0].message.content.strip()
-    except Exception:
+    except Exception as e:
+        import traceback
+        print(f"OpenAI Draft Failed: {e}")
+        print(traceback.format_exc())
         reply_text = get_fallback(stage)
 
     return {"raw_llm_output": reply_text}

@@ -114,7 +114,16 @@ class ApifyClient:
             "searchStringsArray": search_queries,
             "maxCrawledPlacesPerSearch": max(1, limit // len(keywords)) if keywords else limit,
             "language": "en",
-            "includeWebResults": False,
+            # MAXIMUM SIGNAL EXTRACTION - Get everything Google Maps provides
+            "scrapePlaceDetailPage": True,  # Full detail page scraping
+            "includeHistogram": True,  # Popular times data
+            "includeOpeningHours": True,  # Business hours
+            "includeWebResults": True,  # Web results
+            "includePeopleAlsoSearch": True,  # Related searches
+            "maxQuestions": 999,  # Q&A data
+            "maxImages": 50,  # Business images
+            "scrapeContacts": True,  # Email enrichment
+            "maxReviews": 100,  # More reviews for sentiment
         }
         
         try:

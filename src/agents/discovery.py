@@ -164,11 +164,36 @@ class DiscoveryAgent(BaseAgent, CircuitBreakerMixin, RetryMixin):
             
             leads = []
             for raw in raw_results:
+                self._logger.info(f"Processing raw result: {raw.get('title', 'NO TITLE')}")
                 lead = self._parse_google_maps_result(raw)
                 if lead:
+                    self._logger.info(f"Parsed lead: {lead.business_name}")
                     # Skip duplicate check if requested
                     if skip_duplicate_check or not self._is_duplicate(lead):
                         self._save_lead(lead)
+                        
+                        # Store raw Apify data in lead_state metadata for enrichment agent
+                        self._db.save_lead_state({
+                            "lead_id": str(lead.lead_id),
+                            "current_stage": "discovery",
+                            "last_node": "discovery",
+                            "retry_count": 0,
+                            "metadata": {
+                                "raw_apify_data": {
+                                    "reviewsCount": raw.get("reviewsCount", 0),
+                                    "totalScore": raw.get("totalScore"),
+                                    "reviewsDistribution": raw.get("reviewsDistribution"),
+                                    "openingHours": raw.get("openingHours"),
+                                    "reviews": raw.get("reviews", []),
+                                    "questionsAndAnswers": raw.get("questionsAndAnswers"),
+                                    "peopleAlsoSearch": raw.get("peopleAlsoSearch"),
+                                    "imageCategories": raw.get("imageCategories"),
+                                    "webResults": raw.get("webResults"),
+                                    "tableReservationLinks": raw.get("tableReservationLinks"),
+                                }
+                            },
+                        })
+                        
                         leads.append(lead)
                         
                         # Auto-process if enabled (100X upgrade)
@@ -263,21 +288,28 @@ class DiscoveryAgent(BaseAgent, CircuitBreakerMixin, RetryMixin):
             if raw.get("state"):
                 geo_tags.append(raw["state"])
             
-            return Lead(
+            # Create lead - return Lead object
+            lead = Lead(
                 lead_id=uuid4(),
                 business_name=raw.get("title") or raw.get("name", "Unknown"),
-                category=raw.get("category") or raw.get("categories", [None])[0],
+                category=raw.get("categoryName") or raw.get("category") or (raw.get("categories", [None])[0] if raw.get("categories") else None),
                 location=location,
                 geo_tags=geo_tags,
                 website=raw.get("website"),
                 landing_page_url=raw.get("website"),
                 phone=raw.get("phone"),
-                emails_found=[],  # Google Maps doesn't provide emails directly
-                facebook_page=raw.get("facebook"),
-                instagram=raw.get("instagram"),
-                ads_active=False,  # Google Maps doesn't indicate ad status
+                emails_found=raw.get("emails", []),
+                facebook_page=raw.get("facebooks", [None])[0] if raw.get("facebooks") else None,
+                instagram=raw.get("instagrams", [None])[0] if raw.get("instagrams") else None,
+                ads_active=False,
                 lead_lifecycle_state=LeadLifecycleState.NEW,
+                # Volume signals from Google Maps
+                reviews_count=raw.get("reviewsCount") or raw.get("reviews_count"),
+                rating=raw.get("totalScore") or raw.get("rating"),
             )
+            
+            return lead
+            
         except Exception as e:
             self._logger.error(f"Error parsing Google Maps result: {e}")
             return None
@@ -338,9 +370,9 @@ class DiscoveryAgent(BaseAgent, CircuitBreakerMixin, RetryMixin):
         
         # Convert enums to strings
         if lead_dict.get("cta_type"):
-            lead_dict["cta_type"] = lead_dict["cta_type"]
+            lead_dict["cta_type"] = str(lead_dict["cta_type"])
         if lead_dict.get("lead_lifecycle_state"):
-            lead_dict["lead_lifecycle_state"] = lead_dict["lead_lifecycle_state"]
+            lead_dict["lead_lifecycle_state"] = str(lead_dict["lead_lifecycle_state"])
         
         self._db.create_lead(lead_dict)
         
@@ -366,12 +398,12 @@ class DiscoveryAgent(BaseAgent, CircuitBreakerMixin, RetryMixin):
         from src.graph.state import LeadGraphState
         
         # Create state for this lead
-        lead_dict = lead.model_dump() if hasattr(lead, 'model_dump') else dict(lead)
-        lead_dict["lead_id"] = str(lead_dict.get("lead_id", ""))
+        lead_dict = lead.model_dump()
+        lead_dict["lead_id"] = str(lead.lead_id)
         
         state: LeadGraphState = {
-            "lead_id": lead_dict.get("lead_id"),
-            "thread_id": f"auto-{lead_dict.get('lead_id')}",
+            "lead_id": lead_dict["lead_id"],
+            "thread_id": f"auto-{lead_dict['lead_id']}",
             "lead": lead_dict,
             "current_stage": "enrichment",
             "last_node": "discovery",
@@ -395,8 +427,8 @@ class DiscoveryAgent(BaseAgent, CircuitBreakerMixin, RetryMixin):
         }
         
         result = {
-            "lead_id": lead_dict.get("lead_id"),
-            "business_name": lead_dict.get("business_name"),
+            "lead_id": lead_dict["lead_id"],
+            "business_name": lead_dict["business_name"],
             "success": False,
             "tier": None,
             "final_score": None,
@@ -420,8 +452,10 @@ class DiscoveryAgent(BaseAgent, CircuitBreakerMixin, RetryMixin):
             result["final_score"] = state.get("scoring", {}).get("final_score")
             
         except Exception as e:
-            self._logger.error(f"Auto-process failed for {lead_dict.get('business_name')}: {e}")
+            self._logger.error(f"Auto-process failed for {lead_dict['business_name']}: {e}")
             result["error"] = str(e)
+            import traceback
+            traceback.print_exc()
         
         return result
 

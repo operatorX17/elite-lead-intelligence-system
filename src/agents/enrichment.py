@@ -82,6 +82,13 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         
         lead = state["lead"]
         
+        # Get raw Apify data from metadata (stored by discovery agent)
+        metadata = state.get("metadata", {})
+        raw_apify_data = metadata.get("raw_apify_data", {})
+        
+        # Merge raw Apify data into lead for volume signal extraction
+        lead_with_apify = {**lead, **raw_apify_data}
+        
         # Extract tech signals from website
         tech_signals = {}
         if lead.get("website"):
@@ -93,6 +100,9 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         # Normalize contacts
         normalized_phone = self._normalize_phone(lead.get("phone"))
         validated_emails = self._validate_emails(lead.get("emails_found", []))
+        
+        # Extract volume signals from Google Maps data (NEW) - use merged data
+        volume_signals = self._extract_volume_signals(lead_with_apify)
         
         # Compute scores
         enrichment_confidence = self._compute_enrichment_confidence(
@@ -115,6 +125,22 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             "contact_quality_score": contact_quality_score,
             "normalized_phone": normalized_phone,
             "validated_emails": validated_emails,
+            # Volume signals (NEW)
+            "popular_times_histogram": volume_signals.get("popular_times_histogram"),
+            "popular_times_live_text": volume_signals.get("popular_times_live_text"),
+            "people_typically_spend_here": volume_signals.get("people_typically_spend_here"),
+            "peak_busyness": volume_signals.get("peak_busyness"),
+            "avg_busyness": volume_signals.get("avg_busyness"),
+            "busy_hours_count": volume_signals.get("busy_hours_count"),
+            "avg_visit_duration_min": volume_signals.get("avg_visit_duration_min"),
+            "is_peak_busy": volume_signals.get("is_peak_busy", False),
+            "is_above_average": volume_signals.get("is_above_average", False),
+            "opening_hours": volume_signals.get("opening_hours"),
+            "reviews_distribution": volume_signals.get("reviews_distribution"),
+            "questions_and_answers": volume_signals.get("questions_and_answers"),
+            "web_results": volume_signals.get("web_results"),
+            "table_reservation_links": volume_signals.get("table_reservation_links"),
+            "image_categories": volume_signals.get("image_categories"),
         }
         
         state["enrichment"] = enrichment
@@ -126,17 +152,52 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
     
     def _extract_tech_signals(self, website: str) -> Dict[str, str]:
         """
-        Extract technology signals from website.
+        Extract technology signals from website using Firecrawl REST API.
         Requirements: 4.1
         """
         signals = {}
         
         try:
-            # Crawl website for tech signals
-            crawl_result = self._apify.crawl_website(website, max_pages=5)
+            import requests
+            import os
             
-            # Get page content (simplified - in production would analyze HTML)
-            page_content = str(crawl_result).lower()
+            # Get Firecrawl API key from environment
+            api_key = os.getenv('FIRECRAWL_API_KEY')
+            if not api_key:
+                self._logger.warning("FIRECRAWL_API_KEY not set, using Apify fallback")
+                # Fallback to Apify
+                crawl_result = self._apify.crawl_website(website, max_pages=1)
+                page_content = str(crawl_result).lower()
+            else:
+                # Use Firecrawl REST API directly
+                headers = {
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json"
+                }
+                
+                payload = {
+                    "url": website,
+                    "formats": ["markdown", "html"],
+                    "onlyMainContent": True
+                }
+                
+                response = requests.post(
+                    "https://api.firecrawl.dev/v1/scrape",
+                    json=payload,
+                    headers=headers,
+                    timeout=30
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    # Get HTML content
+                    html_content = result.get('data', {}).get('html', '')
+                    markdown_content = result.get('data', {}).get('markdown', '')
+                    page_content = (html_content + ' ' + markdown_content).lower()
+                else:
+                    self._logger.warning(f"Firecrawl API error: {response.status_code}, using Apify fallback")
+                    crawl_result = self._apify.crawl_website(website, max_pages=1)
+                    page_content = str(crawl_result).lower()
             
             # Check for booking providers
             for provider, pattern in BOOKING_PROVIDERS.items():
@@ -188,6 +249,176 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         # - Use data enrichment APIs
         
         return decision_maker
+    
+    def _extract_volume_signals(self, lead: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Extract volume signals from Google Maps data (APIFY ACTUAL OUTPUT).
+        
+        REALITY CHECK: Apify does NOT provide popularTimesHistogram or peopleTypicallySpendHere.
+        We work with what we actually get:
+        - reviewsCount (primary volume indicator)
+        - totalScore (rating)
+        - reviewsDistribution (sentiment breakdown)
+        - reviews (text for pain point mining)
+        - openingHours (schedule)
+        - peopleAlsoSearch (competition)
+        - imageCategories (visual presence)
+        """
+        signals = {}
+        
+        # PRIMARY VOLUME SIGNAL: Review count
+        reviews_count = lead.get("reviewsCount") or lead.get("reviews_count") or lead.get("review_count") or 0
+        try:
+            reviews_count = int(reviews_count) if reviews_count else 0
+        except:
+            reviews_count = 0
+        
+        # ALWAYS set these values (never None)
+        if reviews_count >= 500:
+            signals["peak_busyness"] = 95
+            signals["avg_busyness"] = 80
+            signals["busy_hours_count"] = 50
+        elif reviews_count >= 200:
+            signals["peak_busyness"] = 80
+            signals["avg_busyness"] = 65
+            signals["busy_hours_count"] = 35
+        elif reviews_count >= 100:
+            signals["peak_busyness"] = 65
+            signals["avg_busyness"] = 50
+            signals["busy_hours_count"] = 25
+        elif reviews_count >= 50:
+            signals["peak_busyness"] = 50
+            signals["avg_busyness"] = 35
+            signals["busy_hours_count"] = 15
+        else:
+            # Even with 0 reviews, set defaults (not None)
+            signals["peak_busyness"] = 0
+            signals["avg_busyness"] = 0
+            signals["busy_hours_count"] = 0
+        
+        # Extract opening hours
+        opening_hours = lead.get("openingHours") or lead.get("opening_hours")
+        if opening_hours:
+            signals["opening_hours"] = opening_hours
+            
+            # Calculate total open hours per week
+            total_hours = 0
+            for day_schedule in opening_hours:
+                hours_str = day_schedule.get("hours", "")
+                # Parse "10 AM to 7 PM" format
+                if "to" in hours_str:
+                    try:
+                        parts = hours_str.split("to")
+                        # Simple heuristic: assume 9 hours per day if we can't parse
+                        total_hours += 9
+                    except:
+                        pass
+            
+            if total_hours > 0:
+                # Estimate visit duration based on business type
+                category = lead.get("category", "").lower()
+                if "hospital" in category or "clinic" in category:
+                    signals["avg_visit_duration_min"] = 45  # Medical visits are longer
+                elif "restaurant" in category or "cafe" in category:
+                    signals["avg_visit_duration_min"] = 60
+                else:
+                    signals["avg_visit_duration_min"] = 30  # Default
+            else:
+                # No hours data, set default
+                signals["avg_visit_duration_min"] = 0
+        else:
+            # No opening hours, set default visit duration
+            signals["avg_visit_duration_min"] = 0
+        
+        # Extract reviews distribution (sentiment analysis)
+        reviews_dist = lead.get("reviewsDistribution") or lead.get("reviews_distribution")
+        if reviews_dist:
+            signals["reviews_distribution"] = reviews_dist
+            
+            # Calculate sentiment score
+            total_reviews = sum(reviews_dist.values())
+            if total_reviews > 0:
+                weighted_score = (
+                    reviews_dist.get("fiveStar", 0) * 5 +
+                    reviews_dist.get("fourStar", 0) * 4 +
+                    reviews_dist.get("threeStar", 0) * 3 +
+                    reviews_dist.get("twoStar", 0) * 2 +
+                    reviews_dist.get("oneStar", 0) * 1
+                ) / total_reviews
+                
+                # High negative reviews = problems = opportunity
+                negative_ratio = (reviews_dist.get("oneStar", 0) + reviews_dist.get("twoStar", 0)) / total_reviews
+                if negative_ratio > 0.15:  # >15% negative
+                    signals["is_above_average"] = False  # Has problems
+                else:
+                    signals["is_above_average"] = True  # Doing well
+        
+        # Extract Q&A data
+        qa_data = lead.get("questionsAndAnswers") or lead.get("questions_and_answers")
+        if qa_data:
+            signals["questions_and_answers"] = qa_data
+        
+        # Extract web results
+        web_results = lead.get("webResults") or lead.get("web_results")
+        if web_results:
+            signals["web_results"] = web_results
+        
+        # Extract reservation links
+        reservation_links = lead.get("tableReservationLinks") or lead.get("table_reservation_links")
+        if reservation_links:
+            signals["table_reservation_links"] = reservation_links
+        
+        # Extract image categories
+        image_cats = lead.get("imageCategories") or lead.get("image_categories")
+        if image_cats:
+            signals["image_categories"] = image_cats
+        
+        return signals
+    
+    def _parse_duration(self, duration_text: str) -> Optional[int]:
+        """
+        Parse duration text to average minutes.
+        Examples:
+        - "20 min to 2 hr" → 70 min
+        - "1-2 hours" → 90 min
+        - "30 minutes" → 30 min
+        """
+        try:
+            # Extract all numbers
+            numbers = re.findall(r'\d+', duration_text)
+            if not numbers:
+                return None
+            
+            # Check for hours
+            has_hour = 'hr' in duration_text.lower() or 'hour' in duration_text.lower()
+            
+            if len(numbers) >= 2:
+                # Range: "20 min to 2 hr"
+                min_val = int(numbers[0])
+                max_val = int(numbers[1])
+                
+                # Convert to minutes
+                if 'min' in duration_text.lower() and has_hour:
+                    # Mixed: "20 min to 2 hr"
+                    max_val = max_val * 60
+                elif has_hour:
+                    # Both hours: "1-2 hours"
+                    min_val = min_val * 60
+                    max_val = max_val * 60
+                
+                return (min_val + max_val) // 2
+            
+            elif len(numbers) == 1:
+                # Single value: "30 minutes" or "2 hours"
+                val = int(numbers[0])
+                if has_hour:
+                    return val * 60
+                return val
+        
+        except Exception as e:
+            self._logger.warning(f"Failed to parse duration '{duration_text}': {e}")
+        
+        return None
     
     def _normalize_phone(self, phone: Optional[str]) -> Optional[str]:
         """

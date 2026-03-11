@@ -54,14 +54,15 @@ class ScoringAgent(BaseAgent):
     - 7.6: Exclude tier C from outreach queues
     """
     
-    # Default weights (100X ENHANCED - favor signals we have)
+    # Default weights (100X ENHANCED - favor signals we have + volume)
     DEFAULT_WEIGHTS = {
         "ad_activity": 0.05,      # Reduced - most leads don't have ads
-        "intent": 0.35,           # Increased - our best signal
+        "intent": 0.30,           # Reduced from 0.35 to make room for volume
         "leak": 0.25,             # High leak = high opportunity
-        "reactivation": 0.20,     # Increased - good for high-ticket
+        "volume": 0.15,           # NEW - Google Maps volume signals
+        "reactivation": 0.15,     # Reduced from 0.20
         "contact_quality": 0.10,  # Keep same
-        "business_size": 0.05,    # Keep same
+        "business_size": 0.00,    # Removed - no reliable data
     }
     
     # Tier thresholds (100X ADJUSTED for realistic scoring)
@@ -152,9 +153,10 @@ class ScoringAgent(BaseAgent):
                         "ad_activity": weights.ad_activity,
                         "intent": weights.intent,
                         "leak": weights.leak,
+                        "volume": 0.15,  # NEW - always include volume
                         "reactivation": weights.reactivation,
                         "contact_quality": weights.contact_quality,
-                        "business_size": weights.business_size,
+                        "business_size": 0.00,  # Removed
                     }
         
         return self.DEFAULT_WEIGHTS
@@ -198,19 +200,23 @@ class ScoringAgent(BaseAgent):
         # Leak score (from intent agent)
         leak_score = intent.get("leak_score", 0) if intent else 0
         
+        # Volume score (from intent agent) - NEW
+        volume_score = intent.get("volume_score", 0) if intent else 0
+        
         # Reactivation score (from intent agent)
         reactivation_score = intent.get("reactivation_fit", 0) if intent else 0
         
         # Contact quality score (from enrichment)
         contact_quality_score = enrichment.get("contact_quality_score", 0) if enrichment else 0
         
-        # Business size score (placeholder - would need more data)
-        business_size_score = 50  # Default middle score
+        # Business size score removed (no reliable data)
+        business_size_score = 0
         
         return {
             "ad_activity": ad_activity_score,
             "intent": intent_score,
             "leak": leak_score,
+            "volume": volume_score,  # NEW
             "reactivation": reactivation_score,
             "contact_quality": contact_quality_score,
             "business_size": business_size_score,
@@ -226,13 +232,14 @@ class ScoringAgent(BaseAgent):
         Requirements: 7.1
         
         Formula:
-        final_score = w1×ad_activity + w2×intent + w3×leak + 
-                      w4×reactivation + w5×contact_quality + w6×business_size
+        final_score = w1×ad_activity + w2×intent + w3×leak + w4×volume +
+                      w5×reactivation + w6×contact_quality + w7×business_size
         """
         score = (
             weights["ad_activity"] * breakdown.get("ad_activity", 0) +
             weights["intent"] * breakdown.get("intent", 0) +
             weights["leak"] * breakdown.get("leak", 0) +
+            weights["volume"] * breakdown.get("volume", 0) +  # NEW
             weights["reactivation"] * breakdown.get("reactivation", 0) +
             weights["contact_quality"] * breakdown.get("contact_quality", 0) +
             weights["business_size"] * breakdown.get("business_size", 0)
