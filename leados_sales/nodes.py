@@ -190,23 +190,204 @@ def _extract_qual_data(message: str, state: dict) -> Dict[str, Any]:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# NODE 3: DRAFT RESPONSE (LLM Call)
+# NODE 2.5: ORCHESTRATOR — The Super Brain
 # ═══════════════════════════════════════════════════════════════════════════════
+
+def node_orchestrate(state: dict) -> dict:
+    """
+    THE SUPER BRAIN.
+
+    Runs a fast structured LLM call to deeply analyze the lead before the
+    response agent speaks. Outputs a complete tactical brief that the
+    response agent executes — it no longer needs to figure anything out itself.
+
+    Outputs:
+        orchestrator_brief: dict with all analysis results
+    """
+    if state.get("should_stop"):
+        return {}
+
+    # ── Build a comprehensive profile of everything we know ──────────────────
+    msg        = state.get("user_message", "")
+    stage      = state.get("stage", "QUALIFY")
+    signals    = state.get("signals", {})
+    lead_data  = state.get("lead_data", {})
+    history    = state.get("messages", [])
+
+    # Resolve all identity fields
+    clinic         = state.get("clinic_name") or lead_data.get("clinic_name") or ""
+    owner          = state.get("owner_name")  or lead_data.get("owner_name")  or ""
+    city           = state.get("city")         or lead_data.get("city")        or ""
+    category       = state.get("category")     or lead_data.get("category")    or ""
+    weakness       = state.get("weakness_summary") or lead_data.get("weakness_summary") or ""
+    google_rating  = state.get("google_rating") or lead_data.get("google_rating") or ""
+    review_count   = state.get("review_count")  or lead_data.get("review_count")  or ""
+    website        = state.get("website")        or lead_data.get("website")        or ""
+    missing_phone  = state.get("missing_phone",  0)
+    missing_hours  = state.get("missing_hours",  0)
+    slow_response  = state.get("slow_response",  0)
+    interest_score = state.get("interest_score", 0)
+    objections     = state.get("objections", [])
+    inquiry_vol    = state.get("inquiry_volume", "")
+    who_handles    = state.get("who_handles", "")
+    booking_proc   = state.get("booking_process", "")
+
+    # Summarize conversation history briefly
+    history_summary = ""
+    if history:
+        last_3 = history[-6:]  # Last 3 exchanges
+        history_summary = "\n".join([
+            f"{'Lead' if m.get('role') == 'user' else 'Us'}: {m.get('content', '')[:120]}"
+            for m in last_3
+        ])
+
+    # ── Build the intel dossier for the orchestrator ──────────────────────────
+    dossier_parts = []
+    if clinic:   dossier_parts.append(f"Business: {clinic}{f', {city}' if city else ''}")
+    if owner:    dossier_parts.append(f"Owner/Contact: {owner}")
+    if category: dossier_parts.append(f"Type: {category}")
+    if weakness: dossier_parts.append(f"Known weakness: {weakness}")
+    if google_rating:
+        dossier_parts.append(f"Google rating: {google_rating}/5 ({review_count or '?'} reviews)")
+    if website:        dossier_parts.append(f"Website: {website}")
+    if missing_phone:  dossier_parts.append("SIGNAL: No phone number visible online")
+    if missing_hours:  dossier_parts.append("SIGNAL: Business hours not listed")
+    if slow_response:  dossier_parts.append("SIGNAL: Detected slow/no WhatsApp reply time")
+    if inquiry_vol:    dossier_parts.append(f"Gets ~{inquiry_vol} inquiries")
+    if who_handles:    dossier_parts.append(f"Currently handled by: {who_handles}")
+    if booking_proc:   dossier_parts.append(f"Booking method: {booking_proc}")
+    if objections:     dossier_parts.append(f"Past objections: {', '.join(objections)}")
+    dossier_parts.append(f"Interest score: {interest_score}/100")
+    dossier_parts.append(f"Current stage: {stage}")
+
+    dossier = "\n".join(dossier_parts) if dossier_parts else "No pre-existing intel available."
+
+    orchestrator_prompt = f"""You are the Intelligence Director for an elite B2B sales system.
+Your job: analyze the incoming message and the lead's full profile, then produce a tactical brief for the sales agent.
+
+=== LEAD DOSSIER ===
+{dossier}
+
+=== CONVERSATION HISTORY (last 3 exchanges) ===
+{history_summary or 'No prior messages.'}
+
+=== INCOMING MESSAGE ===
+"{msg}"
+
+=== YOUR TASK ===
+Analyze everything and respond with ONLY a valid JSON object. No markdown, no explanation.
+
+Required fields:
+{{
+  "intent": "one of: greeting | qualifying_answer | asking_price | asking_demo | asking_setup | objection_price | objection_skeptical | objection_busy | positive_interest | ready_to_buy | wants_human | unrelated | not_interested",
+  "sentiment": "one of: very_positive | positive | neutral | negative | hostile",
+  "buying_signal_strength": 0-100,
+  "key_pain_point": "The single most powerful pain to address right now given what we know about them. Be specific to their situation. E.g. 'They manually reply to 20+ messages/day and are losing bookings to faster competitors'",
+  "personalization_hook": "One specific thing from their profile to reference naturally. E.g. 'Their Google listing has no phone number' or 'They have 4.2 stars but only 23 reviews — patients like them but can't find them'. Leave blank string if no intel available.",
+  "response_strategy": "Precise instructions for the response agent in 1-2 sentences. What to say, what NOT to say, what question to ask next, what tone to use.",
+  "recommended_stage": "one of: QUALIFY | PROBLEM | SOLUTION | OFFER | CLOSE | HUMAN | LOST",
+  "urgency": "one of: low | medium | high"
+}}"""
+
+    brief = {}
+    try:
+        client = _get_client()
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",   # Fast + cheap for analysis
+            messages=[{"role": "user", "content": orchestrator_prompt}],
+            temperature=0.1,       # Deterministic analysis
+            max_tokens=400,
+            response_format={"type": "json_object"},
+        )
+        import json
+        raw = resp.choices[0].message.content.strip()
+        brief = json.loads(raw)
+        print(f"[ORCHESTRATOR] intent={brief.get('intent')} signal={brief.get('buying_signal_strength')} stage={brief.get('recommended_stage')}")
+    except Exception as e:
+        import traceback
+        print(f"[ORCHESTRATOR] Failed (non-fatal): {e}")
+        print(traceback.format_exc())
+        # Safe defaults — show must go on
+        brief = {
+            "intent": "unknown",
+            "sentiment": "neutral",
+            "buying_signal_strength": interest_score,
+            "key_pain_point": weakness or "manual WhatsApp replies costing them bookings",
+            "personalization_hook": "",
+            "response_strategy": f"Continue the conversation naturally for stage {stage}.",
+            "recommended_stage": stage,
+            "urgency": "medium",
+        }
+
+    # Update recommended stage if different from current
+    new_stage = brief.get("recommended_stage", stage)
+    # Only allow forward or lateral moves — never go backwards more than one stage
+    stage_order = ["QUALIFY", "PROBLEM", "SOLUTION", "OFFER", "CLOSE", "WON", "LOST", "HUMAN"]
+    current_idx = stage_order.index(stage) if stage in stage_order else 0
+    new_idx     = stage_order.index(new_stage) if new_stage in stage_order else 0
+    # Allow forward moves and any terminal states
+    if new_idx >= current_idx or new_stage in ("LOST", "HUMAN"):
+        resolved_stage = new_stage
+    else:
+        resolved_stage = stage
+
+    return {
+        "orchestrator_brief": brief,
+        "stage": resolved_stage,
+        # Boost score from orchestrator signal
+        "interest_score": min(100, interest_score + max(0, brief.get("buying_signal_strength", 0) - interest_score) // 3),
+    }
+
+
 
 def node_draft_response(state: dict) -> dict:
     """
-    Call the LLM using the stage-specific prompt and conversation history.
+    Call the LLM using the stage-specific prompt + orchestrator brief + conversation history.
+    The Orchestrator has already done all the thinking. This node just EXECUTES.
     Falls back to a pre-written message if the LLM is unavailable.
     """
     if state.get("should_stop"):
         return {"reply_text": "", "raw_llm_output": ""}
 
-    stage = state.get("stage", "QUALIFY")
-    channel = state.get("channel", "whatsapp")
+    stage     = state.get("stage", "QUALIFY")
+    channel   = state.get("channel", "whatsapp")
     lead_data = state.get("lead_data", {})
+    brief     = state.get("orchestrator_brief", {})
 
+    # ── Build the base system prompt (stage + lead context) ──────────────────
     system_prompt = build_system_prompt(stage, lead_data, state, channel)
-    messages = (
+
+    # ── Inject the Orchestrator brief as a high-priority addendum ────────────
+    if brief:
+        intent   = brief.get("intent", "")
+        pain     = brief.get("key_pain_point", "")
+        hook     = brief.get("personalization_hook", "")
+        strategy = brief.get("response_strategy", "")
+        urgency  = brief.get("urgency", "medium")
+        sentiment = brief.get("sentiment", "neutral")
+
+        brief_block = f"""
+═══════════════════════════════════════════
+INTELLIGENCE BRIEF FROM ORCHESTRATOR
+(read this carefully — it overrides any generic instincts)
+═══════════════════════════════════════════
+Lead intent right now: {intent}
+Their emotional state: {sentiment}
+Urgency level: {urgency}
+
+Most powerful pain to address: {pain}
+
+Personalization hook to use naturally (use 1 only, don't force it): {hook or 'None available'}
+
+EXACT STRATEGY FOR YOUR REPLY:
+{strategy}
+═══════════════════════════════════════════
+REMEMBER: No dashes, no bullets. Flowing sentences. Use [SPLIT] for multiple bubbles.
+""".strip()
+
+        system_prompt = system_prompt + "\n\n" + brief_block
+
+    messages_payload = (
         [{"role": "system", "content": system_prompt}]
         + (state.get("messages") or [])
         + [{"role": "user", "content": state.get("user_message", "")}]
@@ -217,9 +398,9 @@ def node_draft_response(state: dict) -> dict:
         client = _get_client()
         resp = client.chat.completions.create(
             model=_model(),
-            messages=messages,
+            messages=messages_payload,
             temperature=0.7,
-            max_tokens=350,
+            max_tokens=500,
         )
         reply_text = resp.choices[0].message.content.strip()
     except Exception as e:

@@ -6,7 +6,7 @@ Compiles all nodes into a single LangGraph workflow.
 Exposes `run_sales_agent()` as the main entry point for all channels.
 
 Flow:
-   ingest_context → detect_intent → draft_response → process_tags → persist
+   ingest_context → detect_intent → orchestrate → draft_response → process_tags → persist
 """
 
 import logging
@@ -16,6 +16,7 @@ from .state import SalesAgentState
 from .nodes import (
     node_ingest_context,
     node_detect_intent,
+    node_orchestrate,
     node_draft_response,
     node_process_tags,
     node_persist,
@@ -45,13 +46,15 @@ def _build_graph():
 
     graph.add_node("ingest_context",  node_ingest_context)
     graph.add_node("detect_intent",   node_detect_intent)
+    graph.add_node("orchestrate",     node_orchestrate)
     graph.add_node("draft_response",  node_draft_response)
     graph.add_node("process_tags",    node_process_tags)
     graph.add_node("persist",         node_persist)
 
     graph.set_entry_point("ingest_context")
     graph.add_edge("ingest_context", "detect_intent")
-    graph.add_edge("detect_intent",  "draft_response")
+    graph.add_edge("detect_intent",  "orchestrate")
+    graph.add_edge("orchestrate",    "draft_response")
     graph.add_edge("draft_response", "process_tags")
     graph.add_edge("process_tags",   "persist")
     graph.add_edge("persist",        END)
@@ -77,7 +80,7 @@ def _get_graph():
 def _run_sequential(state: dict) -> dict:
     """Run all nodes in order without LangGraph."""
     result = {**state}
-    for node_fn in [node_ingest_context, node_detect_intent, node_draft_response, node_process_tags, node_persist]:
+    for node_fn in [node_ingest_context, node_detect_intent, node_orchestrate, node_draft_response, node_process_tags, node_persist]:
         updates = node_fn(result)
         result.update(updates or {})
     return result
