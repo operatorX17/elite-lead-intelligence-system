@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "firecrawl": {
+      "url": "https://mcp.firecrawl.dev/fc-fab6a3c1fa9e4342a4994aa0dc9bcd77/v2/mcp",
+      "disabled": false,
+      "autoApprove": [
+        "firecrawl_scrape",
+        "firecrawl_map",
+        "firecrawl_crawl",
+        "firecrawl_search",
+        "firecrawl_extract",
+        "firecrawl_agent"
+      ]
+    }
+  }
+}

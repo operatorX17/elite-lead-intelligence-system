@@ -1,0 +1,199 @@
+{
+  "hospital_name": "US Dental Care",
+  "location": "Sacramento, California",
+  "website": "http://www.usdentalcaresacramento.com/",
+  "generated_at": "2026-01-17T13:44:33.943611",
+  "intelligence_score": 70,
+  "web_presence": {
+    "has_online_booking": false,
+    "has_insurance_portal": false,
+    "has_patient_portal": false,
+    "has_mobile_app": false,
+    "technology_stack": [],
+    "page_load_speed": "unknown",
+    "mobile_friendly": false,
+    "security_issues": [],
+    "contact_forms": 0,
+    "phone_numbers": [],
+    "emails": [],
+    "social_media": {},
+    "last_updated": "unknown",
+    "content_quality_score": 0
+  },
+  "financial_intelligence": {
+    "estimated_annual_revenue": "unknown",
+    "patient_volume_monthly": "unknown",
+    "bed_count": "unknown",
+    "funding_rounds": [],
+    "investors": [],
+    "growth_rate": "unknown",
+    "profitability": "unknown",
+    "insurance_partnerships": [],
+    "government_schemes": [],
+    "recent_expansions": [],
+    "financial_health_score": 0
+  },
+  "operational_intelligence": {
+    "departments": [],
+    "specialties": [],
+    "doctors_count": "unknown",
+    "staff_count": "unknown",
+    "technology_systems": {
+      "HMS": "unknown",
+      "EMR": "unknown",
+      "billing_system": "unknown",
+      "insurance_TPA": "unknown"
+    },
+    "patient_satisfaction_score": "unknown",
+    "average_wait_time": "unknown",
+    "claim_processing_time": "unknown",
+    "operational_efficiency_score": 0
+  },
+  "pain_points": [
+    {
+      "category": "Revenue Leak",
+      "pain": "No online booking system",
+      "impact": "Losing 20-30% of potential patients to competitors",
+      "revenue_loss_monthly": "\u20b95-10 lakhs",
+      "urgency": "HIGH",
+      "solution": "AI-powered booking system with insurance verification"
+    },
+    {
+      "category": "Operational Inefficiency",
+      "pain": "Manual insurance claim processing",
+      "impact": "30-40% claim rejection rate, 45-90 day processing time",
+      "revenue_loss_monthly": "\u20b98-15 lakhs",
+      "urgency": "CRITICAL",
+      "solution": "AI claim validation and automation"
+    }
+  ],
+  "decision_makers": [
+    {
+      "role": "CEO/Managing Director",
+      "name": "unknown",
+      "linkedin": "unknown",
+      "email": "unknown",
+      "phone": "unknown",
+      "priorities": [
+        "Revenue growth",
+        "Operational efficiency",
+        "Patient satisfaction"
+      ],
+      "pain_points": [
+        "Cash flow",
+        "Competition",
+        "Regulatory compliance"
+      ],
+      "best_approach": "ROI-focused pitch with financial projections"
+    },
+    {
+      "role": "CFO/Finance Head",
+      "name": "unknown",
+      "priorities": [
+        "Cost reduction",
+        "Revenue recovery",
+        "Financial reporting"
+      ],
+      "pain_points": [
+        "Claim rejections",
+        "Payment delays",
+        "Budget constraints"
+      ],
+      "best_approach": "Show exact revenue recovery numbers"
+    },
+    {
+      "role": "IT Head/CIO",
+      "name": "unknown",
+      "priorities": [
+        "System integration",
+        "Data security",
+        "Automation"
+      ],
+      "pain_points": [
+        "Legacy systems",
+        "Manual processes",
+        "Staff training"
+      ],
+      "best_approach": "Technical demo with integration roadmap"
+    }
+  ],
+  "competitive_intelligence": {
+    "direct_competitors": [],
+    "their_technology_adoption": {},
+    "market_share_estimate": "unknown",
+    "competitive_advantages": [],
+    "competitive_disadvantages": [],
+    "opportunities": [],
+    "threats": []
+  },
+  "market_intelligence": {
+    "market_size": "unknown",
+    "growth_rate": "unknown",
+    "trends": [
+      "Ayushman Bharat expansion increasing claim volume",
+      "Digital health adoption accelerating post-COVID",
+      "Insurance penetration growing 15% YoY",
+      "Government mandating digital claims by 2025"
+    ],
+    "opportunities": [
+      "First-mover advantage in AI claim automation",
+      "Partnership with insurance TPAs",
+      "Government scheme integration"
+    ],
+    "regulatory_changes": []
+  },
+  "revenue_opportunity": {
+    "current_monthly_loss": "\u20b919.0 lakhs",
+    "annual_loss": "\u20b9228.0 lakhs",
+    "recoverable_with_solution": "\u20b913.3 lakhs/month",
+    "roi_timeline": "3-6 months",
+    "payback_period": "1-2 months",
+    "5_year_value": "\u20b9798 lakhs"
+  },
+  "action_plan": {
+    "immediate_actions": [
+      {
+        "step": 1,
+        "action": "Send personalized email to CEO/MD",
+        "template": "Subject: Recovering \u20b9{loss}/month in rejected insurance claims",
+        "timing": "Today, 10 AM",
+        "success_probability": "35%"
+      },
+      {
+        "step": 2,
+        "action": "Follow-up call to CFO",
+        "script": "Mention exact revenue loss numbers from analysis",
+        "timing": "Tomorrow, 3 PM",
+        "success_probability": "45%"
+      },
+      {
+        "step": 3,
+        "action": "Send free audit offer",
+        "deliverable": "Analyze last 100 claims, show rejection patterns",
+        "timing": "Day 3",
+        "success_probability": "60%"
+      }
+    ],
+    "week_1_plan": [
+      "Conduct free claim audit",
+      "Present findings to finance team",
+      "Demo system with their actual data"
+    ],
+    "week_2_plan": [
+      "Pilot with 50 claims",
+      "Show real-time results",
+      "Get testimonial from pilot users"
+    ],
+    "closing_strategy": {
+      "primary_pitch": "ROI-focused: Show exact \u20b9 recovered",
+      "objection_handling": {
+        "too_expensive": "Cost \u20b935k/month, recover \u20b98-12 lakhs/month = 20x ROI",
+        "integration_complex": "We've done this with [similar hospital], takes 1 week",
+        "need_approval": "Let's do free pilot first, then get approval with results"
+      },
+      "closing_question": "If we can recover \u20b98 lakhs/month for \u20b935k/month, when can we start?"
+    },
+    "expected_timeline": "2-4 weeks from first contact to signed contract",
+    "success_probability": "65%"
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "business_name": "Ragavs Diagnostic Centre",
+  "timestamp": "2026-02-09T19:05:10.267675",
+  "volume": {
+    "reviews_count": 342,
+    "rating": 4.2,
+    "volume_score": 90,
+    "peak_busyness": 100,
+    "busy_hours": 48,
+    "visit_duration": 70,
+    "verdict": "HIGH VOLUME - CAN AFFORD SERVICE"
+  },
+  "problems": {
+    "count": 3,
+    "list": [
+      "No online booking system",
+      "No chat widget",
+      "Call-only CTA"
+    ],
+    "pain_point_mentions": {
+      "missed_calls": 27,
+      "appointment_delays": 13,
+      "booking_issues": 17,
+      "communication": 20,
+      "after_hours": 10
+    },
+    "total_mentions": 87,
+    "verdict": "MANY PROBLEMS - CLEAR PAIN POINTS"
+  },
+  "opportunity": {
+    "monthly_leads": 300,
+    "leak_percentage": 60,
+    "leaked_leads": 180,
+    "monthly_loss": 54000,
+    "annual_loss": 648000,
+    "roi_multiplier": 45.0,
+    "verdict": "MASSIVE ROI - NO-BRAINER OFFER"
+  },
+  "verdict": {
+    "final_score": 100,
+    "tier": "A (HOT)",
+    "action": "PITCH NOW",
+    "pitch_angle": "High volume + clear problems + massive ROI"
+  }
+}

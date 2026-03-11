@@ -1,0 +1,10 @@
+lead_id,business_name,category,city,area,address,website,phone,google_maps_url,rating,reviews_count,emails,phones,owner_name,doctor_name,linkedin_url,whatsapp_number,website_title,cms,booking_system,chat_widget,has_booking,has_whatsapp,has_lead_form,has_chat_widget,has_google_ads,has_facebook_pixel,weaknesses,weakness_count,final_score,tier,priority,estimated_revenue_loss,recoverable_amount,recommended_tier,roi_multiple,ai_verdict,outreach_angle,email_subject,whatsapp_msg
+b1aa5f058a998573,Hyderabad Dental,dental,Hyderabad,Hyderabad,"beside Kanakadurga, AP State Housing Board, Durga Nagar, Krishna Nagar, Dilsukhnagar, Hyderabad, Telangana 500060, India",,+91 40 2404 3070,https://www.google.com/maps/search/?api=1&query=Hyderabad%20Dental&query_place_id=ChIJZVUZkvaYyzsRRbVcf-cHJ9Y,5.0,411,[],"[""+91 40 2404 3070""]",,,,,,,,,False,False,False,False,False,False,"[""HIGH_REVIEWS_NO_CONVERSION: High review count but no booking system or WhatsApp \u2014 losing walk-in inquiries"", ""NO_BOOKING_SYSTEM: No online booking detected \u2014 after-hours leads are lost"", ""NO_WHATSAPP: No WhatsApp integration \u2014 missing instant communication channel"", ""NO_LIVE_CHAT: No live chat widget \u2014 slow response to website visitors"", ""NO_LEAD_FORM: No contact/enquiry form detected \u2014 website visitors have no way to reach out"", ""HIGH_TRAFFIC_NO_FOLLOWUP: High-volume business with no follow-up automation""]",6,61,WARM,HIGH,83125,58187,Growth ₹35K/month,1.7,ACCEPT,Losing ₹83K/month due to 6 gaps. Recover ₹58K with Growth ₹35K/month.,Quick question about Hyderabad Dental,"Hi! Quick note about Hyderabad Dental.
+
+Based on your 411 Google reviews, you're likely missing ₹83K/month in Significant monthly revenue loss (₹83K) impacting profitability..
+
+We can recover ₹58K/month with Solutions to address the 6 identified weaknesses and improve operational efficiency at Hyderabad Dental..
+
+ROI: 1.7x
+
+Want a free audit? Reply YES"

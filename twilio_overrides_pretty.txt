@@ -1,0 +1,16 @@
+﻿CONVERSATIONS CONFIG:
+{
+  "account_sid": "ACa672dc6713e59996194f4843a01ff46c",
+  "default_chat_service_sid": "IS181a565b743f4d8999c4513bbdf0da2f",
+  "default_closed_timer": null,
+  "default_inactive_timer": null,
+  "default_messaging_service_sid": "MGe9f747a4231fb92cb62296a5354d9ffa",
+  "links": {
+    "service": "https://conversations.twilio.com/v1/Services/IS181a565b743f4d8999c4513bbdf0da2f/Configuration",
+    "webhooks": "https://conversations.twilio.com/v1/Configuration/Webhooks"
+  },
+  "url": "https://conversations.twilio.com/v1/Configuration"
+}
+
+STUDIO FLOWS:
+Flow: My New Studio Flow SID: FW2e74fc0e00ecefb3c93333a4eb32e18f Status: published

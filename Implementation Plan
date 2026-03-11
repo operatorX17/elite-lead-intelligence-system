@@ -1,0 +1,98 @@
+# Lead-OS Production Upgrade — Implementation Plan
+
+## Goal
+Consolidate the scattered Lead-OS codebase into a **single, self-contained production engine** (`lead_os_v2.py`) that satisfies all 10 minimum requirements plus extended capabilities. The new system will be a unified CLI tool that works **without any external database dependencies** (uses local SQLite + JSON), making it immediately runnable.
+
+## Current State Analysis
+
+The existing repo has **two competing pipeline scripts** (`lead_os.py` and `ULTIMATE_INTELLIGENCE.py`) plus a large `src/` module tree. Key issues:
+
+- `lead_os.py` requires Supabase DB, LangGraph orchestrator — heavy dependencies that prevent standalone operation
+- `ULTIMATE_INTELLIGENCE.py` is more self-contained but lacks: website intelligence scanning depth, marketing weakness analysis, decision-maker discovery, enrichment, intelligence reports, and prioritized output tiers
+- Scattered test files (25+) that are ad-hoc, not a proper test suite
+- No local caching, no scheduled refresh, no competitor analysis, no sentiment analysis
+
+## Proposed Changes
+
+### Core Engine
+
+#### [NEW] [lead_os_v2.py](file:///c:/Users/G%20Sai%20Prakash/Downloads/zrai-lead-oss-main/zrai-lead-oss-main/lead_os_v2.py)
+
+A single ~2000-line production file containing all 10 modules as classes, with a unified CLI. This file **replaces and supersedes** both `lead_os.py` and `ULTIMATE_INTELLIGENCE.py`.
+
+**Module breakdown within the file:**
+
+1. **`LeadDiscoveryEngine`** — Google Maps discovery via Apify, web search fallback, directory scraping, pagination, rate limiting, raw storage in local SQLite
+2. **`WebsiteIntelligenceScanner`** — Firecrawl/Steel/raw HTTP scraping to detect: booking systems, WhatsApp buttons, contact forms, chat widgets, tracking pixels (GA, GTM, FB Pixel, Google Ads), missing conversion systems
+3. **`MarketingWeaknessAnalyzer`** — Generates weakness signals: high reviews + poor conversion, high traffic + weak funnel, poor follow-up, missing booking automation, outdated websites, low review reply rate
+4. **`LeadScoringEngine`** — Multi-dimensional scoring (data quality, reachability, opportunity, urgency, growth) producing a 0-100 numeric score with tier assignment (HOT/WARM/COLD)
+5. **`DecisionMakerDiscovery`** — Extract owner names, doctor/dentist names, LinkedIn profiles, business emails, contact numbers, social profiles from web content and Google data
+6. **`DataEnrichmentEngine`** — Website metadata, tech stack detection, estimated business size, business hours, service types, industry classification
+7. **`IntelligenceReportGenerator`** — Per-lead structured reports: business overview, detected weaknesses, estimated missed revenue, suggested automation improvements, personalized outreach angle. Uses LLM for high-quality generation
+8. **`ExportPipeline`** — CSV, JSON, SQLite database, outreach-ready format. Prioritized lists (Top 10/25/50) with reasoning
+9. **`ReliabilityLayer`** — Retry logic with exponential backoff, structured logging, error handling, disk-based caching, rate limit protection, API abstraction layer
+10. **`ExtendedCapabilities`** — Review sentiment analysis, automated outreach message generation, competitor signals, website performance heuristics, signal-based filtering
+
+**Key design decisions:**
+- Uses `aiosqlite` for local async SQLite storage (no external DB required)
+- Uses `urllib.request` + `aiohttp` for HTTP calls (proven pattern from existing code)
+- All API clients (Apify, Firecrawl, Steel, OpenRouter) are abstracted behind retry-capable wrappers
+- Disk-based cache in `.cache/` directory for website scrapes (avoids re-scraping)
+- Rich CLI output with `rich` library for progress bars and tables
+
+### [NEW] National Clinic Intelligence Database
+
+Lead-OS is upgraded from a mere scanner into a **data-compounding market intelligence network**. Rather than just dumping isolated CSVs per run, Lead-OS will maintain a persistent, global `clinic_intelligence.db`.
+
+Every scan update this global graph, meaning the system continuously learns:
+- `clinic_id` (Primary Key)
+- `name`, `city`, `specialty`, `website`
+- `tech_stack` (detected CMS, pixels, analytics)
+- `has_booking`, `has_whatsapp`
+- `response_time`, `conversion_score`
+- `last_scanned`
+
+This creates a **Data Moat**: Over weeks of scanning cities, you build a proprietary database of exactly which clinics are losing money and which technologies they use, allowing for laser-targeted consulting and distribution partnerships.
+
+---
+
+### Supporting Files
+
+#### [NEW] [lead_os_config.py](file:///c:/Users/G%20Sai%20Prakash/Downloads/zrai-lead-oss-main/zrai-lead-oss-main/lead_os_config.py)
+
+Industry configurations, scoring weights, niche definitions, and default parameters extracted into a clean config module.
+
+---
+
+> [!IMPORTANT]
+> **No existing files are modified or deleted.** The new `lead_os_v2.py` and `lead_os_config.py` are additive. The old scripts remain as-is for reference.
+
+## Verification Plan
+
+### Automated Tests
+
+Run the engine in `--dry-run` mode which tests the full pipeline with mock data (no API calls):
+
+```bash
+cd c:\Users\G Sai Prakash\Downloads\zrai-lead-oss-main\zrai-lead-oss-main
+python lead_os_v2.py --dry-run --city "Mumbai" --niche "dental" --count 5
+```
+
+This will:
+1. Generate synthetic leads from mock data
+2. Run the full scoring/analysis/report pipeline
+3. Export CSV + JSON + SQLite outputs to `output/`
+4. Print a summary table proving all 10 modules work
+
+### Live API Test (requires API keys in `.env`)
+
+```bash
+python lead_os_v2.py --city "Hyderabad" --niche "dental" --count 10
+```
+
+Verifies real Apify discovery → Firecrawl enrichment → AI analysis → export.
+
+### Manual Verification
+- Check that `output/` directory contains: `leads.csv`, `leads.json`, `leads.db`, `report.json`, `top_10.json`, `top_25.json`, `top_50.json`, `intelligence_reports/` folder with per-lead `.md` files
+- Open `leads.csv` and verify columns exist for all required fields (business name, phone, website, rating, reviews, score, weaknesses, decision maker info)
+- Open any `intelligence_reports/*.md` file and verify it contains: business overview, weaknesses, revenue estimate, outreach angle

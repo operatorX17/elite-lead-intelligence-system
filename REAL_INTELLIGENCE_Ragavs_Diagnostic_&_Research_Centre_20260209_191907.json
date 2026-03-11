@@ -1,0 +1,77 @@
+{
+  "business_name": "Ragavs Diagnostic & Research Centre",
+  "location": "Bangalore",
+  "timestamp": "2026-02-09T19:18:55.558576",
+  "sources": [
+    {
+      "type": "practo",
+      "url": "https://www.practo.com/bangalore/clinic/ragavs-diagnostic-and-research-centre-pvt-ltd-jayanagar-4-block-1",
+      "title": "RAGAVS Diagnostic and Research Centre Pvt Ltd., Jayanagar 4 Block, Bangalore: Practo",
+      "description": "RAGAVS Diagnostic and Research ... <strong>4 Block, Bangalore</strong>. The clinic is visited by pulmonologist like Dr. Srigiri S Revadi and Ms. Smitha T N. The timings of RAGAVS Diagnostic and Research Centre Pvt Ltd. are: Mon-Sun: 07:00-21:00."
+    },
+    {
+      "type": "justdial",
+      "url": "https://www.justdial.com/Bangalore/Ragavs-Diagnostic-Research-Centre-Pvt-Ltd-Opposite-Kalyan-Jewellers-Jayanagar-3rd-Block-East/080P5910780_BZDET",
+      "title": "Ragavs Diagnostic & Research Centre Pvt. Ltd. in Jayanagar 3rd Block East,Bangalore - Best Diagnostic Centres near me in Bangalore - Justdial",
+      "description": "<strong>Rated 4.1/5</strong>. 6418 Ratings &amp; Reviews. 12 Photos. Get Address, Contact Number, Photos, Maps of Ragavs Diagnostic &amp; Research Centre Pvt. Ltd., Jayanagar 3rd Block East, Bangalore on Justdial."
+    },
+    {
+      "type": "practo",
+      "url": "https://www.practo.com/bangalore/clinic/ragavs-diagnostic-centre-jayanagar-3-block",
+      "title": "Ragavs Diagnostic Centre, Jayanagar 3 Block, Bangalore: Practo",
+      "description": "** ** *** *** ** *** *** ****** * **** **** ** ** ***** I went to his clinic with my mother he not even spent 1min with patient. he just wrote all MRI scans and blood test. He refered his own diagnostics it cost 15000 rs. *** ******* *** **** ***** *** After all scanning is done."
+    },
+    {
+      "type": "practo",
+      "url": "https://www.practo.com/bangalore/clinic/ragavs-diagnostic-and-research-centre-pvt-ltd-jayanagar-4-block-1",
+      "title": "RAGAVS Diagnostic and Research Centre Pvt Ltd., Jayanagar 4 Block, Bangalore: Practo",
+      "description": "2 Doctors in RAGAVS Diagnostic and Research Centre Pvt Ltd., Lung Speciality Clinic, Jayanagar 4 Block, Bangalore. Get details of top doctors, OPD timings, consultation fees, treatment, reviews &amp; ratings from patients, phone number, address. Book an appointment for personalized care."
+    },
+    {
+      "type": "justdial",
+      "url": "https://www.justdial.com/Bangalore/Ragavs-Diagnostic-Research-Centre-Pvt-Ltd-Opposite-Kalyan-Jewellers-Jayanagar-3rd-Block-East/080P5910780_BZDET",
+      "title": "Ragavs Diagnostic & Research Centre Pvt. Ltd. in Jayanagar 3rd Block East,Bangalore - Best Diagnostic Centres near me in Bangalore - Justdial",
+      "description": "<strong>Rated 4.1 based on 6418 Customer Reviews and Ratings with 12 Photos</strong>. Visit Justdial for Address, Contact Number, Reviews &amp; Ratings, Photos, Maps of Ragavs Diagnostic &amp; Research Centre Pvt."
+    },
+    {
+      "type": "practo",
+      "url": "https://www.practo.com/bangalore/clinic/ragavs-diagnostic-and-research-centre-pvt-ltd-jayanagar-4-block-1",
+      "title": "RAGAVS Diagnostic and Research Centre Pvt Ltd., Jayanagar 4 Block, Bangalore: Practo",
+      "description": "2 Doctors in RAGAVS Diagnostic and Research Centre Pvt Ltd., Lung Speciality Clinic, Jayanagar 4 Block, Bangalore. Get details of top doctors, OPD timings, consultation fees, treatment, reviews &amp; ratings from patients, phone number, address. Book an appointment for personalized care."
+    }
+  ],
+  "signals": {
+    "justdial": {
+      "review_count": 6418,
+      "rating": 4.1
+    },
+    "pain_evidence": {
+      "missed_calls": [],
+      "booking_issues": [],
+      "delays": [
+        {
+          "source": "https://www.justdial.com/Bangalore/Ragavs-Diagnostic-Research-Centre-Jayanagar-Jayanagar/080PXX80-XX80-220929222635-S2Y7_BZDET",
+          "snippet": "... <strong>long waiting time, disorganized process, and rude behavior of some staff members</strong> mentioned frequently by many customers. high charges for tests compared to other diagnostic center",
+          "keyword": "long wait"
+        },
+        {
+          "source": "https://www.zaubacorp.com/RAGAVS-DIAGNOSTIC-AND-RESEARCH-CENTRE-PRIVATE-LIMITED-U85110KA1990PTC010816",
+          "snippet": "this report helps you understand the risk associated in dealing with ragavs diagnostic and research centre and its directors better. our litigation search covers both civil and criminal cases and span",
+          "keyword": "delayed"
+        }
+      ],
+      "communication": []
+    }
+  },
+  "intelligence": {
+    "total_reviews": 6418,
+    "avg_rating": 4.1,
+    "volume_score": 100,
+    "volume_level": "VERY HIGH",
+    "problem_count": 0,
+    "pain_mentions": 2,
+    "problem_score": 4,
+    "final_score": 42,
+    "tier": "C (COLD)"
+  }
+}

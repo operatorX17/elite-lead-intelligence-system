@@ -1,0 +1,149 @@
+# Policy Configuration for ZRAI Lead OS
+# Requirements: 6 (Config-Driven Everything), 12 (Rate Limiting)
+
+# Rate Limits
+rate_limits:
+  # Per-domain limits
+  per_domain:
+    email_per_day: 5
+    dm_per_day: 2
+  
+  # Per-channel limits
+  per_channel:
+    email:
+      per_hour: 50
+      per_day: 200
+    dm:
+      per_hour: 20
+      per_day: 50
+    form:
+      per_hour: 10
+      per_day: 30
+  
+  # Cool-down periods (in days)
+  cool_downs:
+    after_bounce: 7
+    after_spam_complaint: 30
+    after_angry_reply: 14
+    after_no_response: 7
+    after_opt_out: 36500  # Effectively permanent
+
+# Disqualification Rules
+disqualification_rules:
+  # Business size
+  too_small:
+    enabled: true
+    min_employees: 2
+    reason: "Owner-only business"
+  
+  # No advertising history
+  no_ads_history:
+    enabled: true
+    reason: "No advertising spend detected"
+  
+  # Emergency-only services
+  emergency_only:
+    enabled: true
+    keywords:
+      - "emergency"
+      - "24/7 emergency"
+      - "urgent"
+    reason: "Emergency-only service"
+  
+  # Toxic review patterns
+  toxic_reviews:
+    enabled: true
+    min_sentiment: -0.5
+    reason: "Toxic review pattern"
+  
+  # No valid contact path
+  no_contact_path:
+    enabled: true
+    reason: "No valid contact method"
+
+# Lead Lifecycle
+lifecycle:
+  # Days before lead becomes stale
+  stale_after_days: 30
+  
+  # Days before stale lead can be reactivated
+  reactivation_window_days: 90
+  
+  # Minimum days between contacts
+  min_contact_interval_days: 7
+  
+  # Maximum contact attempts
+  max_contact_attempts: 5
+
+# Scoring Thresholds
+scoring:
+  # Tier thresholds
+  tier_a_threshold: 80
+  tier_b_threshold: 60
+  
+  # Audit trigger threshold
+  audit_threshold: 70
+  
+  # Auto-send threshold (only tier A)
+  auto_send_enabled: false
+  auto_send_tier: "A"
+
+# Compliance
+compliance:
+  # Regions requiring explicit consent
+  consent_required_regions:
+    - "EU"
+    - "CA"
+  
+  # Data retention (days)
+  data_retention_days: 365
+  
+  # Audit log retention (days)
+  audit_log_retention_days: 730
+
+# Outreach Policies
+outreach:
+  # Required opt-out text for emails
+  opt_out_text: "Reply STOP to unsubscribe"
+  
+  # Maximum message length
+  max_email_length: 2000
+  max_dm_length: 500
+  
+  # Required sections in outreach
+  required_sections:
+    - "observation"
+    - "impact"
+    - "offer"
+    - "cta"
+  
+  # A/B testing
+  ab_testing:
+    enabled: true
+    default_split: 0.5
+
+# Conversation Policies
+conversation:
+  # BANT requirements for escalation
+  bant_requirements:
+    budget_required: true
+    authority_required: true
+    need_required: true
+    timeline_required: true
+  
+  # Hard stops
+  hard_stops:
+    no_pricing_negotiation: true
+    no_unverifiable_claims: true
+    no_guarantees: true
+  
+  # Price range (for hard stop enforcement)
+  price_range:
+    min: 500
+    max: 5000
+  
+  # Escalation triggers
+  escalate_on_objections:
+    - "price"
+    - "competitor"
+    - "timing"

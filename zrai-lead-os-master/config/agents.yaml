@@ -1,0 +1,202 @@
+# Agent Configuration for ZRAI Lead OS
+# Requirements: 6 (Config-Driven Everything)
+
+# LLM Configuration
+llm:
+  # Default provider
+  default_provider: "gemini"
+  
+  # Provider configurations
+  providers:
+    gemini:
+      model: "gemini-2.5-flash"
+      temperature: 0.7
+      max_tokens: 2048
+    
+    openai:
+      model: "gpt-4o"
+      temperature: 0.7
+      max_tokens: 2048
+    
+    anthropic:
+      model: "claude-3-5-sonnet-20241022"
+      temperature: 0.7
+      max_tokens: 2048
+  
+  # Model routing by task
+  routing:
+    outreach_generation: "gemini"
+    conversation: "gemini"
+    scoring_explanation: "gemini"
+    entity_extraction: "gemini"
+
+# Agent-specific configurations
+agents:
+  discovery:
+    enabled: true
+    # Apify actors to use
+    actors:
+      meta_ads: "apify/meta-ads-library-scraper"
+      google_maps: "apify/google-maps-scraper"
+      website_crawler: "apify/website-content-crawler"
+      facebook_pages: "apify/facebook-pages-scraper"
+    # Batch size for processing
+    batch_size: 100
+    # Retry configuration
+    retry:
+      max_attempts: 5
+      base_delay_ms: 2000
+      max_backoff_seconds: 300
+  
+  enrichment:
+    enabled: true
+    # Tech signals to detect
+    tech_signals:
+      booking_providers:
+        - "calendly"
+        - "acuity"
+        - "square appointments"
+        - "vagaro"
+        - "mindbody"
+      crm_hints:
+        - "hubspot"
+        - "salesforce"
+        - "zoho"
+        - "pipedrive"
+      chat_widgets:
+        - "intercom"
+        - "drift"
+        - "zendesk"
+        - "freshchat"
+        - "tawk.to"
+      form_tools:
+        - "typeform"
+        - "jotform"
+        - "google forms"
+        - "wufoo"
+    retry:
+      max_attempts: 3
+      base_delay_ms: 1000
+      max_backoff_seconds: 60
+  
+  intent:
+    enabled: true
+    # Review mining keywords
+    review_keywords:
+      negative:
+        - "no response"
+        - "never called back"
+        - "hard to reach"
+        - "couldn't get through"
+        - "didn't return"
+        - "no answer"
+        - "waited forever"
+      positive:
+        - "quick response"
+        - "called right back"
+        - "easy to reach"
+        - "responsive"
+    retry:
+      max_attempts: 3
+      base_delay_ms: 1000
+      max_backoff_seconds: 60
+  
+  audit:
+    enabled: true
+    # Steel.dev configuration
+    steel:
+      timeout_seconds: 30
+      screenshot_quality: 80
+      viewport:
+        width: 1920
+        height: 1080
+    # Circuit breaker
+    circuit_breaker:
+      failure_threshold: 3
+      timeout_seconds: 300
+    retry:
+      max_attempts: 2
+      base_delay_ms: 5000
+      max_backoff_seconds: 60
+  
+  scoring:
+    enabled: true
+    # Default weights (can be overridden by niche)
+    default_weights:
+      ad_activity: 0.20
+      intent: 0.25
+      leak: 0.30
+      reactivation: 0.10
+      contact_quality: 0.10
+      business_size: 0.05
+    retry:
+      max_attempts: 3
+      base_delay_ms: 1000
+      max_backoff_seconds: 60
+  
+  outreach:
+    enabled: true
+    # Message templates
+    templates:
+      email:
+        subject_templates:
+          - "Quick question about {{business_name}}'s lead capture"
+          - "Noticed something on {{business_name}}'s website"
+          - "{{decision_maker_name}}, quick observation about your ads"
+      dm:
+        opener_templates:
+          - "Hi {{decision_maker_name}}, I noticed something interesting..."
+          - "Hey {{decision_maker_name}}, quick question..."
+    # Personalization
+    personalization:
+      use_decision_maker_name: true
+      use_business_name: true
+      use_category: true
+      use_evidence: true
+    retry:
+      max_attempts: 3
+      base_delay_ms: 1000
+      max_backoff_seconds: 60
+  
+  conversation:
+    enabled: true
+    # Discovery questions
+    discovery_questions:
+      - "How do you currently handle missed calls?"
+      - "What percentage of leads do you think get contacted within 5 minutes?"
+      - "Do you have a system for following up on leads that didn't respond?"
+      - "What's your biggest challenge with lead follow-up?"
+    # Qualification prompts
+    qualification_prompts:
+      budget: "What kind of budget are you working with for this?"
+      authority: "Are you the one who makes decisions on this, or is there someone else involved?"
+      timeline: "When are you looking to get this sorted out?"
+    retry:
+      max_attempts: 3
+      base_delay_ms: 1000
+      max_backoff_seconds: 60
+  
+  governance:
+    enabled: true
+    # RBAC is defined in code, but can be extended here
+    additional_permissions: {}
+  
+  eval:
+    enabled: true
+    # Golden dataset minimum size
+    min_golden_dataset_size: 100
+    # A/B test defaults
+    ab_test_defaults:
+      sample_size: 200
+      duration_days: 7
+      min_reply_rate: 0.05
+      max_negative_signal_rate: 0.02
+
+# Retry defaults
+retry_defaults:
+  max_attempts: 3
+  base_delay_ms: 1000
+  max_backoff_seconds: 60
+  jitter_range_ms:
+    min: 0
+    max: 1000

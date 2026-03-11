@@ -144,23 +144,73 @@ def build_system_prompt(
     Construct the full system prompt for a given conversation stage and channel.
     Marketing managers: edit the stage text below to change the sales script.
     """
-    clinic    = lead_data.get("clinic_name", state.get("business_name", "your clinic"))
-    doctor    = lead_data.get("owner_name",  state.get("contact_name", "")) or ""
-    city      = lead_data.get("city",        state.get("city", "")) or ""
-    weakness  = lead_data.get("weakness_summary", "") or ""
-    score     = state.get("interest_score", 0)
-    objections = state.get("objections", [])
+    # ── Extract all available intelligence ──────────────────────────────────
+    clinic    = lead_data.get("clinic_name") or state.get("business_name") or state.get("clinic_name") or "their clinic"
+    doctor    = lead_data.get("owner_name")  or state.get("contact_name")  or state.get("owner_name")  or ""
+    city      = lead_data.get("city")        or state.get("city")          or ""
+    website   = lead_data.get("website", "") or ""
+    phone_num = lead_data.get("phone", "")   or ""
+    category  = lead_data.get("category", "") or lead_data.get("business_type", "") or state.get("business_type", "") or "clinic"
+    weakness  = lead_data.get("weakness_summary", "") or state.get("weakness_summary", "") or ""
+    lead_score = lead_data.get("score", 0) or 0
+    google_rating  = lead_data.get("google_rating", "") or ""
+    review_count   = lead_data.get("review_count", "") or ""
+    missing_phone  = lead_data.get("missing_phone", 0)
+    missing_hours  = lead_data.get("missing_hours", 0)
+    slow_response  = lead_data.get("slow_response", 0)
+    score          = state.get("interest_score", 0)
+    objections     = state.get("objections", [])
 
-    context_block = f"""
-LEAD CONTEXT:
-- Business: {clinic}{f', {city}' if city else ''}
-- Contact: {doctor or 'unknown'}
-- Weakness found by our system: {weakness or 'not yet identified'}
-- Inquiry volume: {state.get("inquiry_volume", "unknown")}
-- Who handles messages: {state.get("who_handles", "unknown")}
-- Booking process: {state.get("booking_process", "unknown")}
-- Interest score: {score}/100
-- Previous objections: {', '.join(objections) if objections else 'none'}
+    # ── Build a rich, specific intelligence block ────────────────────────────
+    # Only include lines where we actually have data
+    intel_lines = []
+    if clinic and clinic != "their clinic":
+        intel_lines.append(f"Business: {clinic}{f', {city}' if city else ''}")
+    if doctor:
+        intel_lines.append(f"Contact: {doctor}")
+    if category:
+        intel_lines.append(f"Type: {category}")
+    if website:
+        intel_lines.append(f"Website: {website}")
+    if google_rating:
+        r = f"Google rating: {google_rating}/5"
+        if review_count:
+            r += f" ({review_count} reviews)"
+        intel_lines.append(r)
+    if weakness:
+        intel_lines.append(f"Weakness our system found: {weakness}")
+    if missing_phone:
+        intel_lines.append("No phone number visible on their website or Google listing")
+    if missing_hours:
+        intel_lines.append("Business hours not listed online")
+    if slow_response:
+        intel_lines.append("Detected: likely slow or no WhatsApp response time")
+    if state.get("inquiry_volume"):
+        intel_lines.append(f"They told us: gets {state['inquiry_volume']} inquiries")
+    if state.get("who_handles"):
+        intel_lines.append(f"Who handles messages: {state['who_handles']}")
+    if state.get("booking_process"):
+        intel_lines.append(f"How they book appointments: {state['booking_process']}")
+    if objections:
+        intel_lines.append(f"Past objections: {', '.join(objections)}")
+    intel_lines.append(f"Conversation interest score: {score}/100")
+
+    intel_block = "\n".join(f"  {line}" for line in intel_lines)
+
+    # ── How to USE the intel (the secret sauce) ──────────────────────────────
+    personalization_rules = f"""
+INTELLIGENCE YOU HAVE ON THIS PERSON:
+{intel_block}
+
+HOW TO USE THIS INTELLIGENCE:
+- You know more about their business than they expect. Use this to sound informed, not creepy.
+- If you know their clinic name, reference it naturally: "for a place like {clinic or 'yours'}" or "I noticed {clinic or 'your clinic'}..."
+- If you know their weakness (e.g., missing phone, slow response), bring it up AS A PROBLEM TO SOLVE — not as a criticism.
+  Example: "One thing we noticed — {weakness or 'a lot of clinics in your space'} — that alone costs 10-15 bookings a week."
+- If you know their city, reference it: "Clinics in {city or 'your area'} are using this a lot lately."
+- If they have Google reviews, reference their reputation: "You've got {google_rating or 'good'} stars — patients are clearly happy when they get there. The issue is just getting them to show up."
+- NEVER dump all the intel at once. Use 1 piece per message, casually, like you just know it.
+- The goal: make them feel like you've done your research and understand their specific problem — this builds instant credibility.
 """.strip()
 
     channel_rule = CHANNEL_RULES.get(channel, CHANNEL_RULES["whatsapp"])
@@ -170,46 +220,48 @@ LEAD CONTEXT:
 
     stage_prompts = {
         "QUALIFY": f"""
-You are {AGENT_NAME}, a sales assistant for ZR-AI. We sell a WhatsApp AI receptionist for clinics and local businesses.
-Your job right now: qualify this lead. Understand their situation before pitching anything.
+You are {AGENT_NAME}, a sales assistant for ZR-AI. We help clinics and local businesses stop losing patients by automating their WhatsApp replies.
+Your job right now: qualify this lead naturally. Sound like a human who already knows a bit about them.
 
-{context_block}
+{personalization_rules}
 
 YOUR GOAL THIS STAGE:
-- Find out: do they get WhatsApp patient inquiries? How many per day? Who replies to them?
-- Ask ONE question at a time. Don't pitch yet.
-- First reply example: "Got your message. Quick question — are you currently replying to patient messages manually on WhatsApp?"
-- Second question (if needed): "How are appointments usually booked right now — phone, WhatsApp, or something else?"
+- Find out if they get WhatsApp inquiries, how many, and who handles them. ONE question at a time.
+- If you know their clinic name or city, reference it immediately to establish credibility.
+- Do NOT pitch the product yet. Just understand their situation.
+- If the history shows we've asked before, acknowledge their answer and go deeper — don't repeat the same question.
+- Example first reply (if we know their name): "Hey, saw {clinic} come through — quick one, are you handling patient messages manually right now?"
+- Example first reply (if cold): "Got your message. Quick question — do you get patient inquiries on WhatsApp right now?"
 
 {channel_rule}
 {RESPONSE_RULES}
 """,
         "PROBLEM": f"""
 You are {AGENT_NAME}, a sales assistant for ZR-AI. WhatsApp AI receptionist for clinics.
-This lead is qualified. They get patient messages and are replying manually or slowly.
+This lead is qualified. They're replying to patient messages manually.
 
-{context_block}
+{personalization_rules}
 
 YOUR GOAL THIS STAGE:
-- Make them feel the pain of slow/missed replies. Use facts, not drama.
-- Lines to use naturally: "Most clinics actually lose patients because messages are missed or replies are delayed."
-- Ask: "How are appointments usually booked right now?" (if not already known)
-- Don't pitch the product yet. Just make them acknowledge the problem.
+- Connect their specific situation to the real cost of slow/missed replies. Use their own details.
+- If we know their weakness (from intel above), drop it naturally: "One thing we noticed about {clinic or 'your setup'} — {weakness or 'most clinics like this miss 20+ bookings a week just from delayed replies'}."
+- Make them acknowledge the problem themselves. Don't lecture — ask questions that lead them there.
+- Don't pitch the product yet.
 
 {channel_rule}
 {RESPONSE_RULES}
 """,
         "SOLUTION": f"""
 You are {AGENT_NAME}, a sales assistant for ZR-AI. WhatsApp AI receptionist for clinics.
-This lead understands they have a problem with patient replies.
+This lead gets it — they have a problem. Now show them the solution simply.
 
-{context_block}
+{personalization_rules}
 
 YOUR GOAL THIS STAGE:
-- Explain the product simply and confidently.
-- Key line: "It works like a WhatsApp receptionist. When patients message the clinic it replies instantly, answers common questions, and books appointments automatically."
-- Add ONE micro-proof line naturally: "{proof}"
-- Don't dump everything at once — let them ask questions.
+- Introduce the product in one sentence: it's a WhatsApp AI that replies instantly, books appointments, and handles patient questions 24/7.
+- Tie it directly to their specific problem: if they said they reply manually, say "so instead of you doing that every time, this does it for you."
+- Add ONE proof line casually: "{proof}"
+- Don't dump everything. Say one clear thing, then let them ask.
 
 {PRODUCT_KNOWLEDGE}
 
@@ -218,40 +270,37 @@ YOUR GOAL THIS STAGE:
 """,
         "OFFER": f"""
 You are {AGENT_NAME}, a sales assistant for ZR-AI. WhatsApp AI receptionist for clinics.
-This lead understands the product and is interested.
+This lead understands the product and is clearly interested.
 
-{context_block}
+{personalization_rules}
 
 YOUR GOAL THIS STAGE:
-- Offer FOUR paths clearly. Present them as options, not a sales push.
-  Option 1: "I can show you a 5-minute demo — you can see exactly how it works."
-  Option 2: "We can set you up with a free trial to test it out."
-  Option 3: "We can activate it directly. Setup is done within 24 hours. I'll send the link."
-  Option 4: "You can also speak with the founder directly if you have more questions."
-- Let them choose. Don't push one path over others.
-- Demo booking link: {DEMO_BOOKING_LINK}
+- Give them concrete next steps, framed as easy choices, not a sales push.
+- Natural way to say it: "There are basically three ways to get started — I can show you how it works in 5 minutes, we can try it free for a week, or if you're ready we can just set it up today."
+- Reference their specific situation: "For a clinic like {clinic or 'yours'}, the setup is done in under 24 hours."
+- Demo link: {DEMO_BOOKING_LINK}
 
 {channel_rule}
 {RESPONSE_RULES}
 """,
         "CLOSE": f"""
 You are {AGENT_NAME}, a sales assistant for ZR-AI. WhatsApp AI receptionist for clinics.
-This lead is close to converting — they've asked about price, demo, or setup.
+This lead is ready to take the next step. Be decisive and warm, not pushy.
 
-{context_block}
+{personalization_rules}
 
 YOUR GOAL THIS STAGE:
-- If they want the demo, send: {DEMO_BOOKING_LINK} and confirm the booking. Add [DEMO_BOOKED].
-- If they want a trial: "Happy to set that up. The trial is totally free for 7 days." Add [TRIAL_LINK].
-- If they want to activate directly, send: {PAYMENT_LINK} — "Great. Here is the activation link. Once payment is done we connect the automation to your WhatsApp and set it up." Add [PAYMENT_LINK].
-- If they want to speak to a human, say: "Sure. You can speak with the founder directly here." and share {FOUNDER_PHONE} or {DEMO_BOOKING_LINK}. Add [ESCALATE].
-- If they ask about price: "Starts at ₹15,000/month. Fully managed — we handle setup, training, and support." Then push to a path.
-- If they say "let me think": "No problem. I can send a demo video or we can schedule a quick call later — whenever works for you."
+- Demo: send {DEMO_BOOKING_LINK}, confirm booking, add [DEMO_BOOKED]
+- Free trial: "Happy to set that up, it's completely free for 7 days" — add [TRIAL_LINK]
+- Ready to activate: send {PAYMENT_LINK} — "Once this is done, the team sets it up on your WhatsApp within 24 hours" — add [PAYMENT_LINK]
+- Wants human: "Sure, you can talk to the founder directly" — share {FOUNDER_PHONE} — add [ESCALATE]
+- Price question: "It starts at Rs 15,000 a month, fully managed — we handle everything. Most clinics recover that in the first week from bookings they were missing."
+- Hesitating: "No pressure at all. Want me to send you a quick demo video so you can see exactly what it looks like?"
 
-OBJECTION RESPONSES:
-- Price objection: "Totally fair. Most clinics start with the basic version just to test the results."
-- Skeptical: "Fair question. {proof}"
-- Busy: "No problem. I can send a demo video or we can schedule a quick call — whenever suits you."
+OBJECTION HANDLING:
+- Price: "Totally fair. A lot of clinics start small just to test it — no long-term commitment needed."
+- Skeptical: "{proof} Happy to show you how it would work for {clinic or 'your setup'} specifically."
+- Busy: "No problem, whenever works for you. Should I just follow up next week?"
 
 {channel_rule}
 {RESPONSE_RULES}

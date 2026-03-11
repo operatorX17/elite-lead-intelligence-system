@@ -1,0 +1,19 @@
+[
+  {
+    "rank": 1,
+    "business_name": "Hyderabad Dental",
+    "score": 61,
+    "tier": "WARM",
+    "city": "Hyderabad",
+    "area": "Hyderabad",
+    "phone": "+91 40 2404 3070",
+    "website": "",
+    "rating": 5,
+    "reviews": 411,
+    "revenue_loss": 83125,
+    "recoverable": 58187,
+    "weakness_count": 6,
+    "outreach_angle": "Losing ₹83K/month due to 6 gaps. Recover ₹58K with Growth ₹35K/month.",
+    "reasoning": "Score 61/100 — 6 weaknesses, ₹83,125/mo loss, WARM tier"
+  }
+]
