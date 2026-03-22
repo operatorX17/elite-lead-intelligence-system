@@ -1410,6 +1410,15 @@ def build_analysis_bundle(
     after_hours_capture = bool(signal_facts.get("after_hours_capture"))
     instant_response_path = bool(signal_facts.get("instant_response_path"))
     content_ready_score = signal_facts.get("content_ready_score")
+    decision_maker_name = signal_facts.get("decision_maker_name")
+    decision_maker_linkedin = signal_facts.get("decision_maker_linkedin")
+    decision_maker_role = signal_facts.get("decision_maker_role")
+    decision_maker_source = signal_facts.get("decision_maker_source")
+    decision_maker_confidence = signal_facts.get("decision_maker_confidence")
+    best_contact_phone = signal_facts.get("best_contact_phone")
+    best_contact_email = signal_facts.get("best_contact_email")
+    best_contact_channel = signal_facts.get("best_contact_channel")
+    best_contact_reason = signal_facts.get("best_contact_reason")
 
     trust_markers: List[str] = []
     pain_points: List[str] = []
