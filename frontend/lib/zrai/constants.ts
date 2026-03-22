@@ -11,15 +11,18 @@
 const ZRAI_APP_BASE_URL =
   process.env.NEXTAUTH_URL || process.env.APP_URL || "http://localhost:3000";
 const ZRAI_API_PATH = process.env.ZRAI_API_URL || "/api/zrai";
+const IS_BROWSER = typeof window !== "undefined";
 
 /**
  * Base URL for the ZRAI Next.js bridge endpoints.
  * Use an absolute URL on the server so tool execution inside `/api/chat`
  * can call the bridge without relying on browser-relative fetch behavior.
  */
-export const ZRAI_API_BASE_URL = ZRAI_API_PATH.startsWith("http")
+export const ZRAI_API_BASE_URL = IS_BROWSER
   ? ZRAI_API_PATH
-  : new URL(ZRAI_API_PATH, ZRAI_APP_BASE_URL).toString();
+  : ZRAI_API_PATH.startsWith("http")
+    ? ZRAI_API_PATH
+    : new URL(ZRAI_API_PATH, ZRAI_APP_BASE_URL).toString();
 
 /**
  * Python backend URL for direct calls (if needed).
