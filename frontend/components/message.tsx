@@ -166,7 +166,10 @@ function getZRAIArtifactToolPart(message: ChatMessage) {
   }) as
     | {
         toolCallId: string;
-        output: { artifactTrigger: { kind: string; data?: unknown } };
+        output: {
+          artifactTrigger: { kind: string; data?: unknown };
+          summary?: string;
+        };
       }
     | undefined;
 }
@@ -389,25 +392,16 @@ function ZRAIArtifactBridge({
 }) {
   const handledArtifactIdRef = useRef<string | null>(null);
   const { mutate } = useSWRConfig();
-  const { artifact, setArtifact } = useArtifact();
+  const { setArtifact } = useArtifact();
 
   useEffect(() => {
     if (!isLatestMessage || message.role !== "assistant") {
       return;
     }
 
-    const hasPendingZRAIRun = getMessageParts(message).some((part) =>
-      isZRAIToolPart(part)
-    );
     const toolPartWithArtifact = getZRAIArtifactToolPart(message);
 
     if (!toolPartWithArtifact) {
-      if (hasPendingZRAIRun && artifact.isVisible) {
-        setArtifact((currentArtifact) => ({
-          ...currentArtifact,
-          isVisible: false,
-        }));
-      }
       return;
     }
 
@@ -423,7 +417,7 @@ function ZRAIArtifactBridge({
 
     handledArtifactIdRef.current = artifactId;
     openZRAIArtifact({ artifactTrigger, mutate, setArtifact, toolCallId });
-  }, [artifact.isVisible, isLatestMessage, message, mutate, setArtifact]);
+  }, [isLatestMessage, message, mutate, setArtifact]);
 
   return null;
 }
@@ -485,16 +479,15 @@ const PurePreviewMessage = ({
       hasRenderableText(part.text) &&
       !(shouldHideAssistantText && message.role === "assistant")
   );
-  const shouldCollapseAssistantShell =
+  const shouldShowArtifactShell =
     mode === "view" &&
     message.role === "assistant" &&
-    messageParts.some((part) => isZRAIToolPart(part)) &&
+    !!artifactToolPart &&
     !hasVisibleText &&
     !hasVisibleReasoning &&
     !hasRenderableZRAITool &&
     !hasRenderableBuiltInTool &&
-    attachmentsFromMessage.length === 0 &&
-    !(hasArtifactOutput && !isLatestMessage);
+    attachmentsFromMessage.length === 0;
   const shouldShowLoadingActivity =
     message.role === "assistant" &&
     isLoading &&
@@ -520,9 +513,63 @@ const PurePreviewMessage = ({
     );
   }
 
-  if (shouldCollapseAssistantShell) {
+  if (shouldShowArtifactShell && artifactToolPart) {
     return (
-      <ZRAIArtifactBridge isLatestMessage={isLatestMessage} message={message} />
+      <div
+        className="group/message fade-in w-full animate-in duration-200"
+        data-role={message.role}
+        data-testid="message-assistant-artifact-shell"
+      >
+        <ZRAIArtifactBridge isLatestMessage={isLatestMessage} message={message} />
+        <div className="flex items-start justify-start gap-3">
+          <div className="-mt-1 flex size-8 shrink-0 items-center justify-center rounded-full bg-background ring-1 ring-border">
+            <SparklesIcon size={14} />
+          </div>
+          <div className="flex w-full max-w-2xl flex-col gap-3 rounded-2xl border border-border/70 bg-card/70 px-4 py-3 shadow-sm backdrop-blur-sm md:px-5 md:py-4">
+            <div className="space-y-1">
+              <div className="font-medium text-sm text-foreground">
+                {getArtifactTitle(
+                  artifactToolPart.output.artifactTrigger.kind,
+                  artifactToolPart.output.artifactTrigger.data
+                )}
+              </div>
+              {artifactToolPart.output.summary ? (
+                <div className="text-sm text-muted-foreground">
+                  {artifactToolPart.output.summary}
+                </div>
+              ) : (
+                <div className="text-sm text-muted-foreground">
+                  Artifact ready. Open it again anytime from this message.
+                </div>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                className="rounded-md border border-border px-3 py-1.5 text-sm transition-colors hover:bg-muted"
+                onClick={() => {
+                  openZRAIArtifact({
+                    artifactTrigger: artifactToolPart.output.artifactTrigger,
+                    mutate,
+                    setArtifact,
+                    toolCallId: artifactToolPart.toolCallId,
+                  });
+                }}
+                type="button"
+              >
+                {isLatestMessage ? "View canvas" : "Reopen canvas"}
+              </button>
+              <MessageActions
+                chatId={chatId}
+                isLoading={isLoading}
+                key={`action-${message.id}`}
+                message={message}
+                setMode={setMode}
+                vote={vote}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
     );
   }
 
@@ -951,27 +998,24 @@ const PurePreviewMessage = ({
             return null;
           })}
 
-          {!isReadonly && (
-            <div className="flex items-center gap-2">
-              {artifactToolPart && (
-                <button
-                  className="rounded-md border border-border px-3 py-1.5 text-sm transition-colors hover:bg-muted"
-                  onClick={() => {
-                    openZRAIArtifact({
-                      artifactTrigger: artifactToolPart.output.artifactTrigger,
-                      mutate,
-                      setArtifact,
-                      toolCallId: artifactToolPart.toolCallId,
-                    });
-                  }}
-                  type="button"
-                >
-                  Open {getArtifactTitle(
-                    artifactToolPart.output.artifactTrigger.kind,
-                    artifactToolPart.output.artifactTrigger.data
-                  )}
-                </button>
-              )}
+          <div className="flex items-center gap-2">
+            {artifactToolPart && (
+              <button
+                className="rounded-md border border-border px-3 py-1.5 text-sm transition-colors hover:bg-muted"
+                onClick={() => {
+                  openZRAIArtifact({
+                    artifactTrigger: artifactToolPart.output.artifactTrigger,
+                    mutate,
+                    setArtifact,
+                    toolCallId: artifactToolPart.toolCallId,
+                  });
+                }}
+                type="button"
+              >
+                {isLatestMessage ? "View canvas" : "Reopen canvas"}
+              </button>
+            )}
+            {!isReadonly && (
               <MessageActions
                 chatId={chatId}
                 isLoading={isLoading}
@@ -980,8 +1024,8 @@ const PurePreviewMessage = ({
                 setMode={setMode}
                 vote={vote}
               />
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -993,6 +1037,8 @@ export const PreviewMessage = memo(
   (prevProps, nextProps) => {
     if (
       prevProps.isLoading === nextProps.isLoading &&
+      prevProps.isLatestMessage === nextProps.isLatestMessage &&
+      prevProps.isReadonly === nextProps.isReadonly &&
       prevProps.message.id === nextProps.message.id &&
       prevProps.requiresScrollPadding === nextProps.requiresScrollPadding &&
       equal(prevProps.message.parts, nextProps.message.parts) &&

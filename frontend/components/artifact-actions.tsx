@@ -53,7 +53,7 @@ function PureArtifactActions({
             <Button
               className={cn("h-fit dark:hover:bg-zinc-700", {
                 "p-2": !action.label,
-                "px-2 py-1.5": action.label,
+                "px-2 py-1.5 max-sm:p-2": action.label,
               })}
               disabled={
                 isLoading || artifact.status === "streaming"
@@ -76,7 +76,9 @@ function PureArtifactActions({
               variant="outline"
             >
               {action.icon}
-              {action.label}
+              <span className={cn({ "hidden sm:inline": action.label })}>
+                {action.label}
+              </span>
             </Button>
           </TooltipTrigger>
           <TooltipContent>{action.description}</TooltipContent>

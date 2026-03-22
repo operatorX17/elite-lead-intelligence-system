@@ -250,7 +250,7 @@ export function ZRAIGreeting() {
 
       <motion.div
         animate={{ opacity: 1, y: 0 }}
-        className="mt-3 grid gap-3 md:mt-4 md:gap-4 lg:grid-cols-[1.15fr_0.85fr]"
+        className="mt-3 hidden gap-3 md:mt-4 md:grid md:gap-4 lg:grid-cols-[1.15fr_0.85fr]"
         exit={{ opacity: 0, y: 10 }}
         initial={{ opacity: 0, y: 10 }}
         transition={{ delay: 0.3 }}

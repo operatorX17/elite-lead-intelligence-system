@@ -87,11 +87,13 @@ function PureMultimodalInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { width } = useWindowSize();
 
+  const minInputHeight = width && width < 640 ? 38 : 44;
+
   const adjustHeight = useCallback(() => {
     if (textareaRef.current) {
-      textareaRef.current.style.height = "44px";
+      textareaRef.current.style.height = `${minInputHeight}px`;
     }
-  }, []);
+  }, [minInputHeight]);
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -112,9 +114,9 @@ function PureMultimodalInput({
 
   const resetHeight = useCallback(() => {
     if (textareaRef.current) {
-      textareaRef.current.style.height = "44px";
+      textareaRef.current.style.height = `${minInputHeight}px`;
     }
-  }, []);
+  }, [minInputHeight]);
 
   const [localStorageInput, setLocalStorageInput] = useLocalStorage(
     "input",
@@ -296,7 +298,7 @@ function PureMultimodalInput({
   }, [handlePaste]);
 
   return (
-    <div className={cn("relative flex w-full flex-col gap-4", className)}>
+    <div className={cn("relative flex w-full flex-col gap-2.5 sm:gap-4", className)}>
       {messages.length === 0 &&
         attachments.length === 0 &&
         uploadQueue.length === 0 && (
@@ -317,7 +319,7 @@ function PureMultimodalInput({
       />
 
       <PromptInput
-        className="rounded-xl border border-border bg-background p-3 shadow-xs transition-all duration-200 focus-within:border-border hover:border-muted-foreground/50"
+        className="rounded-xl border border-border bg-background p-2 shadow-xs transition-all duration-200 focus-within:border-border hover:border-muted-foreground/50 sm:p-3"
         onSubmit={(event) => {
           event.preventDefault();
           if (status !== "ready") {
@@ -362,11 +364,11 @@ function PureMultimodalInput({
         )}
         <div className="flex flex-row items-start gap-1 sm:gap-2">
           <PromptInputTextarea
-            className="grow resize-none border-0! border-none! bg-transparent p-2 text-base outline-none ring-0 [-ms-overflow-style:none] [scrollbar-width:none] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 [&::-webkit-scrollbar]:hidden"
+            className="grow resize-none border-0! border-none! bg-transparent px-1 py-1.5 text-sm outline-none ring-0 [-ms-overflow-style:none] [scrollbar-width:none] placeholder:text-[13px] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 sm:p-2 sm:text-base sm:placeholder:text-sm [&::-webkit-scrollbar]:hidden"
             data-testid="multimodal-input"
             disableAutoResize={true}
             maxHeight={200}
-            minHeight={44}
+            minHeight={minInputHeight}
             onChange={handleInput}
             placeholder="Ask ZRAI to discover leads, enrich a company, score a pipeline, draft outreach, or run a dry run..."
             ref={textareaRef}
@@ -374,7 +376,7 @@ function PureMultimodalInput({
             value={input}
           />
         </div>
-        <PromptInputToolbar className="border-top-0! border-t-0! p-0 shadow-none dark:border-0 dark:border-transparent!">
+        <PromptInputToolbar className="border-top-0! border-t-0! p-0 pt-1 shadow-none dark:border-0 dark:border-transparent! sm:pt-0">
           <PromptInputTools className="gap-0 sm:gap-0.5">
             <AttachmentsButton
               fileInputRef={fileInputRef}
@@ -391,7 +393,7 @@ function PureMultimodalInput({
             <StopButton setMessages={setMessages} stop={stop} />
           ) : (
             <PromptInputSubmit
-              className="size-8 rounded-full bg-primary text-primary-foreground transition-colors duration-200 hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground"
+              className="size-[30px] rounded-full bg-primary text-primary-foreground transition-colors duration-200 hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground sm:size-8"
               data-testid="send-button"
               disabled={!input.trim() || uploadQueue.length > 0}
               status={status}
@@ -485,7 +487,10 @@ function PureModelSelectorCompact({
   return (
     <ModelSelector onOpenChange={setOpen} open={open}>
       <ModelSelectorTrigger asChild>
-        <Button className="h-8 w-[200px] justify-between px-2" variant="ghost">
+        <Button
+          className="h-8 w-[124px] justify-between px-1.5 text-xs sm:w-[200px] sm:px-2 sm:text-sm"
+          variant="ghost"
+        >
           {provider && <ModelSelectorLogo provider={provider} />}
           <ModelSelectorName>{selectedModel.name}</ModelSelectorName>
         </Button>

@@ -247,11 +247,12 @@ export async function POST(request: Request) {
 
         // Check if model supports tool calling
         const supportsTools = modelSupportsTools(selectedChatModel);
-        const shouldEnableTools = !isReasoningModel && supportsTools;
+        const shouldEnableTools =
+          !isReasoningModel && supportsTools && !preferContextAnswer;
 
         // Log model info for debugging
         console.log(
-          `[Chat API] Model: "${selectedChatModel}", supportsTools: ${supportsTools}, isReasoning: ${isReasoningModel}, toolsEnabled: ${shouldEnableTools}`
+          `[Chat API] Model: "${selectedChatModel}", supportsTools: ${supportsTools}, isReasoning: ${isReasoningModel}, preferContextAnswer: ${preferContextAnswer}, toolsEnabled: ${shouldEnableTools}`
         );
 
         // Log warning if tools are disabled due to model limitations
