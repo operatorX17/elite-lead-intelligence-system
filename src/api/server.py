@@ -18,7 +18,7 @@ from functools import lru_cache
 import requests
 from bs4 import BeautifulSoup
 
-from fastapi import FastAPI, HTTPException, Header, Depends
+from fastapi import FastAPI, HTTPException, Header, Depends, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -3591,111 +3591,233 @@ async def analyze_lead(
             raise HTTPException(status_code=404, detail="Lead not found")
 
         loop = asyncio.get_event_loop()
-        lead_model = lead_data_to_model(lead_data)
-        source = infer_discovery_source_from_niche(lead_data.get("category") or "")
-        preview = await loop.run_in_executor(
+        result = await loop.run_in_executor(
             None,
-            lambda current_lead=lead_model: build_discovery_preview(
-                lead_data.get("category") or lead_data.get("business_name") or "",
-                current_lead,
-            ),
-        )
-        processed = await loop.run_in_executor(
-            None,
-            lambda current_lead=lead_data: run_selected_lead_pipeline(
+            lambda current_lead=lead_data: execute_lead_analysis(
                 db,
                 current_lead,
                 include_outreach=request.include_outreach,
             ),
         )
-        processed["intent"] = harmonize_intent_with_proof(
-            processed.get("intent") or {},
-            processed.get("proof") or {},
-            processed.get("signal_facts") or {},
-        )
-        analysis_updated_at = derive_analysis_updated_at(
-            processed.get("enrichment") or {},
-            processed.get("intent") or {},
-            processed.get("proof") or {},
-            processed.get("scoring") or {},
-            processed.get("outreach") or [],
-            {"metadata": {"ads_verification": processed.get("ads_verification") or {}}},
-        )
-        frontend_lead = build_frontend_lead(
-            lead_data,
-            processed.get("enrichment") or {},
-            processed.get("intent") or {},
-            processed.get("scoring") or {},
-            processed.get("signal_facts") or {},
-            "analyzed",
-            analysis_updated_at,
-        )
-        frontend_lead = attach_final_metadata(
-            frontend_lead,
-            discovery_source=source,
-            verified_fit=preview.get("verified_fit"),
-            preview_score=preview.get("score"),
-            preview_summary=preview.get("summary"),
-            contact_paths=preview.get("contact_paths") or [],
-            proof=processed.get("proof") or {},
-            analysis_state="analyzed",
-            analysis_updated_at=analysis_updated_at,
-            signal_facts=processed.get("signal_facts") or {},
-            intent=processed.get("intent") or {},
-        )
-        analysis_bundle = build_analysis_bundle(
-            lead=lead_data,
-            signal_facts=processed.get("signal_facts") or {},
-            intent=processed.get("intent") or {},
-            scoring=processed.get("scoring") or {},
-            proof=processed.get("proof") or {},
-            analysis_state="analyzed",
-            analysis_updated_at=analysis_updated_at,
-            preview_match_score=preview.get("score"),
-        )
-        persist_processed_lead_state(
-            db,
-            request.lead_id,
-            frontend_lead,
-            processed.get("enrichment") or {},
-        )
-        persist_analysis_snapshot(
-            db,
-            request.lead_id,
-            analysis_state="analyzed",
-            signal_facts=processed.get("signal_facts") or {},
-            analysis_updated_at=analysis_updated_at,
-            ads_verification=processed.get("ads_verification") or {},
-            analysis_bundle=analysis_bundle,
-        )
-
-        processed_details = {
-            "enrichment": processed.get("enrichment") or {},
-            "intent": processed.get("intent") or {},
-            "proof": processed.get("proof") or {},
-            "scoring": processed.get("scoring") or {},
-            "outreach": processed.get("outreach") or [],
-            "signal_facts": processed.get("signal_facts") or {},
-            "analysis_state": "analyzed",
-            "analysis_updated_at": analysis_updated_at,
-            "signals_version": SIGNALS_VERSION,
-            "analysis_bundle": analysis_bundle,
-        }
-
-        return {
-            "success": True,
-            "lead": frontend_lead,
-            "processed_details": processed_details,
-            "signal_facts": processed.get("signal_facts") or {},
-            "analysis_state": "analyzed",
-            "analysis_updated_at": analysis_updated_at,
-            "signals_version": SIGNALS_VERSION,
-            "analysis_bundle": analysis_bundle,
-        }
+        return result
     except HTTPException:
         raise
     except Exception as e:
         logger.error("Analyze lead error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def execute_lead_analysis(
+    db,
+    lead_data: Dict[str, Any],
+    *,
+    include_outreach: bool,
+) -> Dict[str, Any]:
+    """Run the full single-lead analysis flow and persist the result."""
+    lead_model = lead_data_to_model(lead_data)
+    source = infer_discovery_source_from_niche(lead_data.get("category") or "")
+    preview = build_discovery_preview(
+        lead_data.get("category") or lead_data.get("business_name") or "",
+        lead_model,
+    )
+    processed = run_selected_lead_pipeline(
+        db,
+        lead_data,
+        include_outreach=include_outreach,
+    )
+    processed["intent"] = harmonize_intent_with_proof(
+        processed.get("intent") or {},
+        processed.get("proof") or {},
+        processed.get("signal_facts") or {},
+    )
+    analysis_updated_at = derive_analysis_updated_at(
+        processed.get("enrichment") or {},
+        processed.get("intent") or {},
+        processed.get("proof") or {},
+        processed.get("scoring") or {},
+        processed.get("outreach") or [],
+        {"metadata": {"ads_verification": processed.get("ads_verification") or {}}},
+    )
+    frontend_lead = build_frontend_lead(
+        lead_data,
+        processed.get("enrichment") or {},
+        processed.get("intent") or {},
+        processed.get("scoring") or {},
+        processed.get("signal_facts") or {},
+        "analyzed",
+        analysis_updated_at,
+    )
+    frontend_lead = attach_final_metadata(
+        frontend_lead,
+        discovery_source=source,
+        verified_fit=preview.get("verified_fit"),
+        preview_score=preview.get("score"),
+        preview_summary=preview.get("summary"),
+        contact_paths=preview.get("contact_paths") or [],
+        proof=processed.get("proof") or {},
+        analysis_state="analyzed",
+        analysis_updated_at=analysis_updated_at,
+        signal_facts=processed.get("signal_facts") or {},
+        intent=processed.get("intent") or {},
+    )
+    analysis_bundle = build_analysis_bundle(
+        lead=lead_data,
+        signal_facts=processed.get("signal_facts") or {},
+        intent=processed.get("intent") or {},
+        scoring=processed.get("scoring") or {},
+        proof=processed.get("proof") or {},
+        analysis_state="analyzed",
+        analysis_updated_at=analysis_updated_at,
+        preview_match_score=preview.get("score"),
+    )
+    persist_processed_lead_state(
+        db,
+        str(lead_data.get("lead_id")),
+        frontend_lead,
+        processed.get("enrichment") or {},
+    )
+    persist_analysis_snapshot(
+        db,
+        str(lead_data.get("lead_id")),
+        analysis_state="analyzed",
+        signal_facts=processed.get("signal_facts") or {},
+        analysis_updated_at=analysis_updated_at,
+        ads_verification=processed.get("ads_verification") or {},
+        analysis_bundle=analysis_bundle,
+    )
+
+    processed_details = {
+        "enrichment": processed.get("enrichment") or {},
+        "intent": processed.get("intent") or {},
+        "proof": processed.get("proof") or {},
+        "scoring": processed.get("scoring") or {},
+        "outreach": processed.get("outreach") or [],
+        "signal_facts": processed.get("signal_facts") or {},
+        "analysis_state": "analyzed",
+        "analysis_updated_at": analysis_updated_at,
+        "signals_version": SIGNALS_VERSION,
+        "analysis_bundle": analysis_bundle,
+    }
+
+    return {
+        "success": True,
+        "lead": frontend_lead,
+        "processed_details": processed_details,
+        "signal_facts": processed.get("signal_facts") or {},
+        "analysis_state": "analyzed",
+        "analysis_updated_at": analysis_updated_at,
+        "signals_version": SIGNALS_VERSION,
+        "analysis_bundle": analysis_bundle,
+    }
+
+
+def run_lead_analysis_background(lead_id: str, include_outreach: bool) -> None:
+    """Run analysis outside the request/response window and persist success or failure state."""
+    db = get_db()
+    lead_data = db.get_lead(lead_id)
+    if not lead_data:
+        logger.warning("Background analysis skipped; lead not found: %s", lead_id)
+        return
+
+    try:
+        execute_lead_analysis(db, lead_data, include_outreach=include_outreach)
+        logger.info("Background analysis completed for lead_id=%s", lead_id)
+    except Exception as exc:
+        logger.exception("Background analysis failed for lead_id=%s", lead_id)
+        lead_state = db.get_lead_state(UUID(str(lead_id))) or {}
+        metadata = dict(lead_state.get("metadata") or {})
+        persist_analysis_snapshot(
+            db,
+            str(lead_id),
+            analysis_state="failed",
+            signal_facts=metadata.get("signal_facts") or {},
+            analysis_updated_at=datetime.utcnow().isoformat(),
+            ads_verification=metadata.get("ads_verification") or {},
+            analysis_bundle=metadata.get("analysis_bundle") or metadata.get("intelligence") or {},
+        )
+        db.save_lead_state(
+            {
+                "lead_id": str(lead_id),
+                "current_stage": lead_state.get("current_stage") or "analysis",
+                "last_node": lead_state.get("last_node") or "analysis",
+                "last_error": str(exc),
+                "retry_count": lead_state.get("retry_count", 0),
+                "next_run_at": lead_state.get("next_run_at"),
+                "locks": lead_state.get("locks") or [],
+                "metadata": {
+                    **metadata,
+                    "analysis_state": "failed",
+                    "analysis_updated_at": datetime.utcnow().isoformat(),
+                    "last_error": str(exc),
+                },
+            }
+        )
+
+
+@app.post("/api/v1/analyze-lead-async")
+async def analyze_lead_async(
+    request: AnalyzeLeadRequest,
+    background_tasks: BackgroundTasks,
+    user_id: Optional[str] = Depends(get_user_id),
+):
+    """Queue single-lead analysis and return immediately for UI polling."""
+    logger.info(
+        "Analyze lead async request: lead_id=%s, include_outreach=%s",
+        request.lead_id,
+        request.include_outreach,
+    )
+
+    try:
+        db = get_db()
+        lead_data = db.get_lead(request.lead_id)
+        if not lead_data:
+            raise HTTPException(status_code=404, detail="Lead not found")
+
+        lead_state = db.get_lead_state(UUID(str(request.lead_id))) or {}
+        metadata = dict(lead_state.get("metadata") or {})
+        now = datetime.utcnow().isoformat()
+        persist_analysis_snapshot(
+            db,
+            str(request.lead_id),
+            analysis_state="analyzing",
+            signal_facts=metadata.get("signal_facts") or {},
+            analysis_updated_at=now,
+            ads_verification=metadata.get("ads_verification") or {},
+            analysis_bundle=metadata.get("analysis_bundle") or metadata.get("intelligence") or {},
+        )
+        db.save_lead_state(
+            {
+                "lead_id": str(request.lead_id),
+                "current_stage": "analysis",
+                "last_node": "analysis",
+                "last_error": None,
+                "retry_count": lead_state.get("retry_count", 0),
+                "next_run_at": lead_state.get("next_run_at"),
+                "locks": lead_state.get("locks") or [],
+                "metadata": {
+                    **metadata,
+                    "analysis_state": "analyzing",
+                    "analysis_updated_at": now,
+                    "last_error": None,
+                },
+            }
+        )
+        background_tasks.add_task(
+            run_lead_analysis_background,
+            str(request.lead_id),
+            request.include_outreach,
+        )
+        return {
+            "success": True,
+            "queued": True,
+            "lead_id": str(request.lead_id),
+            "analysis_state": "analyzing",
+            "analysis_updated_at": now,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Analyze lead async error: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 # ============================================================================

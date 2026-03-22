@@ -497,6 +497,61 @@ function LeadCardContent({
     }
   };
 
+  const pollLeadAnalysisCompletion = async (leadId: string) => {
+    for (let attempt = 0; attempt < 45; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 4000));
+
+      const response = await fetch(getZRAILeadByIdEndpoint(leadId));
+      if (!response.ok) {
+        continue;
+      }
+
+      const latest = await response.json();
+      const latestData = getPayloadData(latest);
+      const latestLead = latestData?.lead as Lead | undefined;
+      const nextAnalysisState =
+        latestData?.analysis_state ||
+        latestData?.processed_details?.analysis_state ||
+        latestLead?.analysis_state;
+
+      if (!latestLead || !nextAnalysisState) {
+        continue;
+      }
+
+      if (nextAnalysisState === "failed") {
+        throw new Error("Lead analysis failed in the backend.");
+      }
+
+      if (nextAnalysisState !== "analyzed") {
+        continue;
+      }
+
+      const latestProcessedDetails = latestData.processed_details
+        ? ({
+            ...(latestData.processed_details || {}),
+            signal_facts: latestData.signal_facts || latestData.processed_details?.signal_facts || null,
+            analysis_bundle: latestData.analysis_bundle || latestData.processed_details?.analysis_bundle || null,
+            analysis_state: latestData.analysis_state || latestData.processed_details?.analysis_state || null,
+            analysis_updated_at:
+              latestData.analysis_updated_at || latestData.processed_details?.analysis_updated_at || null,
+            signals_version: latestData.signals_version || latestData.processed_details?.signals_version || null,
+          } as ProcessedLeadDetails)
+        : null;
+
+      setMetadata((prev: LeadCardMetadata) => ({
+        ...prev,
+        lead: latestLead,
+        processedDetails: latestProcessedDetails,
+      }));
+      setLiveLead(latestLead);
+      setLiveProcessedDetails(latestProcessedDetails);
+      toast.success("Lead analyzed.");
+      return;
+    }
+
+    toast.success("Analysis is still running. Use Refresh truth in a moment.");
+  };
+
   const analyzeLead = async () => {
     if (!lead?.id) {
       return;
@@ -519,6 +574,34 @@ function LeadCardContent({
 
       const result = await response.json();
       const resultData = getPayloadData(result);
+      const queued =
+        resultData?.queued ||
+        result?.queued ||
+        resultData?.analysis_state === "analyzing" ||
+        result?.analysis_state === "analyzing";
+
+      if (queued) {
+        const queuedLead = {
+          ...lead,
+          analysis_state: "analyzing",
+        } as Lead;
+        const queuedProcessedDetails = {
+          ...(metadata?.processedDetails || {}),
+          analysis_state: "analyzing",
+          analysis_updated_at: resultData?.analysis_updated_at || result?.analysis_updated_at || null,
+        } as ProcessedLeadDetails;
+        setMetadata((prev: LeadCardMetadata) => ({
+          ...prev,
+          lead: queuedLead,
+          processedDetails: queuedProcessedDetails,
+        }));
+        setLiveLead(queuedLead);
+        setLiveProcessedDetails(queuedProcessedDetails);
+        toast.success("Analysis started.");
+        await pollLeadAnalysisCompletion(queuedLead.id);
+        return;
+      }
+
       if (!(result?.success ?? true) || !resultData?.lead) {
         throw new Error("Lead analysis failed.");
       }
@@ -1086,6 +1169,89 @@ export const leadCardArtifact = new Artifact<"lead-card", LeadCardMetadata>({
 
         const result = await response.json();
         const resultData = getPayloadData(result);
+        const queued =
+          resultData?.queued ||
+          result?.queued ||
+          resultData?.analysis_state === "analyzing" ||
+          result?.analysis_state === "analyzing";
+
+        if (queued) {
+          const queuedLead = {
+            ...lead,
+            analysis_state: "analyzing",
+          } as Lead;
+          const queuedProcessedDetails = {
+            ...(metadata?.processedDetails || payload?.processed_details || {}),
+            analysis_state: "analyzing",
+            analysis_updated_at: resultData?.analysis_updated_at || result?.analysis_updated_at || null,
+          } as ProcessedLeadDetails;
+
+          setMetadata((prev: LeadCardMetadata) => ({
+            ...prev,
+            lead: queuedLead,
+            processedDetails: queuedProcessedDetails,
+          }));
+          setArtifact((draft) => ({
+            ...draft,
+            content: normalizeLeadCardContent(queuedLead, queuedProcessedDetails),
+          }));
+          toast.success("Analysis started.");
+
+          for (let attempt = 0; attempt < 45; attempt += 1) {
+            await new Promise((resolve) => setTimeout(resolve, 4000));
+            const latestResponse = await fetch(getZRAILeadByIdEndpoint(lead.id));
+            if (!latestResponse.ok) {
+              continue;
+            }
+
+            const latest = await latestResponse.json();
+            const latestData = getPayloadData(latest);
+            const latestLead = latestData?.lead as Lead | undefined;
+            const nextAnalysisState =
+              latestData?.analysis_state ||
+              latestData?.processed_details?.analysis_state ||
+              latestLead?.analysis_state;
+
+            if (!latestLead || !nextAnalysisState) {
+              continue;
+            }
+
+            if (nextAnalysisState === "failed") {
+              toast.error("Lead analysis failed in the backend.");
+              return;
+            }
+
+            if (nextAnalysisState !== "analyzed") {
+              continue;
+            }
+
+            const latestProcessedDetails = {
+              ...(latestData?.processed_details || {}),
+              signal_facts: latestData?.signal_facts || latestData?.processed_details?.signal_facts || null,
+              analysis_bundle: latestData?.analysis_bundle || latestData?.processed_details?.analysis_bundle || null,
+              analysis_state: latestData?.analysis_state || latestData?.processed_details?.analysis_state || "analyzed",
+              analysis_updated_at:
+                latestData?.analysis_updated_at || latestData?.processed_details?.analysis_updated_at || null,
+              signals_version: latestData?.signals_version || latestData?.processed_details?.signals_version || null,
+            } as ProcessedLeadDetails;
+
+            setMetadata((prev: LeadCardMetadata) => ({
+              ...prev,
+              lead: latestLead,
+              processedDetails: latestProcessedDetails,
+            }));
+            setArtifact((draft) => ({
+              ...draft,
+              content: normalizeLeadCardContent(latestLead, latestProcessedDetails),
+            }));
+            toast.success("Lead analyzed.");
+            return;
+          }
+
+          toast.success("Analysis is still running. Use Refresh truth in a moment.");
+          return;
+        }
+
         if (!(result?.success ?? true) || !resultData?.lead) {
           toast.error("Lead analysis failed.");
           return;

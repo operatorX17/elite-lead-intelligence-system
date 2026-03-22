@@ -953,6 +953,67 @@ function LeadListContent({
     }
   };
 
+  const pollLeadAnalysisCompletion = async (leadId: string) => {
+    for (let attempt = 0; attempt < 45; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 4000));
+
+      const response = await fetch(getZRAILeadByIdEndpoint(leadId));
+      if (!response.ok) {
+        continue;
+      }
+
+      const payload = await response.json();
+      const payloadData = getPayloadData(payload);
+      const latestLead = payloadData?.lead as Lead | undefined;
+      const nextAnalysisState =
+        payloadData?.analysis_state ||
+        payloadData?.processed_details?.analysis_state ||
+        latestLead?.analysis_state;
+
+      if (!latestLead || !nextAnalysisState) {
+        continue;
+      }
+
+      if (nextAnalysisState === "failed") {
+        throw new Error("Lead analysis failed in the backend.");
+      }
+
+      if (nextAnalysisState !== "analyzed") {
+        continue;
+      }
+
+      const latestProcessedDetails = payloadData.processed_details
+        ? ({
+            ...(payloadData.processed_details || {}),
+            signal_facts: payloadData.signal_facts || payloadData.processed_details?.signal_facts || null,
+            analysis_bundle: payloadData.analysis_bundle || payloadData.processed_details?.analysis_bundle || null,
+            analysis_state: payloadData.analysis_state || payloadData.processed_details?.analysis_state || null,
+            analysis_updated_at:
+              payloadData.analysis_updated_at || payloadData.processed_details?.analysis_updated_at || null,
+            signals_version: payloadData.signals_version || payloadData.processed_details?.signals_version || null,
+          } as ProcessedLeadDetails)
+        : null;
+
+      const mergedLeads = mergeLeadRows(leads, [latestLead]);
+      syncLeadListState({
+        nextLeads: mergedLeads,
+        nextProcessedDetails: latestProcessedDetails
+          ? {
+              ...(processedDetails || {}),
+              [leadId]: latestProcessedDetails,
+            }
+          : processedDetails,
+      });
+      setSelectedLead(mergedLeads.find((lead) => lead.id === leadId) || latestLead);
+      setSelectedLeadLive(latestLead);
+      setSelectedLeadLiveDetails(latestProcessedDetails);
+      toast.success("Lead analyzed.");
+      return;
+    }
+
+    toast.success("Analysis is still running. Use Refresh truth in a moment.");
+  };
+
   const analyzeSelectedLead = async () => {
     if (!selectedLead?.id) {
       return;
@@ -979,22 +1040,59 @@ function LeadListContent({
         throw new Error(await response.text());
       }
 
-        const payload = await response.json();
-        const payloadData = getPayloadData(payload);
-        if (!(payload?.success ?? true) || !payloadData?.lead) {
-          throw new Error("Lead analysis failed.");
-        }
+      const payload = await response.json();
+      const payloadData = getPayloadData(payload);
+      const queued =
+        payloadData?.queued ||
+        payload?.queued ||
+        payloadData?.analysis_state === "analyzing" ||
+        payload?.analysis_state === "analyzing";
 
-        const analyzedLead = payloadData.lead as Lead;
-        const analyzedProcessedDetails = {
-          ...(payloadData.processed_details || {}),
-          signal_facts: payloadData.signal_facts || payloadData.processed_details?.signal_facts || null,
-          analysis_bundle: payloadData.analysis_bundle || payloadData.processed_details?.analysis_bundle || null,
-          analysis_state: payloadData.analysis_state || payloadData.processed_details?.analysis_state || "analyzed",
-          analysis_updated_at:
-            payloadData.analysis_updated_at || payloadData.processed_details?.analysis_updated_at || null,
-          signals_version: payloadData.signals_version || payloadData.processed_details?.signals_version || null,
-        } as ProcessedLeadDetails;
+      if (queued) {
+        const queuedLead = {
+          ...selectedLead,
+          analysis_state: "analyzing",
+        } as Lead;
+        const mergedQueuedLeads = mergeLeadRows(leads, [queuedLead]);
+        syncLeadListState({
+          nextLeads: mergedQueuedLeads,
+          nextProcessedDetails: {
+            ...(processedDetails || {}),
+            [queuedLead.id]: {
+              ...(processedDetails?.[queuedLead.id] || {}),
+              analysis_state: "analyzing",
+              analysis_updated_at: payloadData?.analysis_updated_at || payload?.analysis_updated_at || null,
+            } as ProcessedLeadDetails,
+          },
+        });
+        setSelectedLead(mergedQueuedLeads.find((lead) => lead.id === queuedLead.id) || queuedLead);
+        setSelectedLeadLive(queuedLead);
+        setSelectedLeadLiveDetails(
+          ({
+            ...(processedDetails?.[queuedLead.id] || {}),
+            analysis_state: "analyzing",
+            analysis_updated_at: payloadData?.analysis_updated_at || payload?.analysis_updated_at || null,
+          } as ProcessedLeadDetails)
+        );
+        toast.success("Analysis started.");
+        await pollLeadAnalysisCompletion(queuedLead.id);
+        return;
+      }
+
+      if (!(payload?.success ?? true) || !payloadData?.lead) {
+        throw new Error("Lead analysis failed.");
+      }
+
+      const analyzedLead = payloadData.lead as Lead;
+      const analyzedProcessedDetails = {
+        ...(payloadData.processed_details || {}),
+        signal_facts: payloadData.signal_facts || payloadData.processed_details?.signal_facts || null,
+        analysis_bundle: payloadData.analysis_bundle || payloadData.processed_details?.analysis_bundle || null,
+        analysis_state: payloadData.analysis_state || payloadData.processed_details?.analysis_state || "analyzed",
+        analysis_updated_at:
+          payloadData.analysis_updated_at || payloadData.processed_details?.analysis_updated_at || null,
+        signals_version: payloadData.signals_version || payloadData.processed_details?.signals_version || null,
+      } as ProcessedLeadDetails;
 
       const mergedLeads = mergeLeadRows(leads, [analyzedLead]);
       syncLeadListState({

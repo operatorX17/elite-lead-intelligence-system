@@ -30,7 +30,7 @@ export async function POST(request: Request): Promise<Response> {
       return validationError("run", { message: "Invalid JSON body" }).toResponse();
     }
 
-    const backendResponse = await fetch(`${ZRAI_BACKEND_URL}/api/v1/analyze-lead`, {
+    const backendResponse = await fetch(`${ZRAI_BACKEND_URL}/api/v1/analyze-lead-async`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -66,7 +66,7 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     const data = await backendResponse.json();
-    return Response.json(data, { status: 200 });
+    return Response.json(data, { status: backendResponse.status || 200 });
   } catch (error) {
     console.error("[ZRAI:analyze] Error:", error);
     return backendError(
