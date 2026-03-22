@@ -148,20 +148,20 @@ export function ZRAIGreeting() {
 
   return (
     <div
-      className="mx-auto mt-4 flex size-full max-w-5xl flex-col justify-center px-4 md:mt-10 md:px-6"
+      className="mx-auto mt-2 flex size-full max-w-5xl flex-col justify-center px-3 md:mt-10 md:px-6"
       key="zrai-greeting"
     >
       <motion.div
         animate={{ opacity: 1, y: 0 }}
-        className="relative overflow-hidden rounded-[28px] border border-border/60 bg-[linear-gradient(180deg,rgba(10,10,10,0.98),rgba(18,18,18,0.98))] p-6 text-white shadow-xl shadow-black/10 md:p-8"
+        className="relative overflow-hidden rounded-[24px] border border-border/60 bg-[linear-gradient(180deg,rgba(10,10,10,0.98),rgba(18,18,18,0.98))] p-4 text-white shadow-xl shadow-black/10 md:rounded-[28px] md:p-8"
         exit={{ opacity: 0, y: 10 }}
         initial={{ opacity: 0, y: 10 }}
         transition={{ delay: 0.2 }}
       >
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.06),transparent_28%),radial-gradient(circle_at_bottom_right,rgba(16,185,129,0.06),transparent_22%)]" />
 
-        <div className="relative flex flex-col gap-6">
-          <div className="flex flex-wrap items-center gap-2">
+        <div className="relative flex flex-col gap-4 md:gap-6">
+          <div className="flex flex-wrap items-center gap-1.5 md:gap-2">
             <Badge className="border border-white/10 bg-white/5 text-white/85 backdrop-blur">
               {health ? `Backend ${health.status}` : "Backend pending"}
             </Badge>
@@ -170,16 +170,16 @@ export function ZRAIGreeting() {
             </Badge>
           </div>
 
-          <div className="grid gap-6 lg:grid-cols-[1.4fr_0.9fr]">
-            <div className="space-y-4">
+          <div className="grid gap-3 md:gap-6 lg:grid-cols-[1.4fr_0.9fr]">
+            <div className="space-y-3 md:space-y-4">
               <div>
-                <h1 className="max-w-3xl font-semibold text-3xl tracking-tight md:text-4xl">
+                <h1 className="max-w-3xl font-semibold text-2xl tracking-tight sm:text-3xl md:text-4xl">
                   {ZRAI_GREETING.title}
                 </h1>
-                <p className="mt-2 max-w-2xl text-base text-white/80 md:text-lg">
+                <p className="mt-2 max-w-2xl text-sm text-white/80 sm:text-base md:text-lg">
                   {ZRAI_GREETING.subtitle}
                 </p>
-                <p className="mt-4 max-w-2xl text-sm text-white/72 md:text-base">
+                <p className="mt-2 hidden max-w-2xl text-sm text-white/72 md:mt-4 md:block md:text-base">
                   {ZRAI_GREETING.description}
                 </p>
               </div>
@@ -204,7 +204,7 @@ export function ZRAIGreeting() {
                   />
                 </div>
               ) : (
-                <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-white/68">
+                <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2.5 text-xs text-white/68 md:px-4 md:py-3 md:text-sm">
                   No meaningful activity has been recorded for this session yet.
                   Start with one lead discovery or one lead analysis, then the
                   pipeline totals become useful.
@@ -212,7 +212,7 @@ export function ZRAIGreeting() {
               )}
             </div>
 
-            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 backdrop-blur-sm">
+            <div className="hidden rounded-2xl border border-white/10 bg-white/[0.03] p-4 backdrop-blur-sm lg:block">
               <div className="mb-4 flex items-center justify-between">
                 <div>
                   <div className="font-medium text-sm text-white/80">
@@ -250,16 +250,16 @@ export function ZRAIGreeting() {
 
       <motion.div
         animate={{ opacity: 1, y: 0 }}
-        className="mt-4 grid gap-4 lg:grid-cols-[1.15fr_0.85fr]"
+        className="mt-3 grid gap-3 md:mt-4 md:gap-4 lg:grid-cols-[1.15fr_0.85fr]"
         exit={{ opacity: 0, y: 10 }}
         initial={{ opacity: 0, y: 10 }}
         transition={{ delay: 0.3 }}
       >
-        <div className="rounded-3xl border border-border/60 bg-card/70 p-5 shadow-sm">
-          <div className="font-medium text-foreground text-sm">
+        <div className="rounded-3xl border border-border/60 bg-card/70 p-3 shadow-sm md:p-5">
+          <div className="font-medium text-foreground text-xs md:text-sm">
             Good starting moves
           </div>
-          <div className="mt-3 grid gap-3 md:grid-cols-3">
+          <div className="mt-2 grid gap-2 md:mt-3 md:gap-3 md:grid-cols-3">
             <WorkflowCard
               description="Run one discovery and inspect one lead before scaling anything."
               title="1. Find one good clinic"
@@ -275,7 +275,7 @@ export function ZRAIGreeting() {
           </div>
         </div>
 
-        <div className="rounded-3xl border border-border/60 bg-card/70 p-5 shadow-sm">
+        <div className="hidden rounded-3xl border border-border/60 bg-card/70 p-5 shadow-sm lg:block">
           <div className="font-medium text-foreground text-sm">
             Live status
           </div>
@@ -349,9 +349,11 @@ function WorkflowCard({
   description: string;
 }) {
   return (
-    <div className="rounded-2xl border border-border/60 bg-background/80 p-4">
-      <div className="font-medium text-foreground text-sm">{title}</div>
-      <p className="mt-2 text-muted-foreground text-sm">{description}</p>
+    <div className="rounded-2xl border border-border/60 bg-background/80 p-3 md:p-4">
+      <div className="font-medium text-[13px] text-foreground md:text-sm">{title}</div>
+      <p className="mt-1 text-[11px] text-muted-foreground leading-5 md:mt-2 md:text-sm">
+        {description}
+      </p>
     </div>
   );
 }

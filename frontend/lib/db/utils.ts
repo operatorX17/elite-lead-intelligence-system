@@ -8,9 +8,12 @@ export function generateHashedPassword(password: string) {
   return hash;
 }
 
-export function generateDummyPassword() {
-  const password = generateId();
-  const hashedPassword = generateHashedPassword(password);
+const PLACEHOLDER_PASSWORD_HASH = generateHashedPassword(generateId());
 
-  return hashedPassword;
+export function generateDummyPassword() {
+  return PLACEHOLDER_PASSWORD_HASH;
+}
+
+export function generatePlaceholderPasswordHash() {
+  return PLACEHOLDER_PASSWORD_HASH;
 }

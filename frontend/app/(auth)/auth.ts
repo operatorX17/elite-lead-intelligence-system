@@ -10,6 +10,10 @@ import {
 } from "@/lib/db/queries";
 import { authConfig } from "./auth.config";
 
+const ownerEmail = process.env.ZRAI_OWNER_EMAIL?.trim().toLowerCase();
+const ownerPassword = process.env.ZRAI_OWNER_PASSWORD?.trim();
+const isSingleUserMode = Boolean(ownerEmail && ownerPassword);
+
 export type UserType = "guest" | "regular";
 
 declare module "next-auth" {
@@ -55,6 +59,23 @@ export const {
           typeof credentials?.password === "string"
             ? credentials.password
             : "";
+
+        if (
+          isSingleUserMode &&
+          email.toLowerCase() === ownerEmail &&
+          password === ownerPassword
+        ) {
+          const ensuredOwner = await ensureUserRecord({
+            id: "00000000-0000-4000-8000-000000000001",
+            email,
+          });
+
+          if (!ensuredOwner) {
+            return null;
+          }
+
+          return { ...ensuredOwner, type: "regular" };
+        }
 
         const users = await getUser(email);
 

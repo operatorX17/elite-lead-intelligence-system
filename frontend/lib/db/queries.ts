@@ -34,7 +34,7 @@ import {
   type Vote,
   vote,
 } from "./schema";
-import { generateHashedPassword } from "./utils";
+import { generateHashedPassword, generatePlaceholderPasswordHash } from "./utils";
 
 // Optionally, if not using email/pass login, you can
 // use the Drizzle adapter for Auth.js / NextAuth
@@ -136,7 +136,7 @@ export async function createUser(email: string, password: string) {
 
 export async function createGuestUser() {
   const email = `guest-${Date.now()}`;
-  const password = generateHashedPassword(generateUUID());
+  const password = generatePlaceholderPasswordHash();
 
   if (isMemoryDbEnabled()) {
     const newUser: User = {
@@ -176,7 +176,7 @@ export async function ensureUserRecord({
       memoryUsers.set(id, {
         id,
         email: resolvedEmail,
-        password: generateHashedPassword(generateUUID()),
+        password: generatePlaceholderPasswordHash(),
       });
     }
 
@@ -199,7 +199,7 @@ export async function ensureUserRecord({
       .values({
         id,
         email: resolvedEmail,
-        password: generateHashedPassword(generateUUID()),
+        password: generatePlaceholderPasswordHash(),
       })
       .onConflictDoNothing({ target: user.id })
       .returning();

@@ -3,17 +3,16 @@
 import { z } from "zod";
 
 import { createUser, getUser } from "@/lib/db/queries";
-
 import { signIn } from "./auth";
-
-const ownerEmail = process.env.ZRAI_OWNER_EMAIL?.trim().toLowerCase();
-const ownerPassword = process.env.ZRAI_OWNER_PASSWORD?.trim();
-const isSingleUserMode = Boolean(ownerEmail && ownerPassword);
 
 const authFormSchema = z.object({
   email: z.string().email(),
   password: z.string().min(6),
 });
+
+const ownerEmail = process.env.ZRAI_OWNER_EMAIL?.trim().toLowerCase();
+const ownerPassword = process.env.ZRAI_OWNER_PASSWORD?.trim();
+const isSingleUserMode = Boolean(ownerEmail && ownerPassword);
 
 export type LoginActionState = {
   status: "idle" | "in_progress" | "success" | "failed" | "invalid_data";
@@ -28,18 +27,6 @@ export const login = async (
       email: formData.get("email"),
       password: formData.get("password"),
     });
-
-    if (
-      isSingleUserMode &&
-      validatedData.email.toLowerCase() === ownerEmail &&
-      validatedData.password === ownerPassword
-    ) {
-      const [existingUser] = await getUser(validatedData.email);
-
-      if (!existingUser) {
-        await createUser(validatedData.email, validatedData.password);
-      }
-    }
 
     await signIn("credentials", {
       email: validatedData.email,

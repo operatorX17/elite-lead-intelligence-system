@@ -23,7 +23,7 @@ type ZRAISuggestedActionsProps = {
 function PureZRAISuggestedActions({ chatId, sendMessage }: ZRAISuggestedActionsProps) {
   return (
     <div
-      className="grid w-full gap-2 sm:grid-cols-2"
+      className="flex w-full snap-x gap-2 overflow-x-auto pb-1 sm:grid sm:grid-cols-2 sm:gap-2 sm:overflow-visible sm:pb-0"
       data-testid="zrai-suggested-actions"
     >
       {ZRAI_SUGGESTED_ACTIONS.map((item, index) => (
@@ -35,7 +35,7 @@ function PureZRAISuggestedActions({ chatId, sendMessage }: ZRAISuggestedActionsP
           transition={{ delay: 0.05 * index }}
         >
           <Suggestion
-            className="h-auto w-full whitespace-normal p-3 text-left"
+            className="h-auto min-h-0 w-[158px] shrink-0 snap-start whitespace-normal rounded-xl p-2 text-left sm:w-full sm:min-h-[88px] sm:rounded-2xl sm:p-3"
             onClick={() => {
               window.history.pushState({}, '', `/chat/${chatId}`);
               sendMessage({
@@ -46,8 +46,8 @@ function PureZRAISuggestedActions({ chatId, sendMessage }: ZRAISuggestedActionsP
             suggestion={item.action}
           >
             <div className="flex flex-col">
-              <span className="font-medium">{item.title}</span>
-              <span className="text-xs text-zinc-500">{item.label}</span>
+              <span className="line-clamp-2 font-medium text-[13px] leading-4 sm:text-base sm:leading-5">{item.title}</span>
+              <span className="mt-0.5 line-clamp-1 text-[10px] text-zinc-500 sm:text-xs">{item.label}</span>
             </div>
           </Suggestion>
         </motion.div>

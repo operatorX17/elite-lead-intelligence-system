@@ -1,8 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
-import { useSession } from "next-auth/react";
+import { useSearchParams } from "next/navigation";
 import { Suspense, useActionState, useEffect, useState } from "react";
 
 import { AuthForm } from "@/components/auth-form";
@@ -11,7 +10,6 @@ import { toast } from "@/components/toast";
 import { type LoginActionState, login } from "../actions";
 
 function LoginPageContent() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const redirectUrl = searchParams.get("redirectUrl") || "/";
   const isSingleUserMode = Boolean(
@@ -28,9 +26,6 @@ function LoginPageContent() {
     }
   );
 
-  const { update: updateSession } = useSession();
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: router and updateSession are stable refs
   useEffect(() => {
     if (state.status === "failed") {
       toast({
@@ -44,11 +39,9 @@ function LoginPageContent() {
       });
     } else if (state.status === "success") {
       setIsSuccessful(true);
-      updateSession();
-      router.push(redirectUrl);
-      router.refresh();
+      window.location.replace(redirectUrl);
     }
-  }, [redirectUrl, router, state.status, updateSession]);
+  }, [redirectUrl, state.status]);
 
   const handleSubmit = (formData: FormData) => {
     setEmail(formData.get("email") as string);
