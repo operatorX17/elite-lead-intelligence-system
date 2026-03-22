@@ -46,7 +46,7 @@ export const ZRAI_BACKEND_ENDPOINTS = {
 } as const;
 
 export function getZRAILeadByIdEndpoint(leadId: string) {
-  return `${ZRAI_BACKEND_URL}/api/v1/leads/${leadId}`;
+  return `${ZRAI_API_BASE_URL}/leads/${leadId}`;
 }
 
 /**
@@ -88,6 +88,8 @@ export const ZRAI_ENDPOINTS = {
 
   // Lead Data
   leads: `${ZRAI_API_BASE_URL}/leads`,
+  analyzeLead: `${ZRAI_API_BASE_URL}/analyze`,
+  processLeads: `${ZRAI_API_BASE_URL}/process`,
 
   // Metrics
   metrics: `${ZRAI_API_BASE_URL}/metrics`,

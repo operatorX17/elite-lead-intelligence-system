@@ -12,7 +12,7 @@ import { Artifact } from "@/components/create-artifact";
 import { CopyIcon, RedoIcon, UndoIcon } from "@/components/icons";
 import { useArtifact } from "@/hooks/use-artifact";
 import type { AnalysisBundle, Lead, SignalFacts } from "@/lib/zrai/types";
-import { getZRAILeadByIdEndpoint, ZRAI_BACKEND_ENDPOINTS } from "@/lib/zrai/constants";
+import { getZRAILeadByIdEndpoint, ZRAI_ENDPOINTS } from "@/lib/zrai/constants";
 
 type LeadListMetadata = {
   leads: Lead[];
@@ -73,6 +73,10 @@ function getScoreResults(payload: any) {
     return payload.data.results;
   }
   return [];
+}
+
+function getPayloadData<T = any>(payload: any): T {
+  return (payload?.data ?? payload) as T;
 }
 
 function getLeadSource(lead: Lead) {
@@ -671,15 +675,16 @@ function LeadListContent({
         }
 
         const payload = await response.json();
-        if (!payload?.success || cancelled) {
+        const payloadData = getPayloadData(payload);
+        if (!(payload?.success ?? true) || cancelled) {
           return;
         }
 
-        const latestLead = payload.lead as Lead;
+        const latestLead = (payloadData?.lead || payloadData) as Lead;
         if (!latestLead?.id || !latestLead?.company_name) {
           return;
         }
-        const latestProcessedDetails = payload.processed_details as ProcessedLeadDetails | undefined;
+        const latestProcessedDetails = payloadData.processed_details as ProcessedLeadDetails | undefined;
         setSelectedLeadLive(latestLead);
         setSelectedLeadLiveDetails(latestProcessedDetails || null);
       } catch {
@@ -761,7 +766,7 @@ function LeadListContent({
     setProcessingIds((prev) => Array.from(new Set([...prev, ...freshLeadIds])));
 
     try {
-      const response = await fetch(ZRAI_BACKEND_ENDPOINTS.processLeads, {
+      const response = await fetch(ZRAI_ENDPOINTS.processLeads, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -778,15 +783,15 @@ function LeadListContent({
         throw new Error(errorText || "Processing selected leads failed");
       }
 
-      const payload = (await response.json()) as {
-        processed?: ProcessedLeadResponseItem[];
-      };
-      const processedLeads = (payload.processed || [])
-        .filter((item) => item.success && item.lead)
-        .map((item) => item.lead as Lead);
-      const processedDetailEntries = (payload.processed || [])
-        .filter((item) => item.success && item.lead)
-        .map((item) => [
+        const payload = getPayloadData((await response.json()) as {
+          processed?: ProcessedLeadResponseItem[];
+        });
+        const processedLeads = (payload.processed || [])
+          .filter((item: ProcessedLeadResponseItem) => item.success && item.lead)
+          .map((item: ProcessedLeadResponseItem) => item.lead as Lead);
+        const processedDetailEntries = (payload.processed || [])
+          .filter((item: ProcessedLeadResponseItem) => item.success && item.lead)
+          .map((item: ProcessedLeadResponseItem) => [
           item.lead!.id,
           {
             enrichment: item.enrichment || {},
@@ -855,23 +860,24 @@ function LeadListContent({
         throw new Error(await response.text());
       }
 
-      const payload = await response.json();
-      if (!payload?.success || !payload?.lead) {
-        throw new Error("Lead truth refresh failed.");
-      }
+        const payload = await response.json();
+        const payloadData = getPayloadData(payload);
+        if (!(payload?.success ?? true) || !payloadData?.lead) {
+          throw new Error("Lead truth refresh failed.");
+        }
 
-      const latestLead = payload.lead as Lead;
-      const latestProcessedDetails = payload.processed_details
-        ? ({
-            ...(payload.processed_details || {}),
-            signal_facts: payload.signal_facts || payload.processed_details?.signal_facts || null,
-            analysis_bundle: payload.analysis_bundle || payload.processed_details?.analysis_bundle || null,
-            analysis_state: payload.analysis_state || payload.processed_details?.analysis_state || null,
-            analysis_updated_at:
-              payload.analysis_updated_at || payload.processed_details?.analysis_updated_at || null,
-            signals_version: payload.signals_version || payload.processed_details?.signals_version || null,
-          } as ProcessedLeadDetails)
-        : null;
+        const latestLead = payloadData.lead as Lead;
+        const latestProcessedDetails = payloadData.processed_details
+          ? ({
+              ...(payloadData.processed_details || {}),
+              signal_facts: payloadData.signal_facts || payloadData.processed_details?.signal_facts || null,
+              analysis_bundle: payloadData.analysis_bundle || payloadData.processed_details?.analysis_bundle || null,
+              analysis_state: payloadData.analysis_state || payloadData.processed_details?.analysis_state || null,
+              analysis_updated_at:
+                payloadData.analysis_updated_at || payloadData.processed_details?.analysis_updated_at || null,
+              signals_version: payloadData.signals_version || payloadData.processed_details?.signals_version || null,
+            } as ProcessedLeadDetails)
+          : null;
       const mergedLeads = mergeLeadRows(leads, [latestLead]);
       syncLeadListState({
         nextLeads: mergedLeads,
@@ -903,7 +909,7 @@ function LeadListContent({
     setProcessingIds((prev) => Array.from(new Set([...prev, selectedLead.id])));
 
     try {
-      const response = await fetch(ZRAI_BACKEND_ENDPOINTS.analyzeLead, {
+      const response = await fetch(ZRAI_ENDPOINTS.analyzeLead, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -919,21 +925,22 @@ function LeadListContent({
         throw new Error(await response.text());
       }
 
-      const payload = await response.json();
-      if (!payload?.success || !payload?.lead) {
-        throw new Error("Lead analysis failed.");
-      }
+        const payload = await response.json();
+        const payloadData = getPayloadData(payload);
+        if (!(payload?.success ?? true) || !payloadData?.lead) {
+          throw new Error("Lead analysis failed.");
+        }
 
-      const analyzedLead = payload.lead as Lead;
-      const analyzedProcessedDetails = {
-        ...(payload.processed_details || {}),
-        signal_facts: payload.signal_facts || payload.processed_details?.signal_facts || null,
-        analysis_bundle: payload.analysis_bundle || payload.processed_details?.analysis_bundle || null,
-        analysis_state: payload.analysis_state || payload.processed_details?.analysis_state || "analyzed",
-        analysis_updated_at:
-          payload.analysis_updated_at || payload.processed_details?.analysis_updated_at || null,
-        signals_version: payload.signals_version || payload.processed_details?.signals_version || null,
-      } as ProcessedLeadDetails;
+        const analyzedLead = payloadData.lead as Lead;
+        const analyzedProcessedDetails = {
+          ...(payloadData.processed_details || {}),
+          signal_facts: payloadData.signal_facts || payloadData.processed_details?.signal_facts || null,
+          analysis_bundle: payloadData.analysis_bundle || payloadData.processed_details?.analysis_bundle || null,
+          analysis_state: payloadData.analysis_state || payloadData.processed_details?.analysis_state || "analyzed",
+          analysis_updated_at:
+            payloadData.analysis_updated_at || payloadData.processed_details?.analysis_updated_at || null,
+          signals_version: payloadData.signals_version || payloadData.processed_details?.signals_version || null,
+        } as ProcessedLeadDetails;
 
       const mergedLeads = mergeLeadRows(leads, [analyzedLead]);
       syncLeadListState({
@@ -1527,7 +1534,7 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
             toast.error("No leads available to process.");
             return;
           }
-          const response = await fetch(ZRAI_BACKEND_ENDPOINTS.processLeads, {
+          const response = await fetch(ZRAI_ENDPOINTS.processLeads, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
@@ -1540,15 +1547,15 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
           if (!response.ok) {
             throw new Error(await response.text());
           }
-          const payload = (await response.json()) as {
+          const payload = getPayloadData((await response.json()) as {
             processed?: ProcessedLeadResponseItem[];
-          };
+          });
           const processedLeads = (payload.processed || [])
-            .filter((item) => item.success && item.lead)
-            .map((item) => item.lead as Lead);
+            .filter((item: ProcessedLeadResponseItem) => item.success && item.lead)
+            .map((item: ProcessedLeadResponseItem) => item.lead as Lead);
           const processedDetailEntries = (payload.processed || [])
-            .filter((item) => item.success && item.lead)
-            .map((item) => [
+            .filter((item: ProcessedLeadResponseItem) => item.success && item.lead)
+            .map((item: ProcessedLeadResponseItem) => [
               item.lead!.id,
               {
                 enrichment: item.enrichment || {},
@@ -1605,7 +1612,7 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
 
           const enrichedLeads: Lead[] = [];
           for (const lead of visibleLeads) {
-            const response = await fetch(ZRAI_BACKEND_ENDPOINTS.enrich, {
+            const response = await fetch(ZRAI_ENDPOINTS.enrich, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ lead_id: lead.id }),
@@ -1616,8 +1623,9 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
             }
 
             const payload = await response.json();
-            if (payload?.success && payload?.lead) {
-              enrichedLeads.push(payload.lead as Lead);
+            const payloadData = getPayloadData(payload);
+            if ((payload?.success ?? true) && payloadData?.lead) {
+              enrichedLeads.push(payloadData.lead as Lead);
             }
           }
 
@@ -1667,7 +1675,7 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
             return;
           }
 
-          const response = await fetch(ZRAI_BACKEND_ENDPOINTS.score, {
+          const response = await fetch(ZRAI_ENDPOINTS.score, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ lead_ids: visibleLeads.map((lead) => lead.id) }),

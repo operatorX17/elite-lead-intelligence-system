@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Artifact } from "@/components/create-artifact";
 import { CopyIcon, RedoIcon, UndoIcon } from "@/components/icons";
-import { getZRAILeadByIdEndpoint, ZRAI_BACKEND_ENDPOINTS } from "@/lib/zrai/constants";
+import { getZRAILeadByIdEndpoint, ZRAI_ENDPOINTS } from "@/lib/zrai/constants";
 import type { AnalysisBundle, Lead, SignalFacts } from "@/lib/zrai/types";
 
 type ProcessedLeadDetails = {
@@ -42,6 +42,10 @@ type LeadCardMetadata = {
   loading: boolean;
   processedDetails?: ProcessedLeadDetails | null;
 };
+
+function getPayloadData<T = any>(payload: any): T {
+  return (payload?.data ?? payload) as T;
+}
 
 function parseLeadCardPayload(content: string): LeadCardPayload | null {
   if (!content) {
@@ -332,21 +336,22 @@ function LeadCardContent({
         }
 
         const latest = await response.json();
-        if (!latest?.success || cancelled) {
+        const latestData = getPayloadData(latest);
+        if (!(latest?.success ?? true) || cancelled) {
           return;
         }
 
-        setLiveLead(latest.lead as Lead);
+        setLiveLead((latestData?.lead || latestData) as Lead);
         setLiveProcessedDetails(
-          latest.processed_details
+          latestData?.processed_details
             ? ({
-                ...(latest.processed_details || {}),
-                signal_facts: latest.signal_facts || latest.processed_details?.signal_facts || null,
-                analysis_bundle: latest.analysis_bundle || latest.processed_details?.analysis_bundle || null,
-                analysis_state: latest.analysis_state || latest.processed_details?.analysis_state || null,
+                ...(latestData.processed_details || {}),
+                signal_facts: latestData.signal_facts || latestData.processed_details?.signal_facts || null,
+                analysis_bundle: latestData.analysis_bundle || latestData.processed_details?.analysis_bundle || null,
+                analysis_state: latestData.analysis_state || latestData.processed_details?.analysis_state || null,
                 analysis_updated_at:
-                  latest.analysis_updated_at || latest.processed_details?.analysis_updated_at || null,
-                signals_version: latest.signals_version || latest.processed_details?.signals_version || null,
+                  latestData.analysis_updated_at || latestData.processed_details?.analysis_updated_at || null,
+                signals_version: latestData.signals_version || latestData.processed_details?.signals_version || null,
               } as ProcessedLeadDetails)
             : null
         );
@@ -398,23 +403,24 @@ function LeadCardContent({
         throw new Error(await response.text());
       }
 
-      const latest = await response.json();
-      if (!latest?.success || !latest?.lead) {
-        throw new Error("Lead truth refresh failed.");
-      }
+        const latest = await response.json();
+        const latestData = getPayloadData(latest);
+        if (!(latest?.success ?? true) || !latestData?.lead) {
+          throw new Error("Lead truth refresh failed.");
+        }
 
-      const latestLead = latest.lead as Lead;
-      const latestProcessedDetails = latest.processed_details
-        ? ({
-            ...(latest.processed_details || {}),
-            signal_facts: latest.signal_facts || latest.processed_details?.signal_facts || null,
-            analysis_bundle: latest.analysis_bundle || latest.processed_details?.analysis_bundle || null,
-            analysis_state: latest.analysis_state || latest.processed_details?.analysis_state || null,
-            analysis_updated_at:
-              latest.analysis_updated_at || latest.processed_details?.analysis_updated_at || null,
-            signals_version: latest.signals_version || latest.processed_details?.signals_version || null,
-          } as ProcessedLeadDetails)
-        : null;
+        const latestLead = latestData.lead as Lead;
+        const latestProcessedDetails = latestData.processed_details
+          ? ({
+              ...(latestData.processed_details || {}),
+              signal_facts: latestData.signal_facts || latestData.processed_details?.signal_facts || null,
+              analysis_bundle: latestData.analysis_bundle || latestData.processed_details?.analysis_bundle || null,
+              analysis_state: latestData.analysis_state || latestData.processed_details?.analysis_state || null,
+              analysis_updated_at:
+                latestData.analysis_updated_at || latestData.processed_details?.analysis_updated_at || null,
+              signals_version: latestData.signals_version || latestData.processed_details?.signals_version || null,
+            } as ProcessedLeadDetails)
+          : null;
       setMetadata((prev: LeadCardMetadata) => ({
         ...prev,
         lead: latestLead,
@@ -437,7 +443,7 @@ function LeadCardContent({
 
     setIsAnalyzing(true);
     try {
-      const response = await fetch(ZRAI_BACKEND_ENDPOINTS.analyzeLead, {
+      const response = await fetch(ZRAI_ENDPOINTS.analyzeLead, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -451,19 +457,20 @@ function LeadCardContent({
       }
 
       const result = await response.json();
-      if (!result?.success || !result?.lead) {
+      const resultData = getPayloadData(result);
+      if (!(result?.success ?? true) || !resultData?.lead) {
         throw new Error("Lead analysis failed.");
       }
 
-      const nextLead = result.lead as Lead;
+      const nextLead = resultData.lead as Lead;
       const nextProcessedDetails = {
-        ...(result?.processed_details || {}),
-        signal_facts: result?.signal_facts || result?.processed_details?.signal_facts || null,
-        analysis_bundle: result?.analysis_bundle || result?.processed_details?.analysis_bundle || null,
-        analysis_state: result?.analysis_state || result?.processed_details?.analysis_state || "analyzed",
+        ...(resultData?.processed_details || {}),
+        signal_facts: resultData?.signal_facts || resultData?.processed_details?.signal_facts || null,
+        analysis_bundle: resultData?.analysis_bundle || resultData?.processed_details?.analysis_bundle || null,
+        analysis_state: resultData?.analysis_state || resultData?.processed_details?.analysis_state || "analyzed",
         analysis_updated_at:
-          result?.analysis_updated_at || result?.processed_details?.analysis_updated_at || null,
-        signals_version: result?.signals_version || result?.processed_details?.signals_version || null,
+          resultData?.analysis_updated_at || resultData?.processed_details?.analysis_updated_at || null,
+        signals_version: resultData?.signals_version || resultData?.processed_details?.signals_version || null,
       } as ProcessedLeadDetails;
 
       setMetadata((prev: LeadCardMetadata) => ({
@@ -803,7 +810,7 @@ export const leadCardArtifact = new Artifact<"lead-card", LeadCardMetadata>({
           return;
         }
 
-        const response = await fetch(ZRAI_BACKEND_ENDPOINTS.enrich, {
+        const response = await fetch(ZRAI_ENDPOINTS.enrich, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ lead_id: lead.id }),
@@ -815,15 +822,16 @@ export const leadCardArtifact = new Artifact<"lead-card", LeadCardMetadata>({
         }
 
         const result = await response.json();
-        if (!result?.success || !result?.lead) {
+        const resultData = getPayloadData(result);
+        if (!(result?.success ?? true) || !resultData?.lead) {
           toast.error("Enrichment failed.");
           return;
         }
 
-        const nextLead = result.lead as Lead;
+        const nextLead = resultData.lead as Lead;
         const nextProcessedDetails = {
           ...(metadata?.processedDetails || payload?.processed_details || {}),
-          enrichment: result.enrichment || {},
+          enrichment: resultData.enrichment || {},
         } as ProcessedLeadDetails;
 
         setMetadata((prev: LeadCardMetadata) => ({
@@ -849,7 +857,7 @@ export const leadCardArtifact = new Artifact<"lead-card", LeadCardMetadata>({
           return;
         }
 
-        const response = await fetch(ZRAI_BACKEND_ENDPOINTS.score, {
+        const response = await fetch(ZRAI_ENDPOINTS.score, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ lead_ids: [lead.id] }),
@@ -904,7 +912,7 @@ export const leadCardArtifact = new Artifact<"lead-card", LeadCardMetadata>({
           return;
         }
 
-        const response = await fetch(ZRAI_BACKEND_ENDPOINTS.outreach, {
+        const response = await fetch(ZRAI_ENDPOINTS.outreach, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -920,10 +928,11 @@ export const leadCardArtifact = new Artifact<"lead-card", LeadCardMetadata>({
         }
 
         const result = await response.json();
-        const nextLead = (result?.lead || lead) as Lead;
+        const resultData = getPayloadData(result);
+        const nextLead = (resultData?.lead || lead) as Lead;
         const nextProcessedDetails = {
           ...(metadata?.processedDetails || payload?.processed_details || {}),
-          outreach: result?.outreach || [],
+          outreach: resultData?.outreach || (resultData?.message ? [resultData.message] : []),
         } as ProcessedLeadDetails;
 
         setMetadata((prev: LeadCardMetadata) => ({
@@ -949,7 +958,7 @@ export const leadCardArtifact = new Artifact<"lead-card", LeadCardMetadata>({
           return;
         }
 
-        const response = await fetch(ZRAI_BACKEND_ENDPOINTS.analyzeLead, {
+        const response = await fetch(ZRAI_ENDPOINTS.analyzeLead, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -964,20 +973,21 @@ export const leadCardArtifact = new Artifact<"lead-card", LeadCardMetadata>({
         }
 
         const result = await response.json();
-        if (!result?.success || !result?.lead) {
+        const resultData = getPayloadData(result);
+        if (!(result?.success ?? true) || !resultData?.lead) {
           toast.error("Lead analysis failed.");
           return;
         }
 
-        const nextLead = result.lead as Lead;
+        const nextLead = resultData.lead as Lead;
         const nextProcessedDetails = {
-          ...(result?.processed_details || {}),
-          signal_facts: result?.signal_facts || result?.processed_details?.signal_facts || null,
-          analysis_bundle: result?.analysis_bundle || result?.processed_details?.analysis_bundle || null,
-          analysis_state: result?.analysis_state || result?.processed_details?.analysis_state || "analyzed",
+          ...(resultData?.processed_details || {}),
+          signal_facts: resultData?.signal_facts || resultData?.processed_details?.signal_facts || null,
+          analysis_bundle: resultData?.analysis_bundle || resultData?.processed_details?.analysis_bundle || null,
+          analysis_state: resultData?.analysis_state || resultData?.processed_details?.analysis_state || "analyzed",
           analysis_updated_at:
-            result?.analysis_updated_at || result?.processed_details?.analysis_updated_at || null,
-          signals_version: result?.signals_version || result?.processed_details?.signals_version || null,
+            resultData?.analysis_updated_at || resultData?.processed_details?.analysis_updated_at || null,
+          signals_version: resultData?.signals_version || resultData?.processed_details?.signals_version || null,
         } as ProcessedLeadDetails;
 
         setMetadata((prev: LeadCardMetadata) => ({
