@@ -130,7 +130,7 @@ function getProofInsights(
 
   return auditBullets
     .map((bullet) => bullet.evidence || bullet.specific || bullet.estimate || "")
-    .map((line) => line.trim())
+    .map((line) => String(line).trim())
     .filter(Boolean)
     .slice(0, 3);
 }

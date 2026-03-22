@@ -33,6 +33,10 @@ import {
   user,
   type Vote,
   vote,
+  type WhatsAppConversation,
+  whatsappConversation,
+  type WhatsAppMessage,
+  whatsappMessage,
 } from "./schema";
 import { generateHashedPassword, generatePlaceholderPasswordHash } from "./utils";
 
@@ -52,6 +56,8 @@ type MemoryDbStore = {
   documents: Map<string, Document[]>;
   suggestions: Map<string, Suggestion[]>;
   streams: Map<string, Stream[]>;
+  whatsappConversations: Map<string, WhatsAppConversation>;
+  whatsappMessages: Map<string, WhatsAppMessage>;
 };
 
 const globalMemoryDb = globalThis as typeof globalThis & {
@@ -81,6 +87,8 @@ if (!memoryStore) {
     documents: new Map<string, Document[]>(),
     suggestions: new Map<string, Suggestion[]>(),
     streams: new Map<string, Stream[]>(),
+    whatsappConversations: new Map<string, WhatsAppConversation>(),
+    whatsappMessages: new Map<string, WhatsAppMessage>(),
   };
   globalMemoryDb.__zraiMemoryDbStore = memoryStore;
 }
@@ -92,9 +100,19 @@ const memoryVotes = memoryStore.votes;
 const memoryDocuments = memoryStore.documents;
 const memorySuggestions = memoryStore.suggestions;
 const memoryStreams = memoryStore.streams;
+const memoryWhatsAppConversations = memoryStore.whatsappConversations;
+const memoryWhatsAppMessages = memoryStore.whatsappMessages;
 
 function getVoteKey(chatId: string, messageId: string) {
   return `${chatId}:${messageId}`;
+}
+
+type WhatsAppMode = WhatsAppConversation["mode"];
+type WhatsAppStatus = WhatsAppConversation["status"];
+type WhatsAppMessageStatus = WhatsAppMessage["status"];
+
+function getConversationPreview(body: string) {
+  return body.trim().replace(/\s+/g, " ").slice(0, 140);
 }
 
 export async function getUser(email: string): Promise<User[]> {
@@ -237,6 +255,7 @@ export async function saveChat({
       id,
       createdAt: new Date(),
       title,
+      lastContext: null,
       userId,
       visibility,
     };
@@ -251,6 +270,7 @@ export async function saveChat({
       createdAt: new Date(),
       userId,
       title,
+      lastContext: null,
       visibility,
     });
   } catch (_error) {
@@ -958,4 +978,480 @@ export async function getStreamIdsByChatId({ chatId }: { chatId: string }) {
     enableRuntimeMemoryDb();
     return getStreamIdsByChatId({ chatId });
   }
+}
+
+export async function listWhatsAppConversations() {
+  if (isMemoryDbEnabled()) {
+    return Array.from(memoryWhatsAppConversations.values()).sort(
+      (a, b) => b.lastMessageAt.getTime() - a.lastMessageAt.getTime()
+    );
+  }
+
+  try {
+    return await db
+      .select()
+      .from(whatsappConversation)
+      .orderBy(desc(whatsappConversation.lastMessageAt));
+  } catch (_error) {
+    enableRuntimeMemoryDb();
+    return listWhatsAppConversations();
+  }
+}
+
+export async function getWhatsAppConversationById({ id }: { id: string }) {
+  if (isMemoryDbEnabled()) {
+    return memoryWhatsAppConversations.get(id) ?? null;
+  }
+
+  try {
+    const [selectedConversation] = await db
+      .select()
+      .from(whatsappConversation)
+      .where(eq(whatsappConversation.id, id))
+      .limit(1);
+
+    return selectedConversation ?? null;
+  } catch (_error) {
+    enableRuntimeMemoryDb();
+    return getWhatsAppConversationById({ id });
+  }
+}
+
+export async function getWhatsAppConversationByPhone({
+  contactPhone,
+}: {
+  contactPhone: string;
+}) {
+  if (isMemoryDbEnabled()) {
+    return (
+      Array.from(memoryWhatsAppConversations.values()).find(
+        (conversation) => conversation.contactPhone === contactPhone
+      ) ?? null
+    );
+  }
+
+  try {
+    const [selectedConversation] = await db
+      .select()
+      .from(whatsappConversation)
+      .where(eq(whatsappConversation.contactPhone, contactPhone))
+      .limit(1);
+
+    return selectedConversation ?? null;
+  } catch (_error) {
+    enableRuntimeMemoryDb();
+    return getWhatsAppConversationByPhone({ contactPhone });
+  }
+}
+
+export async function createWhatsAppConversation({
+  contactName,
+  contactPhone,
+  mode = "bot",
+  source = "manual",
+  assignedOperatorLabel = null,
+}: {
+  contactName: string;
+  contactPhone: string;
+  mode?: WhatsAppMode;
+  source?: WhatsAppConversation["source"];
+  assignedOperatorLabel?: string | null;
+}) {
+  const now = new Date();
+  const nextConversation: WhatsAppConversation = {
+    id: generateUUID(),
+    createdAt: now,
+    updatedAt: now,
+    contactName,
+    contactPhone,
+    mode,
+    status: mode === "human" ? "attention" : "open",
+    unreadCount: 0,
+    lastMessagePreview: "",
+    lastMessageAt: now,
+    source,
+    assignedOperatorLabel,
+  };
+
+  if (isMemoryDbEnabled()) {
+    memoryWhatsAppConversations.set(nextConversation.id, nextConversation);
+    return nextConversation;
+  }
+
+  try {
+    const [createdConversation] = await db
+      .insert(whatsappConversation)
+      .values(nextConversation)
+      .returning();
+
+    return createdConversation;
+  } catch (_error) {
+    enableRuntimeMemoryDb();
+    return createWhatsAppConversation({
+      contactName,
+      contactPhone,
+      mode,
+      source,
+      assignedOperatorLabel,
+    });
+  }
+}
+
+export async function updateWhatsAppConversationMode({
+  id,
+  mode,
+  assignedOperatorLabel = null,
+}: {
+  id: string;
+  mode: WhatsAppMode;
+  assignedOperatorLabel?: string | null;
+}) {
+  const currentConversation = await getWhatsAppConversationById({ id });
+
+  if (!currentConversation) {
+    throw new ChatSDKError(
+      "not_found:database",
+      `WhatsApp conversation with id ${id} not found`
+    );
+  }
+
+  const nextStatus: WhatsAppStatus =
+    currentConversation.status === "closed"
+      ? "closed"
+      : mode === "human"
+        ? "attention"
+        : "open";
+
+  const nextValues = {
+    mode,
+    status: nextStatus,
+    assignedOperatorLabel,
+    updatedAt: new Date(),
+  };
+
+  if (isMemoryDbEnabled()) {
+    const nextConversation = {
+      ...currentConversation,
+      ...nextValues,
+    };
+
+    memoryWhatsAppConversations.set(id, nextConversation);
+    return nextConversation;
+  }
+
+  try {
+    const [updatedConversation] = await db
+      .update(whatsappConversation)
+      .set(nextValues)
+      .where(eq(whatsappConversation.id, id))
+      .returning();
+
+    return updatedConversation;
+  } catch (_error) {
+    enableRuntimeMemoryDb();
+    return updateWhatsAppConversationMode({
+      id,
+      mode,
+      assignedOperatorLabel,
+    });
+  }
+}
+
+export async function updateWhatsAppConversationStatus({
+  id,
+  status,
+}: {
+  id: string;
+  status: WhatsAppStatus;
+}) {
+  const nextValues = {
+    status,
+    updatedAt: new Date(),
+  };
+
+  if (isMemoryDbEnabled()) {
+    const currentConversation = memoryWhatsAppConversations.get(id);
+
+    if (!currentConversation) {
+      return null;
+    }
+
+    const nextConversation = {
+      ...currentConversation,
+      ...nextValues,
+    };
+
+    memoryWhatsAppConversations.set(id, nextConversation);
+    return nextConversation;
+  }
+
+  try {
+    const [updatedConversation] = await db
+      .update(whatsappConversation)
+      .set(nextValues)
+      .where(eq(whatsappConversation.id, id))
+      .returning();
+
+    return updatedConversation ?? null;
+  } catch (_error) {
+    enableRuntimeMemoryDb();
+    return updateWhatsAppConversationStatus({ id, status });
+  }
+}
+
+export async function markWhatsAppConversationRead({ id }: { id: string }) {
+  if (isMemoryDbEnabled()) {
+    const currentConversation = memoryWhatsAppConversations.get(id);
+
+    if (!currentConversation) {
+      return null;
+    }
+
+    const nextConversation = {
+      ...currentConversation,
+      unreadCount: 0,
+      updatedAt: new Date(),
+    };
+
+    memoryWhatsAppConversations.set(id, nextConversation);
+    return nextConversation;
+  }
+
+  try {
+    const [updatedConversation] = await db
+      .update(whatsappConversation)
+      .set({
+        unreadCount: 0,
+        updatedAt: new Date(),
+      })
+      .where(eq(whatsappConversation.id, id))
+      .returning();
+
+    return updatedConversation ?? null;
+  } catch (_error) {
+    enableRuntimeMemoryDb();
+    return markWhatsAppConversationRead({ id });
+  }
+}
+
+export async function getWhatsAppMessagesByConversationId({
+  conversationId,
+}: {
+  conversationId: string;
+}) {
+  if (isMemoryDbEnabled()) {
+    return Array.from(memoryWhatsAppMessages.values())
+      .filter((currentMessage) => currentMessage.conversationId === conversationId)
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  }
+
+  try {
+    return await db
+      .select()
+      .from(whatsappMessage)
+      .where(eq(whatsappMessage.conversationId, conversationId))
+      .orderBy(asc(whatsappMessage.createdAt));
+  } catch (_error) {
+    enableRuntimeMemoryDb();
+    return getWhatsAppMessagesByConversationId({ conversationId });
+  }
+}
+
+export async function appendWhatsAppMessage({
+  conversationId,
+  direction,
+  authorType,
+  authorLabel,
+  body,
+  providerMessageId = null,
+  status = "draft",
+  errorText = null,
+  createdAt = new Date(),
+}: {
+  conversationId: string;
+  direction: WhatsAppMessage["direction"];
+  authorType: WhatsAppMessage["authorType"];
+  authorLabel: string;
+  body: string;
+  providerMessageId?: string | null;
+  status?: WhatsAppMessageStatus;
+  errorText?: string | null;
+  createdAt?: Date;
+}) {
+  const currentConversation = await getWhatsAppConversationById({
+    id: conversationId,
+  });
+
+  if (!currentConversation) {
+    throw new ChatSDKError(
+      "not_found:database",
+      `WhatsApp conversation with id ${conversationId} not found`
+    );
+  }
+
+  const nextMessage: WhatsAppMessage = {
+    id: generateUUID(),
+    conversationId,
+    direction,
+    authorType,
+    authorLabel,
+    body,
+    providerMessageId,
+    status,
+    errorText,
+    createdAt,
+  };
+
+  const nextConversation = {
+    ...currentConversation,
+    updatedAt: createdAt,
+    lastMessageAt: createdAt,
+    lastMessagePreview: getConversationPreview(body),
+    unreadCount:
+      direction === "incoming"
+        ? currentConversation.unreadCount + 1
+        : currentConversation.unreadCount,
+    status:
+      currentConversation.status === "closed"
+        ? "closed"
+        : direction === "incoming" && currentConversation.mode === "human"
+          ? "attention"
+          : currentConversation.status,
+  } satisfies WhatsAppConversation;
+
+  if (isMemoryDbEnabled()) {
+    memoryWhatsAppMessages.set(nextMessage.id, nextMessage);
+    memoryWhatsAppConversations.set(conversationId, nextConversation);
+    return nextMessage;
+  }
+
+  try {
+    await db.insert(whatsappMessage).values(nextMessage);
+    await db
+      .update(whatsappConversation)
+      .set({
+        updatedAt: nextConversation.updatedAt,
+        lastMessageAt: nextConversation.lastMessageAt,
+        lastMessagePreview: nextConversation.lastMessagePreview,
+        unreadCount: nextConversation.unreadCount,
+        status: nextConversation.status,
+      })
+      .where(eq(whatsappConversation.id, conversationId));
+
+    return nextMessage;
+  } catch (_error) {
+    enableRuntimeMemoryDb();
+    return appendWhatsAppMessage({
+      conversationId,
+      direction,
+      authorType,
+      authorLabel,
+      body,
+      providerMessageId,
+      status,
+      errorText,
+      createdAt,
+    });
+  }
+}
+
+export async function updateWhatsAppMessageStatusByProviderId({
+  providerMessageId,
+  status,
+}: {
+  providerMessageId: string;
+  status: WhatsAppMessageStatus;
+}) {
+  if (isMemoryDbEnabled()) {
+    const currentMessage = Array.from(memoryWhatsAppMessages.values()).find(
+      (messageRecord) => messageRecord.providerMessageId === providerMessageId
+    );
+
+    if (!currentMessage) {
+      return null;
+    }
+
+    const nextMessage = {
+      ...currentMessage,
+      status,
+    };
+
+    memoryWhatsAppMessages.set(currentMessage.id, nextMessage);
+    return nextMessage;
+  }
+
+  try {
+    const [updatedMessage] = await db
+      .update(whatsappMessage)
+      .set({ status })
+      .where(eq(whatsappMessage.providerMessageId, providerMessageId))
+      .returning();
+
+    return updatedMessage ?? null;
+  } catch (_error) {
+    enableRuntimeMemoryDb();
+    return updateWhatsAppMessageStatusByProviderId({
+      providerMessageId,
+      status,
+    });
+  }
+}
+
+export async function upsertWhatsAppConversationFromInbound({
+  contactName,
+  contactPhone,
+  body,
+  receivedAt = new Date(),
+}: {
+  contactName: string;
+  contactPhone: string;
+  body: string;
+  receivedAt?: Date;
+}) {
+  const existingConversation = await getWhatsAppConversationByPhone({
+    contactPhone,
+  });
+
+  if (existingConversation) {
+    const nextConversation = {
+      ...existingConversation,
+      contactName: contactName || existingConversation.contactName,
+      updatedAt: receivedAt,
+      source: "webhook" as const,
+    } satisfies WhatsAppConversation;
+
+    if (isMemoryDbEnabled()) {
+      memoryWhatsAppConversations.set(existingConversation.id, nextConversation);
+      return nextConversation;
+    }
+
+    try {
+      const [updatedConversation] = await db
+        .update(whatsappConversation)
+        .set({
+          contactName: nextConversation.contactName,
+          updatedAt: nextConversation.updatedAt,
+          source: nextConversation.source,
+        })
+        .where(eq(whatsappConversation.id, existingConversation.id))
+        .returning();
+
+      return updatedConversation;
+    } catch (_error) {
+      enableRuntimeMemoryDb();
+      return upsertWhatsAppConversationFromInbound({
+        contactName,
+        contactPhone,
+        body,
+        receivedAt,
+      });
+    }
+  }
+
+  return createWhatsAppConversation({
+    contactName: contactName || contactPhone,
+    contactPhone,
+    mode: "bot",
+    source: "webhook",
+  });
 }

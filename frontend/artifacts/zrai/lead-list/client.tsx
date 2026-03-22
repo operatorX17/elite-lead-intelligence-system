@@ -11,7 +11,7 @@ import { toast } from "sonner";
 import { Artifact } from "@/components/create-artifact";
 import { CopyIcon, RedoIcon, UndoIcon } from "@/components/icons";
 import { useArtifact } from "@/hooks/use-artifact";
-import { formatLeadListForClipboard } from "@/lib/zrai/clipboard";
+import { formatLeadForClipboard, formatLeadListForClipboard } from "@/lib/zrai/clipboard";
 import type { AnalysisBundle, Lead, SignalFacts } from "@/lib/zrai/types";
 import { getZRAILeadByIdEndpoint, ZRAI_ENDPOINTS } from "@/lib/zrai/constants";
 
