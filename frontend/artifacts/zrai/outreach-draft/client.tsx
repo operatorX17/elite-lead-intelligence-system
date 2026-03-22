@@ -10,6 +10,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Artifact } from "@/components/create-artifact";
 import { CopyIcon, RedoIcon, UndoIcon } from "@/components/icons";
+import { formatArtifactPayloadForClipboard } from "@/lib/zrai/clipboard";
 import type { OutreachMessage } from "@/lib/zrai/types";
 
 type OutreachDraftMetadata = {
@@ -279,7 +280,7 @@ export const outreachDraftArtifact = new Artifact<"outreach-draft", OutreachDraf
       onClick: ({ content }) => {
         try {
           const msg = JSON.parse(content);
-          const text = Object.values(msg.structure || {}).join('\n\n');
+          const text = formatArtifactPayloadForClipboard("outreach-draft", msg);
           navigator.clipboard.writeText(text);
           toast.success("Message copied!");
         } catch {

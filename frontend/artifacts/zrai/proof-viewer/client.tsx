@@ -10,6 +10,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Artifact } from "@/components/create-artifact";
 import { CopyIcon, RedoIcon, UndoIcon } from "@/components/icons";
+import { formatArtifactPayloadForClipboard } from "@/lib/zrai/clipboard";
 import type { ProofArtifact } from "@/lib/zrai/types";
 
 type ProofViewerMetadata = {
@@ -233,11 +234,21 @@ export const proofViewerArtifact = new Artifact<"proof-viewer", ProofViewerMetad
     },
     {
       icon: <CopyIcon size={18} />,
-      description: "Copy URL",
-      onClick: ({ metadata }) => {
-        if (metadata?.proof?.url) {
-          navigator.clipboard.writeText(metadata.proof.url);
-          toast.success("URL copied!");
+      description: "Copy proof summary",
+      onClick: ({ metadata, content }) => {
+        const proof = metadata?.proof || (() => {
+          try {
+            return JSON.parse(content);
+          } catch {
+            return null;
+          }
+        })();
+
+        if (proof) {
+          navigator.clipboard.writeText(
+            formatArtifactPayloadForClipboard("proof-viewer", proof)
+          );
+          toast.success("Proof summary copied!");
         }
       },
     },

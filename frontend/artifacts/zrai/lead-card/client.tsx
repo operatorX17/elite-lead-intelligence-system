@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Artifact } from "@/components/create-artifact";
 import { CopyIcon, RedoIcon, UndoIcon } from "@/components/icons";
+import { formatLeadForClipboard } from "@/lib/zrai/clipboard";
 import { getZRAILeadByIdEndpoint, ZRAI_ENDPOINTS } from "@/lib/zrai/constants";
 import type { AnalysisBundle, Lead, SignalFacts } from "@/lib/zrai/types";
 
@@ -791,10 +792,17 @@ export const leadCardArtifact = new Artifact<"lead-card", LeadCardMetadata>({
     },
     {
       icon: <CopyIcon size={18} />,
-      description: "Copy lead data",
-      onClick: ({ content }) => {
-        navigator.clipboard.writeText(content);
-        toast.success("Lead data copied!");
+      description: "Copy lead summary",
+      onClick: ({ content, metadata }) => {
+        const payload = parseLeadCardPayload(content);
+        const lead = metadata?.lead || payload?.lead || null;
+        const processedDetails =
+          metadata?.processedDetails || payload?.processed_details || null;
+
+        navigator.clipboard.writeText(
+          formatLeadForClipboard(lead, processedDetails)
+        );
+        toast.success("Lead summary copied!");
       },
     },
   ],

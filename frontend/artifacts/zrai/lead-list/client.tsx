@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { Artifact } from "@/components/create-artifact";
 import { CopyIcon, RedoIcon, UndoIcon } from "@/components/icons";
 import { useArtifact } from "@/hooks/use-artifact";
+import { formatLeadListForClipboard } from "@/lib/zrai/clipboard";
 import type { AnalysisBundle, Lead, SignalFacts } from "@/lib/zrai/types";
 import { getZRAILeadByIdEndpoint, ZRAI_ENDPOINTS } from "@/lib/zrai/constants";
 
@@ -20,6 +21,7 @@ type LeadListMetadata = {
   sortBy: string;
   sortOrder: "asc" | "desc";
   filter: string;
+  selectedLeadId?: string | null;
   processedDetails?: Record<string, ProcessedLeadDetails>;
 };
 
@@ -1072,6 +1074,10 @@ function LeadListContent({
                     setSelectedLead(lead);
                     setSelectedLeadLive(null);
                     setSelectedLeadLiveDetails(null);
+                    setMetadata((prev: LeadListMetadata) => ({
+                      ...prev,
+                      selectedLeadId: lead.id,
+                    }));
                   }}
                 />
               ))}
@@ -1092,6 +1098,10 @@ function LeadListContent({
                 setSelectedLead(null);
                 setSelectedLeadLive(null);
                 setSelectedLeadLiveDetails(null);
+                setMetadata((prev: LeadListMetadata) => ({
+                  ...prev,
+                  selectedLeadId: null,
+                }));
               }}
               type="button"
             >
@@ -1454,6 +1464,7 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
       sortBy: prev?.sortBy ?? "score",
       sortOrder: prev?.sortOrder ?? "desc",
       filter: prev?.filter ?? "",
+      selectedLeadId: prev?.selectedLeadId ?? null,
       processedDetails: prev?.processedDetails ?? {},
     }));
   },
@@ -1494,20 +1505,23 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
     },
     {
       icon: <CopyIcon size={18} />,
-      description: "Copy as CSV",
-      onClick: ({ content }) => {
+      description: "Copy lead summary",
+      onClick: ({ content, metadata }) => {
         try {
           const parsed = JSON.parse(content);
           const leads = Array.isArray(parsed) ? parsed : parsed.leads || [];
-          const csv = [
-            "Company,Domain,Niche,Geo,Score,Status",
-            ...leads.map(
-              (lead: Lead) =>
-                `"${lead.company_name}","${lead.domain}","${lead.niche}","${lead.geo}",${lead.score || ""},"${lead.status}"`
-            ),
-          ].join("\n");
-          navigator.clipboard.writeText(csv);
-          toast.success("Copied as CSV!");
+          const readable = formatLeadListForClipboard(
+            leads,
+            metadata?.processedDetails ||
+              parsed.processedDetails ||
+              parsed.processed_details ||
+              {},
+            metadata?.selectedLeadId || null
+          );
+          navigator.clipboard.writeText(readable);
+          toast.success(
+            metadata?.selectedLeadId ? "Lead inspector copied!" : "Lead list copied!"
+          );
         } catch {
           navigator.clipboard.writeText(content);
           toast.success("Copied!");

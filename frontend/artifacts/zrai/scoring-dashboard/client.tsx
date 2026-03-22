@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Artifact } from "@/components/create-artifact";
 import { CopyIcon, RedoIcon, UndoIcon } from "@/components/icons";
+import { formatArtifactPayloadForClipboard } from "@/lib/zrai/clipboard";
 import type { Lead, ScoringResult } from "@/lib/zrai/types";
 
 type ScoringDashboardData = {
@@ -296,7 +297,12 @@ export const scoringDashboardArtifact = new Artifact<
       icon: <CopyIcon size={18} />,
       description: "Copy rankings",
       onClick: ({ content }) => {
-        navigator.clipboard.writeText(content);
+        const payload = parseScoringPayload(content);
+        navigator.clipboard.writeText(
+          formatArtifactPayloadForClipboard("scoring-dashboard", {
+            results: payload?.results || [],
+          })
+        );
         toast.success("Rankings copied!");
       },
     },
