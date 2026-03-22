@@ -656,6 +656,34 @@ def _pick_best_email(emails: List[Any], website: Optional[str]) -> Optional[str]
     return (exact_domain_matches or custom_domain_emails or generic_emails or deduped)[0]
 
 
+def _is_plausible_person_name(value: Optional[str]) -> bool:
+    if not value:
+        return False
+
+    blocked_tokens = {
+        "clinic",
+        "skin",
+        "hair",
+        "laser",
+        "care",
+        "center",
+        "centre",
+        "hospital",
+        "dermatology",
+        "aesthetic",
+        "aesthetics",
+        "cosmetic",
+        "cosmetology",
+    }
+    tokens = [token.lower() for token in re.findall(r"[A-Za-z]+", str(value))]
+    significant_tokens = [token for token in tokens if len(token) > 1]
+    if len(significant_tokens) < 2:
+        return False
+    if any(token in blocked_tokens for token in significant_tokens):
+        return False
+    return True
+
+
 def _derive_best_contact_channel(
     *,
     phone_numbers: List[str],
@@ -898,11 +926,23 @@ def build_signal_facts(
         enrichment_payload.get("decision_maker_confidence")
         or stored_signal_facts.get("decision_maker_confidence")
     )
+    if decision_maker_name and not _is_plausible_person_name(str(decision_maker_name)):
+        decision_maker_name = None
+        decision_maker_role = None
+        decision_maker_source = None
+        decision_maker_confidence = None
     best_contact_phone = phone_numbers[0] if phone_numbers else stored_signal_facts.get("best_contact_phone")
     best_contact_email = _pick_best_email(
         email_contacts,
         lead_data.get("website") or lead_data.get("landing_page_url"),
     ) or stored_signal_facts.get("best_contact_email")
+    if not decision_maker_name and doctor_names:
+        plausible_doctors = [name for name in doctor_names if _is_plausible_person_name(str(name))]
+        if plausible_doctors:
+            decision_maker_name = plausible_doctors[0]
+            decision_maker_role = decision_maker_role or "primary_doctor_contact"
+            decision_maker_source = decision_maker_source or "doctor_roster"
+            decision_maker_confidence = decision_maker_confidence or 0.55
     recommended_channel, best_contact_reason = _derive_best_contact_channel(
         phone_numbers=phone_numbers,
         best_contact_email=best_contact_email,

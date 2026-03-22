@@ -1619,6 +1619,19 @@ function LeadListContent({
                 </button>
               )}
               <button
+                className="rounded-md border border-zinc-300 px-3 py-2 text-sm transition hover:bg-zinc-100 dark:border-zinc-600 dark:hover:bg-zinc-900"
+                disabled={!inspectorLead}
+                onClick={() => {
+                  navigator.clipboard.writeText(
+                    formatLeadForClipboard(inspectorLead, selectedLeadDetails || null)
+                  );
+                  toast.success("Live lead summary copied.");
+                }}
+                type="button"
+              >
+                Copy summary
+              </button>
+              <button
                 className="rounded-md border border-zinc-300 px-3 py-2 text-sm transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-600 dark:hover:bg-zinc-900"
                 disabled={isRefreshingTruth || isSelectedLeadProcessing}
                 onClick={() => void refreshSelectedLeadTruth()}

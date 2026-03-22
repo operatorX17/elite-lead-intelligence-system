@@ -44,7 +44,12 @@ function getSignalFacts(
   lead: Lead | null | undefined,
   processedDetails?: LeadProcessedDetails | null
 ) {
-  return processedDetails?.signal_facts || lead?.signal_facts || null;
+  return (
+    processedDetails?.signal_facts ||
+    lead?.signal_facts ||
+    getAnalysisBundle(lead, processedDetails)?.facts ||
+    null
+  );
 }
 
 function getAnalysisBundle(
@@ -52,6 +57,20 @@ function getAnalysisBundle(
   processedDetails?: LeadProcessedDetails | null
 ) {
   return processedDetails?.analysis_bundle || lead?.analysis_bundle || null;
+}
+
+function getGuidance(
+  lead: Lead | null | undefined,
+  processedDetails?: LeadProcessedDetails | null
+) {
+  return getAnalysisBundle(lead, processedDetails)?.guidance || {};
+}
+
+function getAgentContext(
+  lead: Lead | null | undefined,
+  processedDetails?: LeadProcessedDetails | null
+) {
+  return getAnalysisBundle(lead, processedDetails)?.agent_context || {};
 }
 
 function getFinalScore(
@@ -68,7 +87,12 @@ function getFinalScore(
   );
 }
 
-function getContactLines(lead: Lead | null | undefined, signalFacts: SignalFacts | null) {
+function getContactLines(
+  lead: Lead | null | undefined,
+  signalFacts: SignalFacts | null,
+  processedDetails?: LeadProcessedDetails | null
+) {
+  const agentContext = getAgentContext(lead, processedDetails);
   const directPhones = (signalFacts?.phone_numbers || [])
     .map((phone) => `Phone: ${phone}`);
   const contactPhones = (lead?.contacts || [])
@@ -79,12 +103,32 @@ function getContactLines(lead: Lead | null | undefined, signalFacts: SignalFacts
     .map((contact) => contact.email)
     .filter(Boolean)
     .map((email) => `Email: ${email}`);
+  const bestPhone = signalFacts?.best_contact_phone || agentContext.best_contact_phone;
+  const bestEmail = signalFacts?.best_contact_email || agentContext.best_contact_email;
+  const linkedin = signalFacts?.decision_maker_linkedin || agentContext.decision_maker_linkedin;
 
-  return Array.from(new Set([...directPhones, ...contactPhones, ...contactEmails]));
+  return Array.from(
+    new Set([
+      ...(bestPhone ? [`Best phone: ${bestPhone}`] : []),
+      ...(bestEmail ? [`Best email: ${bestEmail}`] : []),
+      ...(linkedin ? [`LinkedIn: ${linkedin}`] : []),
+      ...directPhones,
+      ...contactPhones,
+      ...contactEmails,
+    ])
+  );
 }
 
-function getProofInsights(processedDetails?: LeadProcessedDetails | null) {
-  return (processedDetails?.proof?.audit_bullets || [])
+function getProofInsights(
+  lead: Lead | null | undefined,
+  processedDetails?: LeadProcessedDetails | null
+) {
+  const auditBullets =
+    processedDetails?.proof?.audit_bullets ||
+    getAnalysisBundle(lead, processedDetails)?.evidence?.audit_bullets ||
+    [];
+
+  return auditBullets
     .map((bullet) => bullet.evidence || bullet.specific || bullet.estimate || "")
     .map((line) => line.trim())
     .filter(Boolean)
@@ -223,10 +267,24 @@ export function formatLeadForClipboard(
   }
 
   const signalFacts = getSignalFacts(lead, processedDetails);
-  const contactLines = getContactLines(lead, signalFacts);
-  const proofInsights = getProofInsights(processedDetails);
+  const guidance = getGuidance(lead, processedDetails);
+  const agentContext = getAgentContext(lead, processedDetails);
+  const contactLines = getContactLines(lead, signalFacts, processedDetails);
+  const proofInsights = getProofInsights(lead, processedDetails);
   const outreachSummary = getOutreachSummary(processedDetails);
   const finalScore = getFinalScore(lead, processedDetails);
+  const decisionMakerName =
+    signalFacts?.decision_maker_name || agentContext.decision_maker_name || null;
+  const decisionMakerRole =
+    signalFacts?.decision_maker_role || agentContext.decision_maker_role || null;
+  const bestContactChannel =
+    signalFacts?.best_contact_channel || agentContext.best_contact_channel || null;
+  const bestContactReason =
+    signalFacts?.best_contact_reason || agentContext.best_contact_reason || null;
+  const recommendedOffer = agentContext.recommended_offer || null;
+  const topIssue = signalFacts?.top_issue || guidance.top_issue || null;
+  const nextBestAction =
+    signalFacts?.next_best_action || guidance.next_best_action || null;
 
   const summaryLines = [
     lead.company_name || "Unknown lead",
@@ -235,10 +293,9 @@ export function formatLeadForClipboard(
     lead.verified_fit ? `Fit: ${lead.verified_fit}` : null,
     `Stage: ${formatValue(lead.analysis_state || lead.status || "preview")}`,
     `Score: ${formatValue(finalScore)}`,
-    signalFacts?.top_issue ? `Top issue: ${signalFacts.top_issue}` : null,
-    signalFacts?.next_best_action
-      ? `Next best action: ${signalFacts.next_best_action}`
-      : null,
+    topIssue ? `Top issue: ${topIssue}` : null,
+    nextBestAction ? `Next best action: ${nextBestAction}` : null,
+    recommendedOffer ? `Recommended offer: ${recommendedOffer}` : null,
     signalFacts
       ? `Signals: Phone ${formatValue(signalFacts.phone_visible)}, Booking ${formatValue(signalFacts.booking_detected)}, WhatsApp ${formatValue(signalFacts.whatsapp_detected)}, Ads ${formatValue(signalFacts.ads_status || "not_checked")}`
       : null,
@@ -258,6 +315,9 @@ export function formatLeadForClipboard(
     lead.contact_paths?.length
       ? `Contact paths: ${lead.contact_paths.join(", ")}`
       : null,
+    decisionMakerName ? `Decision maker: ${decisionMakerName}` : null,
+    decisionMakerRole ? `Decision-maker role: ${decisionMakerRole}` : null,
+    bestContactChannel ? `Best channel: ${bestContactChannel}` : null,
   ].filter(Boolean);
 
   const sections = [summaryLines.join("\n")];
@@ -266,17 +326,26 @@ export function formatLeadForClipboard(
     sections.push(`Contacts\n${contactLines.join("\n")}`);
   }
 
+  if (bestContactReason) {
+    sections.push(`Contact strategy\n${bestContactReason}`);
+  }
+
   if (proofInsights.length) {
     sections.push(`Proof\n${proofInsights.map((line) => `- ${line}`).join("\n")}`);
   }
 
-  if (processedDetails?.intent) {
+  const siteTruthSummary =
+    processedDetails?.intent?.site_truth_summary || guidance.site_truth_summary || null;
+  const whyThisLead =
+    processedDetails?.intent?.why_this_lead || guidance.why_this_lead || null;
+
+  if (siteTruthSummary || whyThisLead) {
     const intentLines = [
-      processedDetails.intent.site_truth_summary
-        ? `Site truth: ${String(processedDetails.intent.site_truth_summary)}`
+      siteTruthSummary
+        ? `Site truth: ${String(siteTruthSummary)}`
         : null,
-      processedDetails.intent.why_this_lead
-        ? `Why this lead: ${String(processedDetails.intent.why_this_lead)}`
+      whyThisLead
+        ? `Why this lead: ${String(whyThisLead)}`
         : null,
     ].filter(Boolean);
 

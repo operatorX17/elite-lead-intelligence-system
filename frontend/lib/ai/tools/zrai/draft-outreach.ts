@@ -24,8 +24,8 @@ This tool only drafts the message - it does NOT send it.`,
     inputSchema: z.object({
       lead_id: z.string().uuid().describe("The unique identifier of the lead"),
       channel: z
-        .enum(["email", "linkedin", "sms"])
-        .describe("The communication channel: email, linkedin, or sms"),
+        .enum(["email", "linkedin", "sms", "whatsapp"])
+        .describe("The communication channel: email, linkedin, sms, or whatsapp"),
     }),
     execute: async ({ lead_id, channel }) => {
       const progress = createZRAIProgressReporter({

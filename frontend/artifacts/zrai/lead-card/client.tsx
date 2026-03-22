@@ -910,6 +910,18 @@ function LeadCardContent({
 
       <div className="flex flex-wrap gap-2">
         <button
+          className="rounded-md border border-zinc-300 px-3 py-2 text-sm transition hover:bg-zinc-100 dark:border-zinc-600 dark:hover:bg-zinc-900"
+          onClick={() => {
+            navigator.clipboard.writeText(
+              formatLeadForClipboard(displayLead, displayProcessedDetails)
+            );
+            toast.success("Live lead summary copied.");
+          }}
+          type="button"
+        >
+          Copy summary
+        </button>
+        <button
           className="rounded-md bg-emerald-600 px-3 py-2 text-sm text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
           disabled={isAnalyzing}
           onClick={() => void analyzeLead()}

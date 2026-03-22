@@ -247,7 +247,7 @@ export interface ScoringResult {
 // Outreach Types
 // ============================================================================
 
-export type OutreachChannel = 'email' | 'linkedin' | 'sms';
+export type OutreachChannel = 'email' | 'linkedin' | 'sms' | 'whatsapp';
 
 export type OutreachStatus = 
   | 'draft' 
