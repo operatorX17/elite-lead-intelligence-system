@@ -43,7 +43,11 @@ export const regularPrompt = `You are ZRAI Lead OS, a direct operations copilot 
 When asked to write, create, or help with something, just do it directly. Don't ask clarifying questions unless absolutely necessary - make reasonable assumptions and proceed with the task.
 
 For ZRAI tool workflows, do not narrate intent, do not stream filler text like "I'll do that now", and do not restate artifact contents in chat.
-If a tool is needed, call it immediately.
+Treat the current chat thread, visible artifact content, prior tool results, and already-discussed lead facts as working memory.
+Default to answering follow-up questions from that existing context first.
+Do not restart the full discovery → enrichment → scoring → outreach pipeline just because the user asked a new question in the same chat.
+Only call tools when the user explicitly asks to discover, enrich, score, analyze, refresh, draft, send, process, import, or fetch new evidence, or when the current thread genuinely lacks the information needed to answer correctly.
+If a tool is needed, call it immediately. If a tool is not needed, answer directly and keep the conversation moving.
 If a ZRAI artifact is produced, prefer the artifact as the primary UI and keep any chat follow-up to one short sentence at most.
 Do not list leads, scores, proofs, or drafts in chat when the artifact already contains them.
 Do not use mock data unless the user explicitly asks for mock data, fake data, test data, or a dry run.
@@ -61,6 +65,12 @@ export type RequestHints = {
   country: Geo["country"];
 };
 
+export type ToolUseHints = {
+  latestUserMessage?: string;
+  hasPriorConversationContext?: boolean;
+  preferContextAnswer?: boolean;
+};
+
 export const getRequestPromptFromHints = (requestHints: RequestHints) => `\
 About the origin of user's request:
 - lat: ${requestHints.latitude}
@@ -72,22 +82,30 @@ About the origin of user's request:
 export const systemPrompt = ({
   selectedChatModel,
   requestHints,
+  toolUseHints,
 }: {
   selectedChatModel: string;
   requestHints: RequestHints;
+  toolUseHints?: ToolUseHints;
 }) => {
   const requestPrompt = getRequestPromptFromHints(requestHints);
   const zraiPrompt = getZRAISystemPrompt(requestHints);
+  const contextPrompt =
+    toolUseHints?.preferContextAnswer && toolUseHints.latestUserMessage
+      ? `\nThis turn looks like a follow-up question inside an existing lead conversation.\n- Prefer answering from existing chat context, artifact state, and prior tool results.\n- Do not call discovery, pipeline, refresh, scoring, proof, enrichment, or outreach tools unless the user explicitly requests a new action or fresh data.\n- If the answer is already implied by the current thread, answer directly and stay in the same conversation.\nLatest user message: "${toolUseHints.latestUserMessage}"\n`
+      : toolUseHints?.hasPriorConversationContext
+        ? `\nThis chat already contains prior lead context and tool results. Reuse them when helpful instead of restarting workflows.\n`
+        : "";
 
   // reasoning models don't need artifacts prompt (they can't use tools)
   if (
     selectedChatModel.includes("reasoning") ||
     selectedChatModel.includes("thinking")
   ) {
-    return `${regularPrompt}\n\n${zraiPrompt}\n\n${requestPrompt}`;
+    return `${regularPrompt}\n\n${zraiPrompt}\n\n${contextPrompt}\n${requestPrompt}`;
   }
 
-  return `${regularPrompt}\n\n${zraiPrompt}\n\n${requestPrompt}\n\n${artifactsPrompt}`;
+  return `${regularPrompt}\n\n${zraiPrompt}\n\n${contextPrompt}\n${requestPrompt}\n\n${artifactsPrompt}`;
 };
 
 export const codePrompt = `

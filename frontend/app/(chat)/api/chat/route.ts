@@ -62,6 +62,50 @@ export const maxDuration = 300;
 
 let globalStreamContext: ResumableStreamContext | null = null;
 
+function extractMessageText(parts?: ChatMessage["parts"]) {
+  return (
+    parts
+      ?.filter(
+        (
+          part
+        ): part is Extract<(typeof parts)[number], { type: "text"; text: string }> =>
+          part.type === "text" && typeof part.text === "string"
+      )
+      .map((part) => part.text.trim())
+      .filter(Boolean)
+      .join(" ")
+      .trim() ?? ""
+  );
+}
+
+function shouldPreferContextAnswer(
+  latestUserMessage: string,
+  uiMessages: ChatMessage[]
+) {
+  if (!latestUserMessage) {
+    return false;
+  }
+
+  const hasPriorConversationContext = uiMessages.length > 1;
+
+  if (!hasPriorConversationContext) {
+    return false;
+  }
+
+  const normalized = latestUserMessage.toLowerCase();
+
+  const explicitActionPattern =
+    /\b(discover|find|search|import|enrich|score|rerun|re-run|refresh|analy[sz]e|audit|generate proof|draft|send|process|run full|run pipeline|top 3|check governance|screenshot|scrape|fetch latest|update lead)\b/;
+  const followUpQuestionPattern =
+    /^(why|how|what|which|who|does|is|are|can|could|should|would|will|tell|explain|compare|summarize|so|then|and)\b/;
+
+  if (explicitActionPattern.test(normalized)) {
+    return false;
+  }
+
+  return followUpQuestionPattern.test(normalized) || normalized.includes("?");
+}
+
 export function getStreamContext() {
   if (!globalStreamContext) {
     try {
@@ -150,6 +194,12 @@ export async function POST(request: Request) {
     const uiMessages = isToolApprovalFlow
       ? (messages as ChatMessage[])
       : [...convertToUIMessages(messagesFromDb), message as ChatMessage];
+    const latestUserMessageText =
+      message?.role === "user" ? extractMessageText(message.parts) : "";
+    const preferContextAnswer = shouldPreferContextAnswer(
+      latestUserMessageText,
+      uiMessages
+    );
 
     const { longitude, latitude, city, country } = geolocation(request);
 
@@ -214,7 +264,15 @@ export async function POST(request: Request) {
 
         const result = streamText({
           model: getLanguageModel(selectedChatModel),
-          system: systemPrompt({ selectedChatModel, requestHints }),
+          system: systemPrompt({
+            selectedChatModel,
+            requestHints,
+            toolUseHints: {
+              latestUserMessage: latestUserMessageText,
+              hasPriorConversationContext: uiMessages.length > 1,
+              preferContextAnswer,
+            },
+          }),
           messages: await convertToModelMessages(uiMessages),
           stopWhen: stepCountIs(5),
           experimental_activeTools: shouldEnableTools
