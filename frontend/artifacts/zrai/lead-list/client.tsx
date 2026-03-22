@@ -392,6 +392,58 @@ function getScoreSnapshot(
   };
 }
 
+function formatBestContactChannel(value: string | null | undefined) {
+  if (!value) {
+    return "-";
+  }
+
+  return String(value)
+    .replace(/_/g, " ")
+    .replace(/\bwhatsapp\b/i, "WhatsApp")
+    .replace(/\blinkedin\b/i, "LinkedIn");
+}
+
+function getContactIntelligence(
+  signalFacts: SignalFacts | null,
+  analysisBundle: AnalysisBundle | null
+) {
+  const agentContext = analysisBundle?.agent_context || {};
+  const decisionMakerName = signalFacts?.decision_maker_name || agentContext.decision_maker_name || null;
+  const decisionMakerLinkedin =
+    signalFacts?.decision_maker_linkedin || agentContext.decision_maker_linkedin || null;
+  const decisionMakerRole = signalFacts?.decision_maker_role || agentContext.decision_maker_role || null;
+  const decisionMakerSource = signalFacts?.decision_maker_source || agentContext.decision_maker_source || null;
+  const decisionMakerConfidence =
+    signalFacts?.decision_maker_confidence ?? agentContext.decision_maker_confidence ?? null;
+  const bestContactPhone = signalFacts?.best_contact_phone || agentContext.best_contact_phone || null;
+  const bestContactEmail = signalFacts?.best_contact_email || agentContext.best_contact_email || null;
+  const bestContactChannel =
+    signalFacts?.best_contact_channel || agentContext.best_contact_channel || null;
+  const bestContactReason = signalFacts?.best_contact_reason || agentContext.best_contact_reason || null;
+  const recommendedOffer = agentContext.recommended_offer || null;
+
+  return {
+    decisionMakerName,
+    decisionMakerLinkedin,
+    decisionMakerRole,
+    decisionMakerSource,
+    decisionMakerConfidence,
+    bestContactPhone,
+    bestContactEmail,
+    bestContactChannel,
+    bestContactReason,
+    recommendedOffer,
+    hasAny: Boolean(
+      decisionMakerName ||
+        decisionMakerLinkedin ||
+        bestContactPhone ||
+        bestContactEmail ||
+        bestContactChannel ||
+        recommendedOffer
+    ),
+  };
+}
+
 function getDecisionLabel(finalScore: number | null | undefined) {
   if (finalScore == null) {
     return "Needs analysis";
@@ -974,7 +1026,9 @@ function LeadListContent({
   const selectedLeadDetails =
     selectedLeadLiveDetails ||
     (inspectorLead ? processedDetails[inspectorLead.id] : undefined);
+  const analysisBundle = getAnalysisBundle(inspectorLead, selectedLeadDetails);
   const signalFacts = getSignalFacts(inspectorLead, selectedLeadDetails);
+  const contactIntel = getContactIntelligence(signalFacts, analysisBundle);
   const proofExtraction = selectedLeadDetails?.proof?.extraction_data as Record<string, unknown> | undefined;
   const proofFacts = getCanonicalProofFacts(signalFacts, proofExtraction);
   const proofInsights = getCanonicalProofInsights(
@@ -1225,6 +1279,50 @@ function LeadListContent({
                     <span className="font-medium">Next best action:</span> {getNextBestAction(signalFacts)}
                   </div>
                 </div>
+                {contactIntel.hasAny && (
+                  <div className="mt-3 space-y-2 text-sm">
+                    <div className="rounded-md bg-zinc-100 p-2 dark:bg-zinc-900">
+                      <span className="font-medium">Decision maker:</span>{" "}
+                      {contactIntel.decisionMakerName || "Likely doctor/owner contact not confirmed yet"}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="rounded-md bg-zinc-100 p-2 dark:bg-zinc-900">
+                        <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Role</div>
+                        <div className="mt-1">{contactIntel.decisionMakerRole || "primary contact"}</div>
+                      </div>
+                      <div className="rounded-md bg-zinc-100 p-2 dark:bg-zinc-900">
+                        <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Best channel</div>
+                        <div className="mt-1">{formatBestContactChannel(contactIntel.bestContactChannel)}</div>
+                      </div>
+                      <div className="rounded-md bg-zinc-100 p-2 dark:bg-zinc-900">
+                        <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Best phone</div>
+                        <div className="mt-1 break-all">{contactIntel.bestContactPhone || "-"}</div>
+                      </div>
+                      <div className="rounded-md bg-zinc-100 p-2 dark:bg-zinc-900">
+                        <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Best email</div>
+                        <div className="mt-1 break-all">{contactIntel.bestContactEmail || "-"}</div>
+                      </div>
+                    </div>
+                    {contactIntel.decisionMakerLinkedin && (
+                      <div className="rounded-md bg-zinc-100 p-2 dark:bg-zinc-900">
+                        <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">LinkedIn</div>
+                        <a
+                          className="mt-1 block break-all text-blue-500 hover:underline"
+                          href={contactIntel.decisionMakerLinkedin}
+                          rel="noreferrer"
+                          target="_blank"
+                        >
+                          {contactIntel.decisionMakerLinkedin}
+                        </a>
+                      </div>
+                    )}
+                    {(contactIntel.bestContactReason || contactIntel.recommendedOffer || contactIntel.decisionMakerSource) && (
+                      <div className="rounded-md bg-zinc-100 p-2 text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
+                        {contactIntel.bestContactReason || contactIntel.recommendedOffer || contactIntel.decisionMakerSource}
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
                   <div className="rounded-md bg-zinc-100 p-2 dark:bg-zinc-900">
                     <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Phone</div>
