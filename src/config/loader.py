@@ -132,6 +132,7 @@ class ConfigLoader:
         """Load Apify configuration from environment."""
         return ApifyConfig(
             api_token=get_env("APIFY_API_TOKEN", "your-apify-token"),
+            memory_mbytes=int(get_env("APIFY_MEMORY_MBYTES", "1024")),
         )
     
     def _load_steel_config(self) -> SteelConfig:

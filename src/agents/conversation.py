@@ -64,10 +64,14 @@ class ConversationAgent(BaseAgent):
         
         state["current_stage"] = "conversation"
         
-        # If no existing conversation, create one
         if not state.get("conversation_transcript"):
             state["conversation_transcript"] = []
+        if not state.get("conversation_entities"):
             state["conversation_entities"] = {}
+
+        incoming_message = (state.get("metadata") or {}).get("incoming_message")
+        if incoming_message:
+            return self.handle_reply(state, incoming_message)
         
         return state
     
@@ -80,49 +84,122 @@ class ConversationAgent(BaseAgent):
         Handle a reply from the prospect.
         Requirements: 9.1, 9.3, 9.4
         """
-        if not state.conversation:
-            state.conversation = Conversation(
-                conversation_id=uuid4(),
-                lead_id=state.lead.lead_id,
-                transcript=[],
-                entities=ConversationEntities(),
-            )
-        
+        metadata = state.setdefault("metadata", {})
+        lead = state.get("lead") or {}
+        lead_id = lead.get("lead_id")
+
+        if not lead_id:
+            self._logger.warning("Missing lead_id for conversation reply")
+            return state
+
+        transcript = self._hydrate_transcript(state.get("conversation_transcript") or [])
+        entities = self._hydrate_entities(state.get("conversation_entities") or {})
+        conversation = Conversation(
+            conversation_id=metadata.get("conversation_id") or uuid4(),
+            lead_id=lead_id,
+            transcript=transcript,
+            entities=entities,
+        )
+
         # Add prospect message to transcript
-        state.conversation.transcript.append(ConversationMessage(
+        conversation.transcript.append(ConversationMessage(
             role="prospect",
             message=prospect_message,
         ))
         
         # Extract entities from message
-        entities = self._extract_entities(prospect_message, state.conversation.entities)
-        state.conversation.entities = entities
+        entities = self._extract_entities(prospect_message, conversation.entities)
+        conversation.entities = entities
         
         # Check for escalation criteria
         should_escalate = self._check_escalation_criteria(entities)
         
         if should_escalate:
-            state.conversation.escalated = True
-            state.conversation.escalated_at = datetime.utcnow()
-            state.is_escalated = True
+            conversation.escalated = True
+            conversation.escalated_at = datetime.utcnow()
+            state["is_escalated"] = True
             
             # Generate objection summary and close angle
-            state.conversation.objection_summary = self._generate_objection_summary(entities)
-            state.conversation.suggested_close_angle = self._generate_close_angle(state.lead, entities)
+            conversation.objection_summary = self._generate_objection_summary(entities)
+            conversation.suggested_close_angle = self._generate_close_angle(lead, entities)
+            metadata["objection_summary"] = conversation.objection_summary
+            metadata["suggested_close_angle"] = conversation.suggested_close_angle
         else:
+            state["is_escalated"] = False
             # Generate AI response
-            ai_response = self._generate_response(state, prospect_message)
+            try:
+                ai_response = self._generate_response(
+                    conversation,
+                    lead,
+                    prospect_message,
+                    metadata.get("intelligence") or metadata.get("analysis_bundle") or {},
+                )
+            except Exception as exc:
+                self._logger.error(f"Conversation response generation error: {exc}")
+                ai_response = self._generate_fallback_response(entities)
             
             # Add AI response to transcript
-            state.conversation.transcript.append(ConversationMessage(
+            conversation.transcript.append(ConversationMessage(
                 role="ai",
                 message=ai_response,
             ))
+            metadata["last_ai_response"] = ai_response
         
+        metadata["conversation_id"] = str(conversation.conversation_id)
+        state["conversation_transcript"] = [
+            {
+                "role": message.role,
+                "message": message.message,
+                "timestamp": message.timestamp.isoformat()
+                if hasattr(message.timestamp, "isoformat")
+                else str(message.timestamp),
+            }
+            for message in conversation.transcript
+        ]
+        state["conversation_entities"] = conversation.entities.model_dump()
+
         # Save conversation
-        self._save_conversation(state.conversation)
+        self._save_conversation(conversation)
         
         return state
+
+    def _hydrate_transcript(
+        self,
+        transcript: List[Dict[str, Any]],
+    ) -> List[ConversationMessage]:
+        """Convert serialized transcript items into ConversationMessage objects."""
+        hydrated: List[ConversationMessage] = []
+        for item in transcript:
+            timestamp = item.get("timestamp")
+            if isinstance(timestamp, str):
+                try:
+                    timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                except ValueError:
+                    timestamp = datetime.utcnow()
+            hydrated.append(
+                ConversationMessage(
+                    role=item.get("role", "prospect"),
+                    message=item.get("message", ""),
+                    timestamp=timestamp or datetime.utcnow(),
+                )
+            )
+        return hydrated
+
+    def _hydrate_entities(
+        self,
+        entities: Dict[str, Any],
+    ) -> ConversationEntities:
+        """Convert serialized entity data into a ConversationEntities model."""
+        if not entities:
+            return ConversationEntities()
+        return ConversationEntities(
+            budget_range=entities.get("budget_range"),
+            role=entities.get("role"),
+            timeline=entities.get("timeline"),
+            objections=entities.get("objections") or [],
+            pain_confirmed=bool(entities.get("pain_confirmed")),
+            interest_level=entities.get("interest_level") or "medium",
+        )
     
     def _extract_entities(
         self,
@@ -228,19 +305,21 @@ Existing context:
     
     def _generate_response(
         self,
-        state: LeadGraphState,
+        conversation: Conversation,
+        lead: Dict[str, Any],
         prospect_message: str,
+        analysis_bundle: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         Generate AI response following guardrails.
         Requirements: 9.1, 9.6, 9.7
         """
-        entities = state.conversation.entities
+        entities = conversation.entities
         
         # Build context from conversation
         transcript_text = "\n".join([
             f"{msg.role.upper()}: {msg.message}"
-            for msg in state.conversation.transcript[-5:]  # Last 5 messages
+            for msg in conversation.transcript[-5:]  # Last 5 messages
         ])
         
         # Determine what to ask next
@@ -253,8 +332,28 @@ Existing context:
             missing_info.append("role/authority")
         if not entities.timeline:
             missing_info.append("timeline")
+
+        analysis_bundle = analysis_bundle or {}
+        facts = analysis_bundle.get("facts") or {}
+        guidance = analysis_bundle.get("guidance") or {}
+        agent_context = analysis_bundle.get("agent_context") or {}
+        intelligence_lines: List[str] = []
+        if agent_context.get("business_summary"):
+            intelligence_lines.append(f"Business context: {agent_context.get('business_summary')}")
+        if agent_context.get("conversion_summary"):
+            intelligence_lines.append(f"Conversion context: {agent_context.get('conversion_summary')}")
+        if guidance.get("site_truth_summary"):
+            intelligence_lines.append(f"Site truth: {guidance.get('site_truth_summary')}")
+        if guidance.get("top_issue"):
+            intelligence_lines.append(f"Top issue: {guidance.get('top_issue')}")
+        if guidance.get("next_best_action"):
+            intelligence_lines.append(f"Next best action: {guidance.get('next_best_action')}")
+        if agent_context.get("recommended_offer"):
+            intelligence_lines.append(f"Recommended offer: {agent_context.get('recommended_offer')}")
+        if facts.get("recommended_channel"):
+            intelligence_lines.append(f"Preferred channel: {facts.get('recommended_channel')}")
         
-        system_prompt = f"""You are a helpful sales assistant qualifying leads for a lead capture optimization service.
+        system_prompt = f"""You are a helpful sales assistant qualifying leads for a lead capture optimization service for {lead.get('business_name', 'this lead')}.
 
 HARD RULES (NEVER BREAK):
 1. NEVER negotiate on price below ${CONVERSATION_GUARDRAILS['max_price_range']['min']}
@@ -269,6 +368,9 @@ Your goal is to:
 3. Keep responses concise (2-3 sentences max)
 
 Missing information to gather: {', '.join(missing_info) if missing_info else 'All key info gathered'}
+
+Use the verified business intelligence below when relevant. Do not invent facts beyond it.
+{chr(10).join(intelligence_lines) if intelligence_lines else 'No verified analysis context available.'}
 """
         
         prompt = f"""
@@ -288,6 +390,21 @@ Generate a helpful, concise response. Remember the hard rules.
         )
         
         return response.strip()
+
+    def _generate_fallback_response(
+        self,
+        entities: ConversationEntities,
+    ) -> str:
+        """Return a deterministic fallback when the LLM provider fails."""
+        if not entities.pain_confirmed:
+            return "Understood. What is the biggest bottleneck in your current lead follow-up process?"
+        if not entities.role:
+            return "Thanks for the context. Are you the person who would own this decision internally?"
+        if not entities.timeline:
+            return "Helpful. What timeline are you working toward for improving this workflow?"
+        if not entities.budget_range:
+            return "That makes sense. Do you already have a budget range in mind for solving this?"
+        return "Thanks, that gives me enough context. I can outline the next step and a recommended approach from here."
     
     def _generate_objection_summary(
         self,
@@ -342,7 +459,13 @@ Generate a helpful, concise response. Remember the hard rules.
         data = conversation.model_dump()
         data["conversation_id"] = str(conversation.conversation_id)
         data["lead_id"] = str(conversation.lead_id)
+        data["created_at"] = conversation.created_at.isoformat()
         data["updated_at"] = datetime.utcnow().isoformat()
+        data["escalated_at"] = (
+            conversation.escalated_at.isoformat()
+            if conversation.escalated_at
+            else None
+        )
         
         # Convert transcript to JSON-serializable format
         data["transcript"] = [

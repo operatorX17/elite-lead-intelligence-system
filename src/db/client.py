@@ -5,15 +5,23 @@ Requirements: 18.1, 18.2, 18.3
 Note: Uses HTTP/1.1 instead of HTTP/2 to avoid Windows socket errors (WinError 10035)
 """
 
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 from datetime import datetime
 from uuid import UUID
 import json
+import logging
+import os
+import socket
+from urllib.parse import urlparse
 import httpx
 
 from supabase import create_client, Client
 
 from src.config import load_config
+from src.db.memory_client import MemorySupabaseClient
+
+
+logger = logging.getLogger(__name__)
 
 
 def _create_http1_client(timeout: float = 30.0) -> httpx.Client:
@@ -91,6 +99,35 @@ class SupabaseClient:
     def client(self) -> Client:
         """Get the underlying Supabase client."""
         return self._client
+
+    def upload_artifact_bytes(
+        self,
+        path: str,
+        data: bytes,
+        content_type: str = "image/png",
+        bucket_name: Optional[str] = None,
+    ) -> str:
+        """Upload artifact bytes to Supabase Storage and return a public URL."""
+        if not data:
+            raise ValueError("Artifact upload requires non-empty bytes")
+
+        config = load_config()
+        bucket = bucket_name or config.s3.bucket_name
+
+        existing_buckets = self._client.storage.list_buckets()
+        if not any(getattr(item, "id", None) == bucket for item in existing_buckets):
+            self._client.storage.create_bucket(
+                bucket,
+                options={"public": True},
+            )
+
+        bucket_client = self._client.storage.from_(bucket)
+        bucket_client.upload(
+            path,
+            data,
+            {"content-type": content_type, "upsert": "true"},
+        )
+        return bucket_client.get_public_url(path)
     
     # ==================== LEADS ====================
     
@@ -210,6 +247,18 @@ class SupabaseClient:
     def get_pending_outreach(self, limit: int = 100) -> List[Dict[str, Any]]:
         """Get pending outreach messages."""
         result = self._client.table("outreach_queue").select("*").eq("status", "pending").limit(limit).execute()
+        return result.data or []
+
+    def get_outreach_for_lead(self, lead_id: UUID, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get recent outreach entries for a lead."""
+        result = (
+            self._client.table("outreach_queue")
+            .select("*")
+            .eq("lead_id", str(lead_id))
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
         return result.data or []
     
     def update_outreach_status(self, outreach_id: UUID, status: str, sent_at: Optional[datetime] = None) -> Dict[str, Any]:
@@ -583,12 +632,47 @@ class SupabaseClient:
 
 
 # Global client instance
-_supabase_client: Optional[SupabaseClient] = None
+DatabaseClient = Union[SupabaseClient, MemorySupabaseClient]
+_supabase_client: Optional[DatabaseClient] = None
 
 
-def get_supabase_client() -> SupabaseClient:
+def _should_use_memory_fallback(url: str) -> bool:
+    """Decide whether to use the in-memory fallback backend."""
+    if os.getenv("ZRAI_IN_MEMORY_BACKEND_DB", "").lower() == "true":
+        return True
+
+    parsed = urlparse(url)
+    host = parsed.hostname
+    if not host:
+        return False
+
+    if host in {"your-project.supabase.co", "localhost"}:
+        return False
+
+    try:
+        socket.getaddrinfo(host, parsed.port or 443)
+        return False
+    except socket.gaierror:
+        logger.warning(
+            "Supabase host %s could not be resolved. Falling back to in-memory backend storage.",
+            host,
+        )
+        return True
+
+
+def _create_database_client() -> DatabaseClient:
+    config = load_config()
+    if _should_use_memory_fallback(config.database.supabase_url):
+        return MemorySupabaseClient()
+    return SupabaseClient(
+        url=config.database.supabase_url,
+        key=config.database.supabase_service_role_key,
+    )
+
+
+def get_supabase_client() -> DatabaseClient:
     """Get the global Supabase client instance."""
     global _supabase_client
     if _supabase_client is None:
-        _supabase_client = SupabaseClient()
+        _supabase_client = _create_database_client()
     return _supabase_client

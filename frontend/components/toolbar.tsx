@@ -25,31 +25,43 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import type { ChatMessage } from "@/lib/types";
-import { type ArtifactKind, artifactDefinitions } from "./artifact";
+import { type ArtifactKind, artifactDefinitions, type UIArtifact } from "./artifact";
 import type { ArtifactToolbarItem } from "./create-artifact";
 import { ArrowUpIcon, StopIcon, SummarizeIcon } from "./icons";
 
+type ToolContext = {
+  content: string;
+  metadata: any;
+  sendMessage: UseChatHelpers<ChatMessage>["sendMessage"];
+  setArtifact: Dispatch<SetStateAction<UIArtifact>>;
+  setMetadata: Dispatch<SetStateAction<any>>;
+};
+
 type ToolProps = {
+  content: string;
   description: string;
   icon: ReactNode;
+  metadata: any;
   selectedTool: string | null;
   setSelectedTool: Dispatch<SetStateAction<string | null>>;
+  setArtifact: Dispatch<SetStateAction<UIArtifact>>;
+  setMetadata: Dispatch<SetStateAction<any>>;
   isToolbarVisible?: boolean;
   setIsToolbarVisible?: Dispatch<SetStateAction<boolean>>;
   isAnimating: boolean;
   sendMessage: UseChatHelpers<ChatMessage>["sendMessage"];
-  onClick: ({
-    sendMessage,
-  }: {
-    sendMessage: UseChatHelpers<ChatMessage>["sendMessage"];
-  }) => void;
+  onClick: (context: ToolContext) => Promise<void> | void;
 };
 
 const Tool = ({
+  content,
   description,
   icon,
+  metadata,
   selectedTool,
   setSelectedTool,
+  setArtifact,
+  setMetadata,
   isToolbarVisible,
   setIsToolbarVisible,
   isAnimating,
@@ -80,7 +92,7 @@ const Tool = ({
       setSelectedTool(description);
     } else {
       setSelectedTool(null);
-      onClick({ sendMessage });
+      void onClick({ content, metadata, sendMessage, setArtifact, setMetadata });
     }
   };
 
@@ -98,9 +110,7 @@ const Tool = ({
             transition: { duration: 0.1 },
           }}
           initial={{ scale: 1, opacity: 0 }}
-          onClick={() => {
-            handleSelect();
-          }}
+          onClick={handleSelect}
           onHoverEnd={() => {
             if (selectedTool !== description) {
               setIsHovered(false);
@@ -245,18 +255,26 @@ const ReadingLevelSelector = ({
 };
 
 export const Tools = ({
+  content,
   isToolbarVisible,
+  metadata,
   selectedTool,
   setSelectedTool,
   sendMessage,
+  setArtifact,
+  setMetadata,
   isAnimating,
   setIsToolbarVisible,
   tools,
 }: {
+  content: string;
   isToolbarVisible: boolean;
+  metadata: any;
   selectedTool: string | null;
   setSelectedTool: Dispatch<SetStateAction<string | null>>;
   sendMessage: UseChatHelpers<ChatMessage>["sendMessage"];
+  setArtifact: Dispatch<SetStateAction<UIArtifact>>;
+  setMetadata: Dispatch<SetStateAction<any>>;
   isAnimating: boolean;
   setIsToolbarVisible: Dispatch<SetStateAction<boolean>>;
   tools: ArtifactToolbarItem[];
@@ -274,26 +292,34 @@ export const Tools = ({
         {isToolbarVisible &&
           secondaryTools.map((secondaryTool) => (
             <Tool
+              content={content}
               description={secondaryTool.description}
               icon={secondaryTool.icon}
               isAnimating={isAnimating}
               key={secondaryTool.description}
+              metadata={metadata}
               onClick={secondaryTool.onClick}
               selectedTool={selectedTool}
               sendMessage={sendMessage}
+              setArtifact={setArtifact}
+              setMetadata={setMetadata}
               setSelectedTool={setSelectedTool}
             />
           ))}
       </AnimatePresence>
 
       <Tool
+        content={content}
         description={primaryTool.description}
         icon={primaryTool.icon}
         isAnimating={isAnimating}
         isToolbarVisible={isToolbarVisible}
+        metadata={metadata}
         onClick={primaryTool.onClick}
         selectedTool={selectedTool}
         sendMessage={sendMessage}
+        setArtifact={setArtifact}
+        setMetadata={setMetadata}
         setIsToolbarVisible={setIsToolbarVisible}
         setSelectedTool={setSelectedTool}
       />
@@ -309,6 +335,10 @@ const PureToolbar = ({
   stop,
   setMessages,
   artifactKind,
+  content,
+  metadata,
+  setArtifact,
+  setMetadata,
 }: {
   isToolbarVisible: boolean;
   setIsToolbarVisible: Dispatch<SetStateAction<boolean>>;
@@ -317,6 +347,10 @@ const PureToolbar = ({
   stop: UseChatHelpers<ChatMessage>["stop"];
   setMessages: UseChatHelpers<ChatMessage>["setMessages"];
   artifactKind: ArtifactKind;
+  content: string;
+  metadata: any;
+  setArtifact: Dispatch<SetStateAction<UIArtifact>>;
+  setMetadata: Dispatch<SetStateAction<any>>;
 }) => {
   const toolbarRef = useRef<HTMLDivElement>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout>>();
@@ -446,11 +480,15 @@ const PureToolbar = ({
           />
         ) : (
           <Tools
+            content={content}
             isAnimating={isAnimating}
             isToolbarVisible={isToolbarVisible}
             key="tools"
+            metadata={metadata}
             selectedTool={selectedTool}
             sendMessage={sendMessage}
+            setArtifact={setArtifact}
+            setMetadata={setMetadata}
             setIsToolbarVisible={setIsToolbarVisible}
             setSelectedTool={setSelectedTool}
             tools={toolsByArtifactKind}

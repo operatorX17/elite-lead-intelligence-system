@@ -66,7 +66,7 @@ export function Chat({
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
   }, [router]);
-  const { setDataStream } = useDataStream();
+  const { setDataStream, setZraiActivityEvents } = useDataStream();
 
   const [input, setInput] = useState<string>("");
   const [showCreditCardAlert, setShowCreditCardAlert] = useState(false);
@@ -194,6 +194,12 @@ export function Chat({
     resumeStream,
     setMessages,
   });
+
+  useEffect(() => {
+    if (status === "submitted") {
+      setZraiActivityEvents([]);
+    }
+  }, [setZraiActivityEvents, status]);
 
   return (
     <>

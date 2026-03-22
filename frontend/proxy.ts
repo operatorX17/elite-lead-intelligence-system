@@ -4,6 +4,11 @@ import { guestRegex, isDevelopmentEnvironment } from "./lib/constants";
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  const isSingleUserMode =
+    Boolean(
+      process.env.ZRAI_OWNER_EMAIL?.trim() &&
+        process.env.ZRAI_OWNER_PASSWORD?.trim()
+    );
 
   /*
    * Playwright starts the dev server and requires a 200 status to
@@ -17,6 +22,10 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
+  if (["/login", "/register"].includes(pathname)) {
+    return NextResponse.next();
+  }
+
   const token = await getToken({
     req: request,
     secret: process.env.AUTH_SECRET,
@@ -27,15 +36,16 @@ export async function proxy(request: NextRequest) {
     const redirectUrl = encodeURIComponent(request.url);
 
     return NextResponse.redirect(
-      new URL(`/api/auth/guest?redirectUrl=${redirectUrl}`, request.url)
+      new URL(
+        isSingleUserMode
+          ? `/login?redirectUrl=${redirectUrl}`
+          : `/api/auth/guest?redirectUrl=${redirectUrl}`,
+        request.url
+      )
     );
   }
 
   const isGuest = guestRegex.test(token?.email ?? "");
-
-  if (token && !isGuest && ["/login", "/register"].includes(pathname)) {
-    return NextResponse.redirect(new URL("/", request.url));
-  }
 
   return NextResponse.next();
 }

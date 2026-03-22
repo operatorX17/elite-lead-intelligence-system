@@ -24,13 +24,17 @@ type ArtifactAction<M = any> = {
 };
 
 export type ArtifactToolbarContext = {
+  content: string;
+  metadata: any;
   sendMessage: UseChatHelpers<ChatMessage>["sendMessage"];
+  setArtifact: Dispatch<SetStateAction<UIArtifact>>;
+  setMetadata: Dispatch<SetStateAction<any>>;
 };
 
 export type ArtifactToolbarItem = {
   description: string;
   icon: ReactNode;
-  onClick: (context: ArtifactToolbarContext) => void;
+  onClick: (context: ArtifactToolbarContext) => Promise<void> | void;
 };
 
 type ArtifactContent<M = any> = {

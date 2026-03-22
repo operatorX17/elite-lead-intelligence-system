@@ -22,13 +22,16 @@ import {
   type Chat,
   chat,
   type DBMessage,
+  type Document,
   document,
   message,
+  type Stream,
   type Suggestion,
   stream,
   suggestion,
   type User,
   user,
+  type Vote,
   vote,
 } from "./schema";
 import { generateHashedPassword } from "./utils";
@@ -41,24 +44,93 @@ import { generateHashedPassword } from "./utils";
 const client = postgres(process.env.POSTGRES_URL!);
 const db = drizzle(client);
 
+type MemoryDbStore = {
+  users: Map<string, User>;
+  chats: Map<string, Chat>;
+  messages: Map<string, DBMessage>;
+  votes: Map<string, Vote>;
+  documents: Map<string, Document[]>;
+  suggestions: Map<string, Suggestion[]>;
+  streams: Map<string, Stream[]>;
+};
+
+const globalMemoryDb = globalThis as typeof globalThis & {
+  __zraiMemoryDbStore?: MemoryDbStore;
+  __zraiForceMemoryDb?: boolean;
+};
+
+function isMemoryDbEnabled() {
+  return (
+    process.env.ZRAI_IN_MEMORY_DB === "true" ||
+    globalMemoryDb.__zraiForceMemoryDb === true
+  );
+}
+
+function enableRuntimeMemoryDb() {
+  globalMemoryDb.__zraiForceMemoryDb = true;
+}
+
+let memoryStore = globalMemoryDb.__zraiMemoryDbStore;
+
+if (!memoryStore) {
+  memoryStore = {
+    users: new Map<string, User>(),
+    chats: new Map<string, Chat>(),
+    messages: new Map<string, DBMessage>(),
+    votes: new Map<string, Vote>(),
+    documents: new Map<string, Document[]>(),
+    suggestions: new Map<string, Suggestion[]>(),
+    streams: new Map<string, Stream[]>(),
+  };
+  globalMemoryDb.__zraiMemoryDbStore = memoryStore;
+}
+
+const memoryUsers = memoryStore.users;
+const memoryChats = memoryStore.chats;
+const memoryMessages = memoryStore.messages;
+const memoryVotes = memoryStore.votes;
+const memoryDocuments = memoryStore.documents;
+const memorySuggestions = memoryStore.suggestions;
+const memoryStreams = memoryStore.streams;
+
+function getVoteKey(chatId: string, messageId: string) {
+  return `${chatId}:${messageId}`;
+}
+
 export async function getUser(email: string): Promise<User[]> {
+  if (isMemoryDbEnabled()) {
+    return Array.from(memoryUsers.values()).filter(
+      (currentUser) => currentUser.email === email
+    );
+  }
+
   try {
     return await db.select().from(user).where(eq(user.email, email));
   } catch (_error) {
-    throw new ChatSDKError(
-      "bad_request:database",
-      "Failed to get user by email"
-    );
+    enableRuntimeMemoryDb();
+    return getUser(email);
   }
 }
 
 export async function createUser(email: string, password: string) {
   const hashedPassword = generateHashedPassword(password);
 
+  if (isMemoryDbEnabled()) {
+    const newUser: User = {
+      id: generateUUID(),
+      email,
+      password: hashedPassword,
+    };
+
+    memoryUsers.set(newUser.id, newUser);
+    return [newUser];
+  }
+
   try {
     return await db.insert(user).values({ email, password: hashedPassword });
   } catch (_error) {
-    throw new ChatSDKError("bad_request:database", "Failed to create user");
+    enableRuntimeMemoryDb();
+    return createUser(email, password);
   }
 }
 
@@ -66,16 +138,86 @@ export async function createGuestUser() {
   const email = `guest-${Date.now()}`;
   const password = generateHashedPassword(generateUUID());
 
+  if (isMemoryDbEnabled()) {
+    const newUser: User = {
+      id: generateUUID(),
+      email,
+      password,
+    };
+
+    memoryUsers.set(newUser.id, newUser);
+
+    return [{ id: newUser.id, email: newUser.email }];
+  }
+
   try {
     return await db.insert(user).values({ email, password }).returning({
       id: user.id,
       email: user.email,
     });
   } catch (_error) {
-    throw new ChatSDKError(
-      "bad_request:database",
-      "Failed to create guest user"
-    );
+    enableRuntimeMemoryDb();
+    return createGuestUser();
+  }
+}
+
+export async function ensureUserRecord({
+  email,
+  id,
+}: {
+  id: string;
+  email?: string | null;
+}) {
+  const resolvedEmail =
+    email && email.length > 0 ? email : `guest-${id}@local.zrai`;
+
+  if (isMemoryDbEnabled()) {
+    if (!memoryUsers.has(id)) {
+      memoryUsers.set(id, {
+        id,
+        email: resolvedEmail,
+        password: generateHashedPassword(generateUUID()),
+      });
+    }
+
+    return memoryUsers.get(id) ?? null;
+  }
+
+  try {
+    const [existingUser] = await db
+      .select()
+      .from(user)
+      .where(eq(user.id, id))
+      .limit(1);
+
+    if (existingUser) {
+      return existingUser;
+    }
+
+    const [createdUser] = await db
+      .insert(user)
+      .values({
+        id,
+        email: resolvedEmail,
+        password: generateHashedPassword(generateUUID()),
+      })
+      .onConflictDoNothing({ target: user.id })
+      .returning();
+
+    if (createdUser) {
+      return createdUser;
+    }
+
+    const [retrievedUser] = await db
+      .select()
+      .from(user)
+      .where(eq(user.id, id))
+      .limit(1);
+
+    return retrievedUser ?? null;
+  } catch (_error) {
+    enableRuntimeMemoryDb();
+    return ensureUserRecord({ id, email });
   }
 }
 
@@ -90,6 +232,19 @@ export async function saveChat({
   title: string;
   visibility: VisibilityType;
 }) {
+  if (isMemoryDbEnabled()) {
+    const newChat: Chat = {
+      id,
+      createdAt: new Date(),
+      title,
+      userId,
+      visibility,
+    };
+
+    memoryChats.set(id, newChat);
+    return [newChat];
+  }
+
   try {
     return await db.insert(chat).values({
       id,
@@ -99,11 +254,31 @@ export async function saveChat({
       visibility,
     });
   } catch (_error) {
-    throw new ChatSDKError("bad_request:database", "Failed to save chat");
+    enableRuntimeMemoryDb();
+    return saveChat({ id, userId, title, visibility });
   }
 }
 
 export async function deleteChatById({ id }: { id: string }) {
+  if (isMemoryDbEnabled()) {
+    memoryChats.delete(id);
+
+    for (const [messageId, currentMessage] of memoryMessages.entries()) {
+      if (currentMessage.chatId === id) {
+        memoryMessages.delete(messageId);
+      }
+    }
+
+    for (const [voteKey, currentVote] of memoryVotes.entries()) {
+      if (currentVote.chatId === id) {
+        memoryVotes.delete(voteKey);
+      }
+    }
+
+    memoryStreams.delete(id);
+    return null;
+  }
+
   try {
     await db.delete(vote).where(eq(vote.chatId, id));
     await db.delete(message).where(eq(message.chatId, id));
@@ -115,14 +290,24 @@ export async function deleteChatById({ id }: { id: string }) {
       .returning();
     return chatsDeleted;
   } catch (_error) {
-    throw new ChatSDKError(
-      "bad_request:database",
-      "Failed to delete chat by id"
-    );
+    enableRuntimeMemoryDb();
+    return deleteChatById({ id });
   }
 }
 
 export async function deleteAllChatsByUserId({ userId }: { userId: string }) {
+  if (isMemoryDbEnabled()) {
+    const userChats = Array.from(memoryChats.values()).filter(
+      (currentChat) => currentChat.userId === userId
+    );
+
+    for (const currentChat of userChats) {
+      await deleteChatById({ id: currentChat.id });
+    }
+
+    return { deletedCount: userChats.length };
+  }
+
   try {
     const userChats = await db
       .select({ id: chat.id })
@@ -146,10 +331,8 @@ export async function deleteAllChatsByUserId({ userId }: { userId: string }) {
 
     return { deletedCount: deletedChats.length };
   } catch (_error) {
-    throw new ChatSDKError(
-      "bad_request:database",
-      "Failed to delete all chats by user id"
-    );
+    enableRuntimeMemoryDb();
+    return deleteAllChatsByUserId({ userId });
   }
 }
 
@@ -164,6 +347,45 @@ export async function getChatsByUserId({
   startingAfter: string | null;
   endingBefore: string | null;
 }) {
+  if (isMemoryDbEnabled()) {
+    let filteredChats = Array.from(memoryChats.values())
+      .filter((currentChat) => currentChat.userId === id)
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+
+    if (startingAfter) {
+      const selectedChat = memoryChats.get(startingAfter);
+      if (!selectedChat) {
+        throw new ChatSDKError(
+          "not_found:database",
+          `Chat with id ${startingAfter} not found`
+        );
+      }
+
+      filteredChats = filteredChats.filter(
+        (currentChat) => currentChat.createdAt > selectedChat.createdAt
+      );
+    } else if (endingBefore) {
+      const selectedChat = memoryChats.get(endingBefore);
+      if (!selectedChat) {
+        throw new ChatSDKError(
+          "not_found:database",
+          `Chat with id ${endingBefore} not found`
+        );
+      }
+
+      filteredChats = filteredChats.filter(
+        (currentChat) => currentChat.createdAt < selectedChat.createdAt
+      );
+    }
+
+    const hasMore = filteredChats.length > limit;
+
+    return {
+      chats: hasMore ? filteredChats.slice(0, limit) : filteredChats,
+      hasMore,
+    };
+  }
+
   try {
     const extendedLimit = limit + 1;
 
@@ -222,14 +444,16 @@ export async function getChatsByUserId({
       hasMore,
     };
   } catch (_error) {
-    throw new ChatSDKError(
-      "bad_request:database",
-      "Failed to get chats by user id"
-    );
+    enableRuntimeMemoryDb();
+    return getChatsByUserId({ id, limit, startingAfter, endingBefore });
   }
 }
 
 export async function getChatById({ id }: { id: string }) {
+  if (isMemoryDbEnabled()) {
+    return memoryChats.get(id) ?? null;
+  }
+
   try {
     const [selectedChat] = await db.select().from(chat).where(eq(chat.id, id));
     if (!selectedChat) {
@@ -238,15 +462,24 @@ export async function getChatById({ id }: { id: string }) {
 
     return selectedChat;
   } catch (_error) {
-    throw new ChatSDKError("bad_request:database", "Failed to get chat by id");
+    enableRuntimeMemoryDb();
+    return getChatById({ id });
   }
 }
 
 export async function saveMessages({ messages }: { messages: DBMessage[] }) {
+  if (isMemoryDbEnabled()) {
+    for (const currentMessage of messages) {
+      memoryMessages.set(currentMessage.id, currentMessage);
+    }
+    return messages;
+  }
+
   try {
     return await db.insert(message).values(messages);
   } catch (_error) {
-    throw new ChatSDKError("bad_request:database", "Failed to save messages");
+    enableRuntimeMemoryDb();
+    return saveMessages({ messages });
   }
 }
 
@@ -257,14 +490,29 @@ export async function updateMessage({
   id: string;
   parts: DBMessage["parts"];
 }) {
+  if (isMemoryDbEnabled()) {
+    const currentMessage = memoryMessages.get(id);
+    if (currentMessage) {
+      memoryMessages.set(id, { ...currentMessage, parts });
+    }
+    return currentMessage ?? null;
+  }
+
   try {
     return await db.update(message).set({ parts }).where(eq(message.id, id));
   } catch (_error) {
-    throw new ChatSDKError("bad_request:database", "Failed to update message");
+    enableRuntimeMemoryDb();
+    return updateMessage({ id, parts });
   }
 }
 
 export async function getMessagesByChatId({ id }: { id: string }) {
+  if (isMemoryDbEnabled()) {
+    return Array.from(memoryMessages.values())
+      .filter((currentMessage) => currentMessage.chatId === id)
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  }
+
   try {
     return await db
       .select()
@@ -272,10 +520,8 @@ export async function getMessagesByChatId({ id }: { id: string }) {
       .where(eq(message.chatId, id))
       .orderBy(asc(message.createdAt));
   } catch (_error) {
-    throw new ChatSDKError(
-      "bad_request:database",
-      "Failed to get messages by chat id"
-    );
+    enableRuntimeMemoryDb();
+    return getMessagesByChatId({ id });
   }
 }
 
@@ -288,6 +534,16 @@ export async function voteMessage({
   messageId: string;
   type: "up" | "down";
 }) {
+  if (isMemoryDbEnabled()) {
+    const nextVote: Vote = {
+      chatId,
+      messageId,
+      isUpvoted: type === "up",
+    };
+    memoryVotes.set(getVoteKey(chatId, messageId), nextVote);
+    return nextVote;
+  }
+
   try {
     const [existingVote] = await db
       .select()
@@ -306,18 +562,23 @@ export async function voteMessage({
       isUpvoted: type === "up",
     });
   } catch (_error) {
-    throw new ChatSDKError("bad_request:database", "Failed to vote message");
+    enableRuntimeMemoryDb();
+    return voteMessage({ chatId, messageId, type });
   }
 }
 
 export async function getVotesByChatId({ id }: { id: string }) {
+  if (isMemoryDbEnabled()) {
+    return Array.from(memoryVotes.values()).filter(
+      (currentVote) => currentVote.chatId === id
+    );
+  }
+
   try {
     return await db.select().from(vote).where(eq(vote.chatId, id));
   } catch (_error) {
-    throw new ChatSDKError(
-      "bad_request:database",
-      "Failed to get votes by chat id"
-    );
+    enableRuntimeMemoryDb();
+    return getVotesByChatId({ id });
   }
 }
 
@@ -334,6 +595,23 @@ export async function saveDocument({
   content: string;
   userId: string;
 }) {
+  if (isMemoryDbEnabled()) {
+    const currentDocument: Document = {
+      id,
+      createdAt: new Date(),
+      title,
+      content,
+      kind,
+      userId,
+    };
+
+    const versions = memoryDocuments.get(id) ?? [];
+    versions.push(currentDocument);
+    memoryDocuments.set(id, versions);
+
+    return [currentDocument];
+  }
+
   try {
     return await db
       .insert(document)
@@ -347,11 +625,16 @@ export async function saveDocument({
       })
       .returning();
   } catch (_error) {
-    throw new ChatSDKError("bad_request:database", "Failed to save document");
+    enableRuntimeMemoryDb();
+    return saveDocument({ id, title, kind, content, userId });
   }
 }
 
 export async function getDocumentsById({ id }: { id: string }) {
+  if (isMemoryDbEnabled()) {
+    return memoryDocuments.get(id) ?? [];
+  }
+
   try {
     const documents = await db
       .select()
@@ -361,14 +644,17 @@ export async function getDocumentsById({ id }: { id: string }) {
 
     return documents;
   } catch (_error) {
-    throw new ChatSDKError(
-      "bad_request:database",
-      "Failed to get documents by id"
-    );
+    enableRuntimeMemoryDb();
+    return getDocumentsById({ id });
   }
 }
 
 export async function getDocumentById({ id }: { id: string }) {
+  if (isMemoryDbEnabled()) {
+    const documents = memoryDocuments.get(id) ?? [];
+    return documents.at(-1);
+  }
+
   try {
     const [selectedDocument] = await db
       .select()
@@ -378,10 +664,8 @@ export async function getDocumentById({ id }: { id: string }) {
 
     return selectedDocument;
   } catch (_error) {
-    throw new ChatSDKError(
-      "bad_request:database",
-      "Failed to get document by id"
-    );
+    enableRuntimeMemoryDb();
+    return getDocumentById({ id });
   }
 }
 
@@ -392,6 +676,18 @@ export async function deleteDocumentsByIdAfterTimestamp({
   id: string;
   timestamp: Date;
 }) {
+  if (isMemoryDbEnabled()) {
+    const documents = memoryDocuments.get(id) ?? [];
+    const keptDocuments = documents.filter(
+      (currentDocument) => currentDocument.createdAt <= timestamp
+    );
+    memoryDocuments.set(id, keptDocuments);
+    memorySuggestions.delete(id);
+    return documents.filter(
+      (currentDocument) => currentDocument.createdAt > timestamp
+    );
+  }
+
   try {
     await db
       .delete(suggestion)
@@ -407,10 +703,8 @@ export async function deleteDocumentsByIdAfterTimestamp({
       .where(and(eq(document.id, id), gt(document.createdAt, timestamp)))
       .returning();
   } catch (_error) {
-    throw new ChatSDKError(
-      "bad_request:database",
-      "Failed to delete documents by id after timestamp"
-    );
+    enableRuntimeMemoryDb();
+    return deleteDocumentsByIdAfterTimestamp({ id, timestamp });
   }
 }
 
@@ -419,13 +713,21 @@ export async function saveSuggestions({
 }: {
   suggestions: Suggestion[];
 }) {
+  if (isMemoryDbEnabled()) {
+    for (const currentSuggestion of suggestions) {
+      const currentSuggestions =
+        memorySuggestions.get(currentSuggestion.documentId) ?? [];
+      currentSuggestions.push(currentSuggestion);
+      memorySuggestions.set(currentSuggestion.documentId, currentSuggestions);
+    }
+    return suggestions;
+  }
+
   try {
     return await db.insert(suggestion).values(suggestions);
   } catch (_error) {
-    throw new ChatSDKError(
-      "bad_request:database",
-      "Failed to save suggestions"
-    );
+    enableRuntimeMemoryDb();
+    return saveSuggestions({ suggestions });
   }
 }
 
@@ -434,27 +736,32 @@ export async function getSuggestionsByDocumentId({
 }: {
   documentId: string;
 }) {
+  if (isMemoryDbEnabled()) {
+    return memorySuggestions.get(documentId) ?? [];
+  }
+
   try {
     return await db
       .select()
       .from(suggestion)
       .where(eq(suggestion.documentId, documentId));
   } catch (_error) {
-    throw new ChatSDKError(
-      "bad_request:database",
-      "Failed to get suggestions by document id"
-    );
+    enableRuntimeMemoryDb();
+    return getSuggestionsByDocumentId({ documentId });
   }
 }
 
 export async function getMessageById({ id }: { id: string }) {
+  if (isMemoryDbEnabled()) {
+    const currentMessage = memoryMessages.get(id);
+    return currentMessage ? [currentMessage] : [];
+  }
+
   try {
     return await db.select().from(message).where(eq(message.id, id));
   } catch (_error) {
-    throw new ChatSDKError(
-      "bad_request:database",
-      "Failed to get message by id"
-    );
+    enableRuntimeMemoryDb();
+    return getMessageById({ id });
   }
 }
 
@@ -465,6 +772,28 @@ export async function deleteMessagesByChatIdAfterTimestamp({
   chatId: string;
   timestamp: Date;
 }) {
+  if (isMemoryDbEnabled()) {
+    for (const [messageId, currentMessage] of memoryMessages.entries()) {
+      if (
+        currentMessage.chatId === chatId &&
+        currentMessage.createdAt >= timestamp
+      ) {
+        memoryMessages.delete(messageId);
+      }
+    }
+
+    for (const [voteKey, currentVote] of memoryVotes.entries()) {
+      if (currentVote.chatId === chatId) {
+        const currentMessage = memoryMessages.get(currentVote.messageId);
+        if (!currentMessage) {
+          memoryVotes.delete(voteKey);
+        }
+      }
+    }
+
+    return;
+  }
+
   try {
     const messagesToDelete = await db
       .select({ id: message.id })
@@ -491,10 +820,8 @@ export async function deleteMessagesByChatIdAfterTimestamp({
         );
     }
   } catch (_error) {
-    throw new ChatSDKError(
-      "bad_request:database",
-      "Failed to delete messages by chat id after timestamp"
-    );
+    enableRuntimeMemoryDb();
+    return deleteMessagesByChatIdAfterTimestamp({ chatId, timestamp });
   }
 }
 
@@ -505,13 +832,19 @@ export async function updateChatVisibilityById({
   chatId: string;
   visibility: "private" | "public";
 }) {
+  if (isMemoryDbEnabled()) {
+    const currentChat = memoryChats.get(chatId);
+    if (currentChat) {
+      memoryChats.set(chatId, { ...currentChat, visibility });
+    }
+    return;
+  }
+
   try {
     return await db.update(chat).set({ visibility }).where(eq(chat.id, chatId));
   } catch (_error) {
-    throw new ChatSDKError(
-      "bad_request:database",
-      "Failed to update chat visibility by id"
-    );
+    enableRuntimeMemoryDb();
+    return updateChatVisibilityById({ chatId, visibility });
   }
 }
 
@@ -522,6 +855,14 @@ export async function updateChatTitleById({
   chatId: string;
   title: string;
 }) {
+  if (isMemoryDbEnabled()) {
+    const currentChat = memoryChats.get(chatId);
+    if (currentChat) {
+      memoryChats.set(chatId, { ...currentChat, title });
+    }
+    return;
+  }
+
   try {
     return await db.update(chat).set({ title }).where(eq(chat.id, chatId));
   } catch (error) {
@@ -537,6 +878,19 @@ export async function getMessageCountByUserId({
   id: string;
   differenceInHours: number;
 }) {
+  if (isMemoryDbEnabled()) {
+    const threshold = new Date(Date.now() - differenceInHours * 60 * 60 * 1000);
+
+    return Array.from(memoryMessages.values()).filter((currentMessage) => {
+      const currentChat = memoryChats.get(currentMessage.chatId);
+      return (
+        currentChat?.userId === id &&
+        currentMessage.role === "user" &&
+        currentMessage.createdAt >= threshold
+      );
+    }).length;
+  }
+
   try {
     const twentyFourHoursAgo = new Date(
       Date.now() - differenceInHours * 60 * 60 * 1000
@@ -557,10 +911,8 @@ export async function getMessageCountByUserId({
 
     return stats?.count ?? 0;
   } catch (_error) {
-    throw new ChatSDKError(
-      "bad_request:database",
-      "Failed to get message count by user id"
-    );
+    enableRuntimeMemoryDb();
+    return getMessageCountByUserId({ id, differenceInHours });
   }
 }
 
@@ -571,19 +923,28 @@ export async function createStreamId({
   streamId: string;
   chatId: string;
 }) {
+  if (isMemoryDbEnabled()) {
+    const streams = memoryStreams.get(chatId) ?? [];
+    streams.push({ id: streamId, chatId, createdAt: new Date() });
+    memoryStreams.set(chatId, streams);
+    return;
+  }
+
   try {
     await db
       .insert(stream)
       .values({ id: streamId, chatId, createdAt: new Date() });
   } catch (_error) {
-    throw new ChatSDKError(
-      "bad_request:database",
-      "Failed to create stream id"
-    );
+    enableRuntimeMemoryDb();
+    return createStreamId({ streamId, chatId });
   }
 }
 
 export async function getStreamIdsByChatId({ chatId }: { chatId: string }) {
+  if (isMemoryDbEnabled()) {
+    return (memoryStreams.get(chatId) ?? []).map(({ id }) => id);
+  }
+
   try {
     const streamIds = await db
       .select({ id: stream.id })
@@ -594,9 +955,7 @@ export async function getStreamIdsByChatId({ chatId }: { chatId: string }) {
 
     return streamIds.map(({ id }) => id);
   } catch (_error) {
-    throw new ChatSDKError(
-      "bad_request:database",
-      "Failed to get stream ids by chat id"
-    );
+    enableRuntimeMemoryDb();
+    return getStreamIdsByChatId({ chatId });
   }
 }

@@ -8,8 +8,10 @@ import { artifactDefinitions } from "./artifact";
 import { useDataStream } from "./data-stream-provider";
 import { getChatHistoryPaginationKey } from "./sidebar-history";
 
+const documentStreamArtifactKinds = new Set(["text", "code", "image", "sheet"]);
+
 export function DataStreamHandler() {
-  const { dataStream, setDataStream } = useDataStream();
+  const { dataStream, setDataStream, setZraiActivityEvents } = useDataStream();
   const { mutate } = useSWRConfig();
 
   const { artifact, setArtifact, setMetadata } = useArtifact();
@@ -28,6 +30,13 @@ export function DataStreamHandler() {
         mutate(unstable_serialize(getChatHistoryPaginationKey));
         continue;
       }
+      if (delta.type === "data-zrai-status") {
+        setZraiActivityEvents((currentEvents) => [
+          ...currentEvents.slice(-5),
+          delta.data,
+        ]);
+        continue;
+      }
       const artifactDefinition = artifactDefinitions.find(
         (currentArtifactDefinition) =>
           currentArtifactDefinition.kind === artifact.kind
@@ -44,6 +53,13 @@ export function DataStreamHandler() {
       setArtifact((draftArtifact) => {
         if (!draftArtifact) {
           return { ...initialArtifactData, status: "streaming" };
+        }
+
+        const isDocumentStreamArtifact =
+          draftArtifact.kind && documentStreamArtifactKinds.has(draftArtifact.kind);
+
+        if (!isDocumentStreamArtifact) {
+          return draftArtifact;
         }
 
         switch (delta.type) {
@@ -86,7 +102,15 @@ export function DataStreamHandler() {
         }
       });
     }
-  }, [dataStream, setArtifact, setMetadata, artifact, setDataStream, mutate]);
+  }, [
+    dataStream,
+    setArtifact,
+    setMetadata,
+    artifact,
+    setDataStream,
+    setZraiActivityEvents,
+    mutate,
+  ]);
 
   return null;
 }

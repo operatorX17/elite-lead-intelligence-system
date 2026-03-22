@@ -48,21 +48,21 @@ def with_retry(max_retries=MAX_RETRIES, base_delay_ms=BASE_DELAY_MS):
             except Exception as e:
                 if retry_count < max_retries:
                     return Command(update={'metadata': {retry_key: retry_count + 1}, 'errors': [{'node': node_name, 'error': str(e)}]}, goto=node_name)
-                return Command(update={'errors': [{'node': node_name, 'error': str(e), 'fatal': True}]}, goto='handle_error')
+                return Command(update={'errors': [{'node': node_name, 'error': str(e), 'fatal': True}]}, goto='handle_error_node')
         return wrapper
     return decorator
 
 
 def discovery_node(state):
-    return {'current_stage': 'discovery', 'last_node': 'discovery'}
+    return {'current_stage': 'discovery', 'last_node': 'discovery_node'}
 
 
 def enrichment_node(state):
-    return {'current_stage': 'enrichment', 'last_node': 'enrichment'}
+    return {'current_stage': 'enrichment', 'last_node': 'enrichment_node'}
 
 
 def intent_node(state):
-    return Command(update={'intent': {'intent_score': 75, 'leak_score': 50}, 'current_stage': 'intent', 'last_node': 'intent'}, goto='governance')
+    return Command(update={'intent': {'intent_score': 75, 'leak_score': 50}, 'current_stage': 'intent', 'last_node': 'intent_node'}, goto='governance_node')
 
 
 def governance_node(state):
@@ -73,22 +73,22 @@ def governance_node(state):
     leak_score = intent_data.get('leak_score', 0)
     budget_exceeded = metrics.get('browser_sessions_used', 0) >= config.budget.daily_browser_session_limit
     if budget_exceeded or leak_score < 70 or state.get('should_skip_audit', False):
-        return Command(update={'should_skip_audit': True, 'current_stage': 'governance', 'last_node': 'governance'}, goto='scoring')
-    return Command(update={'current_stage': 'governance', 'last_node': 'governance'}, goto='audit')
+        return Command(update={'should_skip_audit': True, 'current_stage': 'governance', 'last_node': 'governance_node'}, goto='scoring_node')
+    return Command(update={'current_stage': 'governance', 'last_node': 'governance_node'}, goto='audit_node')
 
 
 @with_retry(max_retries=2, base_delay_ms=5000)
 def audit_node(state):
-    return Command(update={'proof': {'screenshots': [], 'audit_bullets': []}, 'current_stage': 'audit', 'last_node': 'audit'}, goto='scoring')
+    return Command(update={'proof': {'screenshots': [], 'audit_bullets': []}, 'current_stage': 'audit', 'last_node': 'audit_node'}, goto='scoring_node')
 
 
 def scoring_node(state):
-    update = {'scoring': {'final_score': 75, 'lead_tier': 'B', 'do_not_contact': False}, 'is_disqualified': False, 'current_stage': 'scoring', 'last_node': 'scoring'}
-    return Command(update=update, goto='outreach')
+    update = {'scoring': {'final_score': 75, 'lead_tier': 'B', 'do_not_contact': False}, 'is_disqualified': False, 'current_stage': 'scoring', 'last_node': 'scoring_node'}
+    return Command(update=update, goto='outreach_node')
 
 
 def outreach_node(state):
-    return {'outreach_messages': [{'channel': 'email', 'subject': 'Hi'}], 'requires_approval': True, 'approval_status': 'pending', 'current_stage': 'outreach', 'last_node': 'outreach'}
+    return {'outreach_messages': [{'channel': 'email', 'subject': 'Hi'}], 'requires_approval': True, 'approval_status': 'pending', 'current_stage': 'outreach', 'last_node': 'outreach_node'}
 
 
 def approval_node(state):
@@ -98,14 +98,14 @@ def approval_node(state):
 
 def send_outreach_node(state):
     if state.get('approval_status') != 'approved':
-        return Command(update={'errors': [{'node': 'send_outreach', 'error': 'Not approved'}]}, goto='end')
-    return Command(update={'metadata': {'messages_sent': True}, 'current_stage': 'sent'}, goto='conversation')
+        return Command(update={'errors': [{'node': 'send_outreach_node', 'error': 'Not approved'}]}, goto='end_node')
+    return Command(update={'metadata': {'messages_sent': True}, 'current_stage': 'sent', 'last_node': 'send_outreach_node'}, goto='conversation_node')
 
 
 def conversation_node(state):
     if state.get('is_escalated'):
-        return Command(update={'is_escalated': True, 'current_stage': 'conversation', 'last_node': 'conversation'}, goto='escalate')
-    return Command(update={'current_stage': 'conversation', 'last_node': 'conversation'}, goto='end')
+        return Command(update={'is_escalated': True, 'current_stage': 'conversation', 'last_node': 'conversation_node'}, goto='escalate_node')
+    return Command(update={'current_stage': 'conversation', 'last_node': 'conversation_node'}, goto='end_node')
 
 
 def escalate_node(state):
@@ -113,42 +113,42 @@ def escalate_node(state):
     lead_id = state.get('lead_id')
     if lead_id:
         db.update_lead(lead_id, {'lead_lifecycle_state': 'QUALIFIED', 'updated_at': datetime.utcnow().isoformat()})
-    return {'is_complete': True, 'current_stage': 'escalated', 'last_node': 'escalate'}
+    return {'is_complete': True, 'current_stage': 'escalated', 'last_node': 'escalate_node'}
 
 
 def handle_error_node(state):
-    return {'is_complete': True, 'current_stage': 'error', 'last_node': 'handle_error'}
+    return {'is_complete': True, 'current_stage': 'error', 'last_node': 'handle_error_node'}
 
 
 def end_node(state):
-    return {'is_complete': True, 'current_stage': 'complete', 'last_node': 'end'}
+    return {'is_complete': True, 'current_stage': 'complete', 'last_node': 'end_node'}
 
 
 def build_lead_graph(checkpointer=None, enable_approval=True):
     graph = StateGraph(LeadGraphState)
-    graph.add_node('discovery', discovery_node)
-    graph.add_node('enrichment', enrichment_node)
-    graph.add_node('intent', intent_node)
-    graph.add_node('governance', governance_node)
-    graph.add_node('audit', audit_node)
-    graph.add_node('scoring', scoring_node)
-    graph.add_node('outreach', outreach_node)
-    graph.add_node('approval', approval_node)
-    graph.add_node('send_outreach', send_outreach_node)
-    graph.add_node('conversation', conversation_node)
-    graph.add_node('escalate', escalate_node)
-    graph.add_node('handle_error', handle_error_node)
-    graph.add_node('end', end_node)
-    graph.add_edge(START, 'discovery')
-    graph.add_edge('discovery', 'enrichment')
-    graph.add_edge('enrichment', 'intent')
-    graph.add_edge('audit', 'scoring')
-    graph.add_edge('outreach', 'approval')
-    graph.add_edge('approval', 'send_outreach')
-    graph.add_edge('escalate', 'end')
-    graph.add_edge('handle_error', 'end')
-    graph.add_edge('end', END)
-    interrupt_before = ['approval'] if enable_approval else []
+    graph.add_node('discovery_node', discovery_node)
+    graph.add_node('enrichment_node', enrichment_node)
+    graph.add_node('intent_node', intent_node)
+    graph.add_node('governance_node', governance_node)
+    graph.add_node('audit_node', audit_node)
+    graph.add_node('scoring_node', scoring_node)
+    graph.add_node('outreach_node', outreach_node)
+    graph.add_node('approval_node', approval_node)
+    graph.add_node('send_outreach_node', send_outreach_node)
+    graph.add_node('conversation_node', conversation_node)
+    graph.add_node('escalate_node', escalate_node)
+    graph.add_node('handle_error_node', handle_error_node)
+    graph.add_node('end_node', end_node)
+    graph.add_edge(START, 'discovery_node')
+    graph.add_edge('discovery_node', 'enrichment_node')
+    graph.add_edge('enrichment_node', 'intent_node')
+    graph.add_edge('audit_node', 'scoring_node')
+    graph.add_edge('outreach_node', 'approval_node')
+    graph.add_edge('approval_node', 'send_outreach_node')
+    graph.add_edge('escalate_node', 'end_node')
+    graph.add_edge('handle_error_node', 'end_node')
+    graph.add_edge('end_node', END)
+    interrupt_before = ['approval_node'] if enable_approval else []
     return graph.compile(checkpointer=checkpointer, interrupt_before=interrupt_before)
 
 

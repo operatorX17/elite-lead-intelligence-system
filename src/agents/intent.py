@@ -105,6 +105,7 @@ class IntentAgent(BaseAgent):
         intent_score = self._compute_intent_score(lead, enrichment)
         leak_score = self._compute_leak_score(lead, enrichment)
         reactivation_fit = self._compute_reactivation_fit(lead, enrichment)
+        volume_score = self._calculate_volume_score(lead, enrichment)  # NEW
         speed_to_lead_risk = self._classify_speed_to_lead_risk(lead, enrichment)
         
         # Mine reviews for evidence
@@ -112,7 +113,7 @@ class IntentAgent(BaseAgent):
         
         # Generate explanation
         why_this_lead = self._generate_explanation(
-            lead, enrichment, intent_score, leak_score, reactivation_fit
+            lead, enrichment, intent_score, leak_score, reactivation_fit, volume_score
         )
         
         # Create intent data dict
@@ -121,6 +122,7 @@ class IntentAgent(BaseAgent):
             "intent_score": intent_score,
             "leak_score": leak_score,
             "reactivation_fit": reactivation_fit,
+            "volume_score": volume_score,  # NEW
             "why_this_lead": why_this_lead,
             "speed_to_lead_risk": speed_to_lead_risk,
             "review_evidence": review_evidence,
@@ -365,6 +367,86 @@ class IntentAgent(BaseAgent):
         # Placeholder - would be populated from actual review data
         return evidence
     
+    def _calculate_volume_score(self, lead: Dict[str, Any], enrichment: Dict[str, Any]) -> int:
+        """
+        Calculate volume score from Google Maps signals.
+        Requirements: MAXIMUM QUALITY LEAD SCORING
+        
+        Scoring (max 100):
+        - Review count (0-40 points):
+          - >500 reviews: 40 pts (very high volume)
+          - >200 reviews: 30 pts (high volume)
+          - >100 reviews: 20 pts (medium volume)
+          - >50 reviews: 10 pts (low volume)
+        
+        - Peak busyness (0-30 points):
+          - >90: 30 pts ("Usually as busy as it gets")
+          - >70: 20 pts (very busy)
+          - >50: 10 pts (moderately busy)
+        
+        - Busy hours count (0-20 points):
+          - >40 hours/week: 20 pts (busy most of week)
+          - >20 hours/week: 10 pts (regularly busy)
+        
+        - Visit duration (0-10 points):
+          - >60 min: 10 pts (long visits = high engagement)
+          - >30 min: 5 pts (moderate engagement)
+        """
+        score = 0
+        
+        # Review count (0-40 points) - PRIMARY volume indicator
+        reviews = lead.get("reviews_count") or lead.get("reviewsCount") or 0
+        try:
+            reviews = int(reviews) if reviews else 0
+            if reviews > 500:
+                score += 40  # Very high volume
+            elif reviews > 200:
+                score += 30  # High volume
+            elif reviews > 100:
+                score += 20  # Medium volume
+            elif reviews > 50:
+                score += 10  # Low volume
+        except:
+            pass
+        
+        # Peak busyness (0-30 points) - Google Maps popular times
+        if enrichment:
+            peak = enrichment.get("peak_busyness") or 0
+            try:
+                peak = int(peak) if peak else 0
+                if peak > 90:
+                    score += 30  # "Usually as busy as it gets"
+                elif peak > 70:
+                    score += 20  # Very busy
+                elif peak > 50:
+                    score += 10  # Moderately busy
+            except:
+                pass
+            
+            # Busy hours count (0-20 points) - Consistency indicator
+            busy_hours = enrichment.get("busy_hours_count") or 0
+            try:
+                busy_hours = int(busy_hours) if busy_hours else 0
+                if busy_hours > 40:  # Busy most of the week
+                    score += 20
+                elif busy_hours > 20:  # Regularly busy
+                    score += 10
+            except:
+                pass
+            
+            # Visit duration (0-10 points) - Engagement indicator
+            duration = enrichment.get("avg_visit_duration_min") or 0
+            try:
+                duration = int(duration) if duration else 0
+                if duration > 60:  # Long visits = high engagement
+                    score += 10
+                elif duration > 30:  # Moderate engagement
+                    score += 5
+            except:
+                pass
+        
+        return min(score, 100)
+    
     def _generate_explanation(
         self,
         lead: Dict[str, Any],
@@ -372,6 +454,7 @@ class IntentAgent(BaseAgent):
         intent_score: int,
         leak_score: int,
         reactivation_fit: int,
+        volume_score: int = 0,  # NEW parameter
     ) -> str:
         """
         Generate plain-English explanation.
@@ -381,6 +464,16 @@ class IntentAgent(BaseAgent):
         
         cta_type = lead.get("cta_type")
         category = lead.get("category")
+        
+        # Volume reasons (NEW - highest priority)
+        if volume_score > 70:
+            reviews = lead.get("reviews_count") or lead.get("reviewsCount") or 0
+            if enrichment and enrichment.get("peak_busyness", 0) > 90:
+                reasons.append(f"extremely high volume ({reviews}+ reviews, peak busy)")
+            else:
+                reasons.append(f"high volume business ({reviews}+ reviews)")
+        elif volume_score > 40:
+            reasons.append("moderate volume with growth potential")
         
         # Intent reasons
         if lead.get("ads_active"):
@@ -407,6 +500,9 @@ class IntentAgent(BaseAgent):
             
             if leak_score > 50:
                 explanation += f" Revenue leak potential is high ({leak_score}/100) due to gaps in lead capture."
+            
+            if volume_score > 70:
+                explanation += f" Volume signals are strong ({volume_score}/100) indicating high traffic."
             
             return explanation
         

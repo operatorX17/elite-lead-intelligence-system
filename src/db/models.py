@@ -111,6 +111,9 @@ class Lead(BaseModel):
     lead_form_detected: bool = False
     lead_lifecycle_state: LeadLifecycleState = LeadLifecycleState.NEW
     last_contacted_at: Optional[datetime] = None
+    # Volume signals from Google Maps
+    reviews_count: Optional[int] = None
+    rating: Optional[float] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     
@@ -148,6 +151,22 @@ class EnrichmentData(BaseModel):
     contact_quality_score: int = Field(ge=0, le=100)
     normalized_phone: Optional[str] = None
     validated_emails: List[str] = Field(default_factory=list)
+    # Volume signals from Google Maps
+    popular_times_histogram: Optional[Dict[str, Any]] = None
+    popular_times_live_text: Optional[str] = None
+    people_typically_spend_here: Optional[str] = None
+    peak_busyness: Optional[int] = Field(default=None, ge=0, le=100)
+    avg_busyness: Optional[int] = Field(default=None, ge=0, le=100)
+    busy_hours_count: Optional[int] = Field(default=None, ge=0)
+    avg_visit_duration_min: Optional[int] = Field(default=None, ge=0)
+    is_peak_busy: bool = False
+    is_above_average: bool = False
+    opening_hours: Optional[Dict[str, Any]] = None
+    reviews_distribution: Optional[Dict[str, Any]] = None
+    questions_and_answers: Optional[Dict[str, Any]] = None
+    web_results: Optional[Dict[str, Any]] = None
+    table_reservation_links: Optional[Dict[str, Any]] = None
+    image_categories: Optional[Dict[str, Any]] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -166,6 +185,7 @@ class IntentData(BaseModel):
     intent_score: int = Field(ge=0, le=100)
     leak_score: int = Field(ge=0, le=100)
     reactivation_fit: int = Field(ge=0, le=100)
+    volume_score: int = Field(default=0, ge=0, le=100)  # NEW
     why_this_lead: str
     speed_to_lead_risk: SpeedToLeadRisk
     review_evidence: List[ReviewEvidence] = Field(default_factory=list)
@@ -200,6 +220,7 @@ class ScoreBreakdown(BaseModel):
     ad_activity: float = 0
     intent: float = 0
     leak: float = 0
+    volume: float = 0  # NEW
     reactivation: float = 0
     contact_quality: float = 0
     business_size: float = 0

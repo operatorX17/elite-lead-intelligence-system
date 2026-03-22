@@ -93,15 +93,116 @@ export function getTrailingMessageId({
   return trailingMessage.id;
 }
 
+const TOOL_TRANSPORT_PATTERNS = [
+  /<has_function_call>/gi,
+  /<\|\s*tool_calls_begin\s*\|>/gi,
+  /<\|\s*tool_call_begin\s*\|>/gi,
+  /<\|\s*tool_sep\s*\|>/gi,
+  /<\|\s*tool_call_end\s*\|>/gi,
+  /<\|\s*tool_calls_end\s*\|>/gi,
+  /<\|\s*function\s*\|>/gi,
+  /<\|\s*json\s*\|>/gi,
+];
+
 export function sanitizeText(text: string) {
-  return text.replace('<has_function_call>', '');
+  const hadToolTransport = TOOL_TRANSPORT_PATTERNS.some((pattern) => {
+    pattern.lastIndex = 0;
+    return pattern.test(text);
+  });
+
+  if (hadToolTransport) {
+    return '';
+  }
+
+  let sanitized = text;
+  for (const pattern of TOOL_TRANSPORT_PATTERNS) {
+    sanitized = sanitized.replace(pattern, ' ');
+  }
+
+  sanitized = sanitized.replace(/\s{2,}/g, ' ').trim();
+
+  const compact = sanitized.toLowerCase().replace(/\s+/g, '');
+  if (
+    compact.includes('tool_calls_begin') ||
+    compact.includes('tool_call_begin') ||
+    compact.includes('tool_call_end') ||
+    compact.includes('tool_calls_end') ||
+    compact.includes('tool_sep')
+  ) {
+    return '';
+  }
+
+  return sanitized;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+export function normalizeMessageParts(
+  parts: unknown,
+): UIMessagePart<CustomUIDataTypes, ChatTools>[] {
+  const rawParts = Array.isArray(parts)
+    ? parts
+    : typeof parts === 'string' || isRecord(parts)
+      ? [parts]
+      : [];
+
+  return rawParts.flatMap((part) => {
+    if (typeof part === 'string') {
+      return [{ type: 'text', text: part }] as UIMessagePart<
+        CustomUIDataTypes,
+        ChatTools
+      >[];
+    }
+
+    if (!isRecord(part)) {
+      return [];
+    }
+
+    const type = part.type;
+
+    if (typeof type === 'string') {
+      if (type === 'text') {
+        const text =
+          typeof part.text === 'string'
+            ? part.text
+            : typeof part.content === 'string'
+              ? part.content
+              : '';
+
+        return [{ ...part, type, text }] as UIMessagePart<
+          CustomUIDataTypes,
+          ChatTools
+        >[];
+      }
+
+      return [part as UIMessagePart<CustomUIDataTypes, ChatTools>];
+    }
+
+    if (typeof part.text === 'string') {
+      return [{ type: 'text', text: part.text }] as UIMessagePart<
+        CustomUIDataTypes,
+        ChatTools
+      >[];
+    }
+
+    if (typeof part.content === 'string') {
+      return [{ type: 'text', text: part.content }] as UIMessagePart<
+        CustomUIDataTypes,
+        ChatTools
+      >[];
+    }
+
+    return [];
+  });
 }
 
 export function convertToUIMessages(messages: DBMessage[]): ChatMessage[] {
   return messages.map((message) => ({
     id: message.id,
     role: message.role as 'user' | 'assistant' | 'system',
-    parts: message.parts as UIMessagePart<CustomUIDataTypes, ChatTools>[],
+    parts: normalizeMessageParts(message.parts),
     metadata: {
       createdAt: formatISO(message.createdAt),
     },
@@ -109,8 +210,9 @@ export function convertToUIMessages(messages: DBMessage[]): ChatMessage[] {
 }
 
 export function getTextFromMessage(message: ChatMessage | UIMessage): string {
-  return message.parts
+  return normalizeMessageParts(message.parts)
     .filter((part) => part.type === 'text')
-    .map((part) => (part as { type: 'text'; text: string}).text)
+    .map((part) => sanitizeText((part as { type: 'text'; text: string}).text))
+    .filter(Boolean)
     .join('');
 }

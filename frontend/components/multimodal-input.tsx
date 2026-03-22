@@ -43,9 +43,9 @@ import {
 } from "./elements/prompt-input";
 import { ArrowUpIcon, PaperclipIcon, StopIcon } from "./icons";
 import { PreviewAttachment } from "./preview-attachment";
-import { ZRAISuggestedActions } from "./zrai-suggested-actions";
 import { Button } from "./ui/button";
 import type { VisibilityType } from "./visibility-selector";
+import { ZRAISuggestedActions } from "./zrai-suggested-actions";
 
 function setCookie(name: string, value: string) {
   const maxAge = 60 * 60 * 24 * 365; // 1 year
@@ -368,7 +368,7 @@ function PureMultimodalInput({
             maxHeight={200}
             minHeight={44}
             onChange={handleInput}
-            placeholder="Send a message..."
+            placeholder="Ask ZRAI to discover leads, enrich a company, score a pipeline, draft outreach, or run a dry run..."
             ref={textareaRef}
             rows={1}
             value={input}
@@ -387,7 +387,7 @@ function PureMultimodalInput({
             />
           </PromptInputTools>
 
-          {status === "submitted" ? (
+          {status === "submitted" || status === "streaming" ? (
             <StopButton setMessages={setMessages} stop={stop} />
           ) : (
             <PromptInputSubmit
@@ -539,15 +539,17 @@ function PureStopButton({
 }) {
   return (
     <Button
-      className="size-7 rounded-full bg-foreground p-1 text-background transition-colors duration-200 hover:bg-foreground/90 disabled:bg-muted disabled:text-muted-foreground"
+      aria-label="Stop generation"
+      className="size-8 rounded-full bg-red-500 p-1 text-white transition-colors duration-200 hover:bg-red-400 disabled:bg-muted disabled:text-muted-foreground"
       data-testid="stop-button"
       onClick={(event) => {
         event.preventDefault();
         stop();
         setMessages((messages) => messages);
       }}
-    >
-      <StopIcon size={14} />
+      title="Stop generation"
+      >
+      <StopIcon size={12} />
     </Button>
   );
 }

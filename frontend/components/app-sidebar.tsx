@@ -65,15 +65,20 @@ export function AppSidebar({ user }: { user: User | undefined }) {
           <SidebarMenu>
             <div className="flex flex-row items-center justify-between">
               <Link
-                className="flex flex-row items-center gap-3"
+                className="flex min-w-0 flex-row items-center gap-3"
                 href="/"
                 onClick={() => {
                   setOpenMobile(false);
                 }}
               >
-                <span className="cursor-pointer rounded-md px-2 font-semibold text-lg hover:bg-muted">
-                  Chatbot
-                </span>
+                <div className="flex min-w-0 flex-col">
+                  <span className="cursor-pointer rounded-md px-2 font-semibold text-base hover:bg-muted">
+                    ZRAI Lead OS
+                  </span>
+                  <span className="px-2 text-muted-foreground text-xs">
+                    Lead intelligence operator chat
+                  </span>
+                </div>
               </Link>
               <div className="flex flex-row gap-1">
                 {user && (
