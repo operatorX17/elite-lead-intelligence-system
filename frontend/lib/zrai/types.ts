@@ -75,6 +75,17 @@ export interface SignalFacts {
   branch_names?: string[];
   doctor_count?: number;
   doctor_names?: string[];
+  doctor_profiles?: Array<{
+    name?: string;
+    role?: string;
+    clinic?: string;
+    experience?: string;
+    source?: string;
+    score?: number;
+    phones?: string[];
+    emails?: string[];
+    linkedin?: string;
+  }>;
   instagram_present?: boolean;
   youtube_present?: boolean;
   testimonials_present?: boolean;
@@ -91,8 +102,25 @@ export interface SignalFacts {
   decision_maker_confidence?: number | null;
   best_contact_phone?: string | null;
   best_contact_email?: string | null;
+  best_contact_linkedin?: string | null;
   best_contact_channel?: string | null;
   best_contact_reason?: string | null;
+  decision_maker_candidates?: Array<{
+    name?: string;
+    role?: string;
+    source?: string;
+    score?: number;
+    linkedin?: string;
+    emails?: string[];
+    phones?: string[];
+    clinic?: string;
+  }>;
+  branch_contacts?: Array<{
+    name?: string;
+    phone?: string;
+    source?: string;
+  }>;
+  contact_evidence?: string[];
   top_issue?: string;
   next_best_action?: string;
   recommended_channel?: string | null;
@@ -158,8 +186,13 @@ export interface AnalysisBundle {
     decision_maker_confidence?: number | null;
     best_contact_phone?: string | null;
     best_contact_email?: string | null;
+    best_contact_linkedin?: string | null;
     best_contact_channel?: string | null;
     best_contact_reason?: string | null;
+    decision_maker_candidates?: SignalFacts["decision_maker_candidates"];
+    doctor_profiles?: SignalFacts["doctor_profiles"];
+    branch_contacts?: SignalFacts["branch_contacts"];
+    contact_evidence?: SignalFacts["contact_evidence"];
     recommended_offer?: string | null;
     recommended_channel?: string | null;
     recommended_next_step?: string | null;

@@ -784,11 +784,15 @@ def build_signal_facts(
     proof: Optional[Dict[str, Any]] = None,
     scoring: Optional[Dict[str, Any]] = None,
     lead_state: Optional[Dict[str, Any]] = None,
+    runtime_metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     enrichment_payload = enrichment or {}
     intent_payload = intent or {}
     proof_extraction = (proof or {}).get("extraction_data") or {}
-    lead_state_metadata = (lead_state or {}).get("metadata") or {}
+    lead_state_metadata = {
+        **dict((lead_state or {}).get("metadata") or {}),
+        **dict(runtime_metadata or {}),
+    }
     stored_analysis_bundle = (
         lead_state_metadata.get("analysis_bundle")
         or lead_state_metadata.get("intelligence")
@@ -796,11 +800,18 @@ def build_signal_facts(
     )
     stored_signal_facts = dict(stored_analysis_bundle.get("facts") or {})
     ads_verification = lead_state_metadata.get("ads_verification") or {}
+    people_intelligence = dict(lead_state_metadata.get("people_intelligence") or {})
 
     phone_numbers = _dedupe_strings(
         list(proof_extraction.get("phone_numbers") or [])
         + ([enrichment_payload.get("normalized_phone")] if enrichment_payload.get("normalized_phone") else [])
         + ([lead_data.get("phone")] if lead_data.get("phone") else [])
+        + list(people_intelligence.get("phone_numbers") or [])
+        + [
+            contact.get("phone")
+            for contact in list(people_intelligence.get("branch_contacts") or [])
+            if isinstance(contact, dict)
+        ]
     )
     phone_visible = (
         str(proof_extraction.get("phone_visibility") or "").lower()
@@ -865,10 +876,36 @@ def build_signal_facts(
         _build_social_profiles(lead_data),
         enrichment_payload.get("social_profiles") or {},
         proof_extraction.get("social_profiles") or {},
+        people_intelligence.get("social_profiles") or {},
         stored_signal_facts.get("social_profiles") or {},
     )
-    branch_names = _dedupe_strings(list(proof_extraction.get("branch_names") or []))
-    doctor_names = _dedupe_strings(list(proof_extraction.get("doctor_names") or []))
+    doctor_profiles = list(people_intelligence.get("doctor_profiles") or []) or list(stored_signal_facts.get("doctor_profiles") or [])
+    decision_maker_candidates = list(people_intelligence.get("decision_maker_candidates") or []) or list(stored_signal_facts.get("decision_maker_candidates") or [])
+    branch_contacts = list(people_intelligence.get("branch_contacts") or []) or list(stored_signal_facts.get("branch_contacts") or [])
+    contact_evidence = _dedupe_strings(
+        list(people_intelligence.get("contact_evidence") or [])
+        + list(stored_signal_facts.get("contact_evidence") or [])
+    )
+    branch_names = _dedupe_strings(
+        list(proof_extraction.get("branch_names") or [])
+        + list(people_intelligence.get("branch_names") or [])
+        + list(stored_signal_facts.get("branch_names") or [])
+        + [
+            contact.get("name")
+            for contact in branch_contacts
+            if isinstance(contact, dict)
+        ]
+    )
+    doctor_names = _dedupe_strings(
+        list(proof_extraction.get("doctor_names") or [])
+        + list(people_intelligence.get("doctor_names") or [])
+        + list(stored_signal_facts.get("doctor_names") or [])
+        + [
+            profile.get("name")
+            for profile in doctor_profiles
+            if isinstance(profile, dict)
+        ]
+    )
     multi_clinic = bool(proof_extraction.get("multi_clinic") or len(branch_names) > 1)
     branch_count = proof_extraction.get("branch_count")
     if not isinstance(branch_count, int):
@@ -905,25 +942,52 @@ def build_signal_facts(
     email_contacts = _dedupe_strings(
         list(lead_data.get("emails_found") or [])
         + list(enrichment_payload.get("validated_emails") or [])
+        + list(people_intelligence.get("emails") or [])
+        + [
+            email
+            for candidate in decision_maker_candidates
+            if isinstance(candidate, dict)
+            for email in list(candidate.get("emails") or [])
+        ]
         + ([stored_signal_facts.get("best_contact_email")] if stored_signal_facts.get("best_contact_email") else [])
     )
-    decision_maker_name = enrichment_payload.get("decision_maker_name") or stored_signal_facts.get("decision_maker_name")
+    ranked_candidate = next(
+        (
+            candidate
+            for candidate in decision_maker_candidates
+            if isinstance(candidate, dict) and candidate.get("name")
+        ),
+        {},
+    )
+    decision_maker_name = (
+        enrichment_payload.get("decision_maker_name")
+        or people_intelligence.get("decision_maker_name")
+        or ranked_candidate.get("name")
+        or stored_signal_facts.get("decision_maker_name")
+    )
     if not decision_maker_name and doctor_names:
         decision_maker_name = doctor_names[0]
     decision_maker_linkedin = (
         enrichment_payload.get("decision_maker_linkedin")
+        or people_intelligence.get("decision_maker_linkedin")
+        or people_intelligence.get("best_contact_linkedin")
+        or ranked_candidate.get("linkedin")
         or stored_signal_facts.get("decision_maker_linkedin")
     )
     decision_maker_role = (
         enrichment_payload.get("decision_maker_role")
+        or people_intelligence.get("decision_maker_role")
+        or ranked_candidate.get("role")
         or stored_signal_facts.get("decision_maker_role")
     )
     decision_maker_source = (
         enrichment_payload.get("decision_maker_source")
+        or ranked_candidate.get("source")
         or stored_signal_facts.get("decision_maker_source")
     )
     decision_maker_confidence = (
         enrichment_payload.get("decision_maker_confidence")
+        or (min(float(ranked_candidate.get("score", 0)) / 100.0, 0.98) if ranked_candidate else None)
         or stored_signal_facts.get("decision_maker_confidence")
     )
     if decision_maker_name and not _is_plausible_person_name(str(decision_maker_name)):
@@ -931,11 +995,25 @@ def build_signal_facts(
         decision_maker_role = None
         decision_maker_source = None
         decision_maker_confidence = None
-    best_contact_phone = phone_numbers[0] if phone_numbers else stored_signal_facts.get("best_contact_phone")
-    best_contact_email = _pick_best_email(
-        email_contacts,
-        lead_data.get("website") or lead_data.get("landing_page_url"),
-    ) or stored_signal_facts.get("best_contact_email")
+    best_contact_phone = (
+        people_intelligence.get("best_contact_phone")
+        or (phone_numbers[0] if phone_numbers else None)
+        or stored_signal_facts.get("best_contact_phone")
+    )
+    best_contact_email = (
+        people_intelligence.get("best_contact_email")
+        or _pick_best_email(
+            email_contacts,
+            lead_data.get("website") or lead_data.get("landing_page_url"),
+        )
+        or stored_signal_facts.get("best_contact_email")
+    )
+    best_contact_linkedin = (
+        people_intelligence.get("best_contact_linkedin")
+        or ranked_candidate.get("linkedin")
+        or decision_maker_linkedin
+        or stored_signal_facts.get("best_contact_linkedin")
+    )
     if not decision_maker_name and doctor_names:
         plausible_doctors = [name for name in doctor_names if _is_plausible_person_name(str(name))]
         if plausible_doctors:
@@ -948,7 +1026,7 @@ def build_signal_facts(
         best_contact_email=best_contact_email,
         whatsapp_detected=whatsapp_detected,
         whatsapp_target=str(whatsapp_target) if whatsapp_target else None,
-        decision_maker_linkedin=str(decision_maker_linkedin) if decision_maker_linkedin else None,
+        decision_maker_linkedin=str(best_contact_linkedin or decision_maker_linkedin) if (best_contact_linkedin or decision_maker_linkedin) else None,
     )
     if not recommended_channel:
         recommended_channel = stored_signal_facts.get("best_contact_channel")
@@ -983,6 +1061,7 @@ def build_signal_facts(
         "branch_names": branch_names,
         "doctor_count": doctor_count,
         "doctor_names": doctor_names,
+        "doctor_profiles": doctor_profiles,
         "instagram_present": instagram_present,
         "youtube_present": youtube_present,
         "testimonials_present": testimonials_present,
@@ -1010,8 +1089,12 @@ def build_signal_facts(
         "decision_maker_confidence": float(decision_maker_confidence) if decision_maker_confidence is not None else None,
         "best_contact_phone": str(best_contact_phone) if best_contact_phone else None,
         "best_contact_email": str(best_contact_email) if best_contact_email else None,
+        "best_contact_linkedin": str(best_contact_linkedin) if best_contact_linkedin else None,
         "best_contact_channel": recommended_channel,
         "best_contact_reason": str(best_contact_reason) if best_contact_reason else None,
+        "decision_maker_candidates": decision_maker_candidates,
+        "branch_contacts": branch_contacts,
+        "contact_evidence": contact_evidence,
         "recommended_channel": recommended_channel,
         "recommended_message_type": "consultative_outreach" if recommended_channel else None,
         "draft_template_key": "clinic_conversion_audit",
@@ -1135,8 +1218,13 @@ def build_commercial_reason_from_signal_facts(
     decision_maker_confidence = signal_facts.get("decision_maker_confidence")
     best_contact_phone = signal_facts.get("best_contact_phone")
     best_contact_email = signal_facts.get("best_contact_email")
+    best_contact_linkedin = signal_facts.get("best_contact_linkedin")
     best_contact_channel = signal_facts.get("best_contact_channel")
     best_contact_reason = signal_facts.get("best_contact_reason")
+    decision_maker_candidates = signal_facts.get("decision_maker_candidates") or []
+    doctor_profiles = signal_facts.get("doctor_profiles") or []
+    branch_contacts = signal_facts.get("branch_contacts") or []
+    contact_evidence = signal_facts.get("contact_evidence") or []
     if isinstance(content_ready_score, int) and content_ready_score >= 50:
         positives.append("content-ready brand")
 
@@ -1568,8 +1656,13 @@ def build_analysis_bundle(
             "decision_maker_confidence": decision_maker_confidence,
             "best_contact_phone": best_contact_phone,
             "best_contact_email": best_contact_email,
+            "best_contact_linkedin": best_contact_linkedin,
             "best_contact_channel": best_contact_channel,
             "best_contact_reason": best_contact_reason,
+            "decision_maker_candidates": decision_maker_candidates,
+            "doctor_profiles": doctor_profiles,
+            "branch_contacts": branch_contacts,
+            "contact_evidence": contact_evidence,
             "recommended_offer": recommended_offer,
             "recommended_channel": signal_facts.get("recommended_channel"),
             "recommended_next_step": signal_facts.get("next_best_action"),
@@ -2066,6 +2159,7 @@ def run_selected_lead_pipeline(
         intent=state.get("intent") or {},
         proof=state.get("proof") or {},
         lead_state={"metadata": {"ads_verification": ads_verification}},
+        runtime_metadata=state.get("metadata") or {},
     )
     state["metadata"] = {
         **(state.get("metadata") or {}),
@@ -2086,6 +2180,7 @@ def run_selected_lead_pipeline(
         proof=state.get("proof") or {},
         scoring=state.get("scoring") or {},
         lead_state={"metadata": {"ads_verification": ads_verification}},
+        runtime_metadata=state.get("metadata") or {},
     )
     state["metadata"] = {
         **(state.get("metadata") or {}),

@@ -3,12 +3,13 @@ Enrichment Agent - Contact and context extraction.
 Requirements: 4.1-4.6
 """
 
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Iterable
 from datetime import datetime
 import re
 import logging
 import os
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
+from uuid import UUID
 
 import requests
 from bs4 import BeautifulSoup
@@ -29,6 +30,16 @@ DISCOVERY_HTTP_HEADERS = {
         "Chrome/123.0.0.0 Safari/537.36"
     ),
     "Accept-Language": "en-US,en;q=0.9",
+}
+
+PUBLIC_DIRECTORY_HOST_HINTS = {
+    "linkedin.com",
+    "instagram.com",
+    "facebook.com",
+    "practo.com",
+    "lybrate.com",
+    "justdial.com",
+    "1mg.com",
 }
 
 
@@ -110,14 +121,22 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         # Extract tech signals and clinic-specific contact context from the site.
         tech_signals = self._extract_tech_signals(website_context.get("content", ""))
 
-        # Extract decision maker info from business name, contact pages, and social/profile hints.
-        decision_maker = self._extract_decision_maker(lead, website_context)
+        people_intelligence = self._extract_people_intelligence(lead, website_context)
+
+        # Extract decision maker info from business name, contact pages, social/profile hints,
+        # and ranked people intelligence derived from the site and public search results.
+        decision_maker = self._extract_decision_maker(
+            lead,
+            website_context,
+            people_intelligence=people_intelligence,
+        )
 
         # Normalize contacts from both discovery and website extraction.
         candidate_phones: List[str] = []
         if lead.get("phone"):
             candidate_phones.append(str(lead["phone"]))
         candidate_phones.extend(website_context.get("phones", []))
+        candidate_phones.extend(people_intelligence.get("phone_numbers", []))
 
         normalized_phones: List[str] = []
         for phone in candidate_phones:
@@ -125,9 +144,14 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             if normalized and normalized not in normalized_phones:
                 normalized_phones.append(normalized)
 
-        normalized_phone = normalized_phones[0] if normalized_phones else None
+        normalized_phone = (
+            self._normalize_phone(people_intelligence.get("best_contact_phone"))
+            or (normalized_phones[0] if normalized_phones else None)
+        )
         validated_emails = self._validate_emails(
-            list(lead.get("emails_found", [])) + website_context.get("emails", [])
+            list(lead.get("emails_found", []))
+            + website_context.get("emails", [])
+            + list(people_intelligence.get("emails", []))
         )
 
         if website_context.get("booking_link") and not tech_signals.get("booking_provider"):
@@ -150,6 +174,19 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             normalized_phone, validated_emails, decision_maker
         )
         
+        decision_maker_name = decision_maker.get("name") or people_intelligence.get("decision_maker_name")
+        decision_maker_linkedin = (
+            decision_maker.get("linkedin")
+            or people_intelligence.get("best_contact_linkedin")
+            or people_intelligence.get("decision_maker_linkedin")
+        )
+
+        state["metadata"] = {
+            **(state.get("metadata") or {}),
+            "people_intelligence": people_intelligence,
+        }
+        self._persist_people_intelligence(state, people_intelligence)
+
         # Create enrichment data dict
         enrichment = {
             "lead_id": lead.get("lead_id"),
@@ -158,8 +195,8 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             "crm_hint": tech_signals.get("crm_hint"),
             "chat_widget": tech_signals.get("chat_widget"),
             "form_tool": tech_signals.get("form_tool"),
-            "decision_maker_name": decision_maker.get("name"),
-            "decision_maker_linkedin": decision_maker.get("linkedin"),
+            "decision_maker_name": decision_maker_name,
+            "decision_maker_linkedin": decision_maker_linkedin,
             "decision_maker_role": decision_maker.get("role"),
             "decision_maker_source": decision_maker.get("source"),
             "decision_maker_confidence": decision_maker.get("confidence"),
@@ -237,6 +274,10 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         if supporting_content:
             raw_content = "\n".join([raw_content, *supporting_content])
 
+        asset_content = self._fetch_embedded_asset_content(raw_content, website)
+        if asset_content:
+            raw_content = "\n".join([raw_content, asset_content])
+
         lower_content = raw_content.lower()
         context["raw_content"] = raw_content
         context["content"] = lower_content
@@ -244,10 +285,7 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
             raw_content,
         )
-        context["phones"] = re.findall(
-            r"(?:\+?\d[\d\s().-]{8,}\d)",
-            raw_content,
-        )
+        context["phones"] = self._extract_phone_candidates(raw_content)
         context["social_profiles"] = self._extract_social_profiles(raw_content)
 
         contact_paths: List[str] = []
@@ -291,6 +329,45 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         context["contact_paths"] = deduped_paths
 
         return context
+
+    def _fetch_embedded_asset_content(self, raw_html: str, base_url: str) -> str:
+        """Fetch a small bounded set of same-origin JS assets to recover data from JS-shell sites."""
+        if not raw_html:
+            return ""
+
+        asset_urls: List[str] = []
+        base_host = (urlparse(base_url).netloc or "").lower()
+        for script_src in re.findall(r'<script[^>]+src=["\']([^"\']+)["\']', raw_html, flags=re.IGNORECASE):
+            absolute = urljoin(base_url, script_src)
+            parsed = urlparse(absolute)
+            if parsed.scheme not in {"http", "https"}:
+                continue
+            if base_host and (parsed.netloc or "").lower() != base_host:
+                continue
+            lowered = absolute.lower()
+            if not lowered.endswith(".js"):
+                continue
+            if absolute not in asset_urls:
+                asset_urls.append(absolute)
+
+        chunks: List[str] = []
+        remaining_chars = 1_200_000
+        for asset_url in asset_urls[:3]:
+            if remaining_chars <= 0:
+                break
+            try:
+                response = requests.get(asset_url, timeout=25, headers=DISCOVERY_HTTP_HEADERS)
+                response.raise_for_status()
+                body = response.text or ""
+                if not body:
+                    continue
+                body = body[: min(len(body), remaining_chars, 700_000)]
+                remaining_chars -= len(body)
+                chunks.append(body)
+            except Exception as exc:
+                self._logger.warning("Asset scrape failed for %s: %s", asset_url, exc)
+
+        return "\n".join(chunks)
 
     def _fetch_page_content(self, url: str) -> str:
         raw_content = ""
@@ -421,6 +498,7 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         self,
         lead: Dict[str, Any],
         website_context: Optional[Dict[str, Any]] = None,
+        people_intelligence: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Extract decision-maker information.
@@ -428,6 +506,7 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         """
         decision_maker: Dict[str, Any] = {}
         website_context = website_context or {}
+        people_intelligence = people_intelligence or {}
         raw_content = str(website_context.get("raw_content") or "")
         social_profiles = website_context.get("social_profiles") or {}
         linkedin_profiles = social_profiles.get("linkedin") or []
@@ -449,6 +528,7 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         }
 
         candidates: List[Dict[str, Any]] = []
+        candidates.extend(list(people_intelligence.get("decision_maker_candidates") or []))
         business_name = str(lead.get("business_name", "")).strip()
         business_name_person = self._extract_person_name_from_business_name(business_name)
         if business_name_person:
@@ -550,6 +630,349 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
 
         return decision_maker
 
+    def _extract_people_intelligence(
+        self,
+        lead: Dict[str, Any],
+        website_context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Build richer doctor/founder/contact intelligence from site content and public search."""
+        website_context = website_context or {}
+        raw_content = str(website_context.get("raw_content") or "")
+        business_name = str(lead.get("business_name") or "").strip()
+        location = str(lead.get("location") or "").strip()
+        website = self._normalize_url(str(lead.get("website") or lead.get("landing_page_url") or "").strip()) if (lead.get("website") or lead.get("landing_page_url")) else None
+
+        doctor_profiles = self._extract_doctor_profiles(raw_content)
+        branch_contacts = self._extract_branch_contacts(raw_content)
+        branch_names = [item.get("name") for item in branch_contacts if item.get("name")]
+        phone_numbers = [item.get("phone") for item in branch_contacts if item.get("phone")]
+
+        extra_phone_candidates = [] if branch_contacts else list(website_context.get("phones", []))
+        for phone in extra_phone_candidates:
+            normalized = self._normalize_phone(phone)
+            if normalized and normalized not in phone_numbers:
+                phone_numbers.append(normalized)
+
+        location_hint = location.lower()
+        if any(token in location_hint for token in ("india", "bengaluru", "bangalore", "karnataka")):
+            phone_numbers = [phone for phone in phone_numbers if str(phone).startswith("+91")]
+
+        emails = self._validate_emails(list(website_context.get("emails", [])))
+        social_profiles = website_context.get("social_profiles") or {}
+        external_profiles = self._search_people_profiles(
+            business_name=business_name,
+            location=location,
+            candidate_names=[item.get("name") for item in doctor_profiles],
+            website=website,
+        )
+
+        merged_doctors: List[Dict[str, Any]] = []
+        by_name: Dict[str, Dict[str, Any]] = {}
+        for doctor in doctor_profiles:
+            name = str(doctor.get("name") or "").strip()
+            if not name:
+                continue
+            merged = dict(doctor)
+            external = external_profiles.get(name.lower()) or {}
+            if external.get("linkedin") and not merged.get("linkedin"):
+                merged["linkedin"] = external.get("linkedin")
+            if external.get("emails"):
+                merged["emails"] = self._validate_emails(
+                    list(merged.get("emails") or []) + list(external.get("emails") or [])
+                )
+            if external.get("phones"):
+                merged["phones"] = self._dedupe_phones(
+                    list(merged.get("phones") or []) + list(external.get("phones") or [])
+                )
+            by_name[name.lower()] = merged
+
+        merged_doctors.extend(by_name.values())
+
+        decision_maker_candidates: List[Dict[str, Any]] = []
+        founder_roles = {"founder", "co_founder", "director", "senior_doctor"}
+        for doctor in merged_doctors:
+            score = int(doctor.get("score") or 55)
+            if doctor.get("role") in founder_roles:
+                score += 15
+            if doctor.get("linkedin"):
+                score += 4
+            if doctor.get("emails"):
+                score += 4
+            if doctor.get("phones"):
+                score += 3
+            candidate = {
+                "name": doctor.get("name"),
+                "role": doctor.get("role"),
+                "source": doctor.get("source"),
+                "score": min(score, 99),
+                "linkedin": doctor.get("linkedin"),
+                "emails": doctor.get("emails") or [],
+                "phones": doctor.get("phones") or [],
+                "clinic": doctor.get("clinic"),
+            }
+            decision_maker_candidates.append(candidate)
+
+        decision_maker_candidates.sort(key=lambda item: int(item.get("score") or 0), reverse=True)
+        decision_maker_candidates = self._dedupe_candidates(decision_maker_candidates)
+
+        best_candidate = decision_maker_candidates[0] if decision_maker_candidates else {}
+        best_contact_phone = None
+        for candidate_phone in list(best_candidate.get("phones") or []) + phone_numbers:
+            normalized = self._normalize_phone(candidate_phone)
+            if normalized:
+                best_contact_phone = normalized
+                break
+
+        best_contact_email = None
+        for candidate_email in list(best_candidate.get("emails") or []) + emails:
+            validated = self._validate_emails([candidate_email])
+            if validated:
+                best_contact_email = validated[0]
+                break
+
+        best_contact_linkedin = best_candidate.get("linkedin") or None
+        doctor_names = self._dedupe_strings([item.get("name") for item in merged_doctors])
+        branch_names = self._dedupe_strings(branch_names)
+        phone_numbers = self._dedupe_phones(phone_numbers)
+        contact_evidence = self._dedupe_strings(
+            [
+                *(f"{item.get('name')}: {item.get('phone')}" for item in branch_contacts if item.get("name") and item.get("phone")),
+                *(f"{item.get('name')} ({item.get('role')})" for item in merged_doctors if item.get("name") and item.get("role")),
+            ]
+        )
+
+        return {
+            "doctor_names": doctor_names,
+            "doctor_profiles": merged_doctors[:8],
+            "branch_names": branch_names,
+            "branch_contacts": branch_contacts[:8],
+            "phone_numbers": phone_numbers,
+            "emails": emails,
+            "social_profiles": social_profiles,
+            "decision_maker_candidates": decision_maker_candidates[:6],
+            "decision_maker_name": best_candidate.get("name"),
+            "decision_maker_role": best_candidate.get("role"),
+            "decision_maker_linkedin": best_contact_linkedin,
+            "best_contact_phone": best_contact_phone,
+            "best_contact_email": best_contact_email,
+            "best_contact_linkedin": best_contact_linkedin,
+            "contact_evidence": contact_evidence[:8],
+        }
+
+    def _extract_doctor_profiles(self, raw_content: str) -> List[Dict[str, Any]]:
+        profiles: List[Dict[str, Any]] = []
+        if not raw_content:
+            return profiles
+
+        object_pattern = re.compile(
+            r'\{name:"(?P<name>Dr\.[^"]+)"(?:,experience:"(?P<experience>[^"]+)")?(?:,specialty:"(?P<specialty>[^"]+)")?',
+            flags=re.IGNORECASE,
+        )
+        simple_object_pattern = re.compile(
+            r'\{name:"(?P<name>Dr\.[^"]+)"(?:,[^{}]{0,180})?\}',
+            flags=re.IGNORECASE,
+        )
+        for match in object_pattern.finditer(raw_content):
+            profile = self._build_doctor_profile_from_match(
+                name=match.group("name"),
+                specialty=match.group("specialty"),
+                experience=match.group("experience"),
+                source="website_asset",
+                raw_context=match.group(0),
+            )
+            if profile:
+                profiles.append(profile)
+
+        for match in simple_object_pattern.finditer(raw_content):
+            profile = self._build_doctor_profile_from_match(
+                name=match.group("name"),
+                specialty=None,
+                experience=None,
+                source="website_asset",
+                raw_context=match.group(0),
+            )
+            if profile:
+                profiles.append(profile)
+
+        deduped: List[Dict[str, Any]] = []
+        seen = set()
+        for profile in sorted(profiles, key=lambda item: int(item.get("score") or 0), reverse=True):
+            key = str(profile.get("name") or "").strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            deduped.append(profile)
+        return deduped
+
+    def _build_doctor_profile_from_match(
+        self,
+        *,
+        name: Optional[str],
+        specialty: Optional[str],
+        experience: Optional[str],
+        source: str,
+        raw_context: str,
+    ) -> Optional[Dict[str, Any]]:
+        normalized_name = self._normalize_person_name(name)
+        if not normalized_name or not self._is_plausible_person_name(normalized_name):
+            return None
+
+        lower_context = str(raw_context or "").lower()
+        lower_specialty = str(specialty or "").lower()
+        role = "doctor"
+        score = 64
+        if "co-founder" in lower_specialty or "co founder" in lower_specialty:
+            role = "co_founder"
+            score = 95
+        elif "founder" in lower_specialty or "founder" in lower_context:
+            role = "founder"
+            score = 98
+        elif "director" in lower_specialty or "director" in lower_context:
+            role = "director"
+            score = 90
+        elif any(token in lower_specialty for token in ["senior", "chief", "lead", "consultant"]):
+            role = "senior_doctor"
+            score = 80
+
+        clinic_match = re.search(
+            r"(?i)iSkin\s+(?P<clinic>[A-Z][A-Za-z]+)",
+            specialty or raw_context or "",
+        )
+        clinic = clinic_match.group("clinic") if clinic_match else None
+        if clinic and clinic.lower() == "clinic":
+            clinic = None
+        phones = self._dedupe_phones(re.findall(r"\b\d{10}\b", raw_context or ""))
+        emails = self._validate_emails(re.findall(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", raw_context or ""))
+
+        return {
+            "name": normalized_name,
+            "role": role,
+            "clinic": clinic,
+            "experience": experience,
+            "source": source,
+            "score": score,
+            "phones": phones,
+            "emails": emails,
+        }
+
+    def _extract_branch_contacts(self, raw_content: str) -> List[Dict[str, Any]]:
+        contacts: List[Dict[str, Any]] = []
+        if not raw_content:
+            return contacts
+
+        branch_pattern = re.compile(
+            r'\{name:"(?P<name>[A-Za-z][A-Za-z\s]+)",phone:"(?P<phone>\d{8,15})"\}',
+            flags=re.IGNORECASE,
+        )
+        for match in branch_pattern.finditer(raw_content):
+            name = re.sub(r"\s+", " ", str(match.group("name") or "")).strip()
+            phone = self._normalize_phone(match.group("phone"))
+            if not name or not phone:
+                continue
+            contacts.append(
+                {
+                    "name": name,
+                    "phone": phone,
+                    "source": "website_asset",
+                }
+            )
+
+        deduped: List[Dict[str, Any]] = []
+        seen = set()
+        for contact in contacts:
+            key = (str(contact.get("name") or "").lower(), str(contact.get("phone") or ""))
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(contact)
+        return deduped
+
+    def _search_people_profiles(
+        self,
+        *,
+        business_name: str,
+        location: str,
+        candidate_names: Iterable[Optional[str]],
+        website: Optional[str] = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        results: Dict[str, Dict[str, Any]] = {}
+        website_host = ""
+        if website:
+            parsed = urlparse(website)
+            website_host = (parsed.netloc or "").lower().removeprefix("www.")
+
+        filtered_names = []
+        for candidate_name in candidate_names:
+            name = self._normalize_person_name(candidate_name)
+            if name and self._is_plausible_person_name(name) and name not in filtered_names:
+                filtered_names.append(name)
+
+        for name in filtered_names[:4]:
+            aggregated = results.setdefault(name.lower(), {"name": name, "phones": [], "emails": []})
+            queries = [
+                f'"{name}" "{business_name}" linkedin {location}'.strip(),
+                f'"{name}" "{business_name}" dermatologist {location}'.strip(),
+            ]
+            for query in queries:
+                for result in self._fetch_search_results(query, max_results=5):
+                    url = str(result.get("url") or "")
+                    title = str(result.get("title") or "")
+                    snippet = str(result.get("snippet") or "")
+                    haystack = " ".join([title, snippet])
+                    if "linkedin.com/" in url.lower() and not aggregated.get("linkedin"):
+                        aggregated["linkedin"] = url
+                    if website_host and website_host in url.lower():
+                        aggregated.setdefault("source_urls", [])
+                        if url not in aggregated["source_urls"]:
+                            aggregated["source_urls"].append(url)
+                    if any(host in url.lower() for host in PUBLIC_DIRECTORY_HOST_HINTS):
+                        aggregated.setdefault("source_urls", [])
+                        if url not in aggregated["source_urls"]:
+                            aggregated["source_urls"].append(url)
+                    for email in self._validate_emails(
+                        re.findall(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", haystack)
+                    ):
+                        if email not in aggregated["emails"]:
+                            aggregated["emails"].append(email)
+                    for phone in self._dedupe_phones(re.findall(r"(?:\+?\d[\d\s().-]{8,}\d)", haystack)):
+                        if phone not in aggregated["phones"]:
+                            aggregated["phones"].append(phone)
+
+        return results
+
+    def _dedupe_phones(self, values: Iterable[Optional[str]]) -> List[str]:
+        deduped: List[str] = []
+        seen = set()
+        for value in values:
+            normalized = self._normalize_phone(value)
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            deduped.append(normalized)
+        return deduped
+
+    def _dedupe_strings(self, values: Iterable[Optional[str]]) -> List[str]:
+        deduped: List[str] = []
+        seen = set()
+        for value in values:
+            normalized = str(value or "").strip()
+            if not normalized or normalized.lower() in seen:
+                continue
+            seen.add(normalized.lower())
+            deduped.append(normalized)
+        return deduped
+
+    def _dedupe_candidates(self, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        deduped: List[Dict[str, Any]] = []
+        seen = set()
+        for candidate in candidates:
+            name = str(candidate.get("name") or "").strip().lower()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            deduped.append(candidate)
+        return deduped
+
     def _extract_social_profiles(self, raw_content: str) -> Dict[str, List[str]]:
         """Extract obvious social/profile URLs from scraped website content."""
         social_patterns = {
@@ -604,6 +1027,15 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         significant_tokens = [token for token in tokens if len(token) > 1]
         if len(significant_tokens) < 2:
             return False
+        original_tokens = [token for token in re.split(r"\s+", value.strip()) if token]
+        for token in original_tokens:
+            cleaned = token.strip(".-")
+            if len(cleaned) == 1:
+                continue
+            if cleaned.isupper():
+                continue
+            if not cleaned[:1].isupper():
+                return False
         if self._looks_like_business_label(value):
             return False
         return True
@@ -799,6 +1231,34 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
                 services.append(label)
         return services[:6]
 
+    def _persist_people_intelligence(
+        self,
+        state: LeadGraphState,
+        people_intelligence: Dict[str, Any],
+    ) -> None:
+        lead_id = state.get("lead_id") or (state.get("lead") or {}).get("lead_id")
+        if not lead_id or not people_intelligence:
+            return
+
+        try:
+            lead_uuid = UUID(str(lead_id))
+        except Exception:
+            return
+
+        existing_state = self._db.get_lead_state(lead_uuid) or {}
+        metadata = dict(existing_state.get("metadata") or {})
+        metadata["people_intelligence"] = people_intelligence
+        self._db.save_lead_state(
+            {
+                "lead_id": str(lead_uuid),
+                "current_stage": state.get("current_stage") or existing_state.get("current_stage") or "enrichment",
+                "last_node": state.get("last_node") or existing_state.get("last_node") or self.name,
+                "last_error": existing_state.get("last_error"),
+                "retry_count": existing_state.get("retry_count", 0),
+                "metadata": metadata,
+            }
+        )
+
     def _extract_first_link(self, html: str, keywords: List[str]) -> Optional[str]:
         """Return the first href matching any keyword."""
         href_matches = re.findall(r'href=["\']([^"\']+)["\']', html, re.IGNORECASE)
@@ -986,7 +1446,9 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         """
         if not phone:
             return None
-        
+
+        raw_value = str(phone).strip()
+
         # Remove all non-digit characters
         digits = re.sub(r'\D', '', phone)
         
@@ -994,15 +1456,27 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         if len(digits) == 10:
             if digits[0] in {"6", "7", "8", "9"}:
                 return f"+91{digits}"
-            return f"+1{digits}"
+            if re.search(r"[\s().-]", raw_value) and digits[0] in {"2", "3", "4", "5", "6", "7", "8", "9"}:
+                return f"+1{digits}"
+            return None
         elif len(digits) == 12 and digits.startswith("91"):
             return f"+{digits}"
+        elif len(digits) == 11 and digits.startswith("0") and digits[1] in {"6", "7", "8", "9"}:
+            return f"+91{digits[1:]}"
         elif len(digits) == 11 and digits.startswith('1'):
-            return f"+{digits}"
-        elif len(digits) > 10:
+            if raw_value.startswith("+1") or re.search(r"[\s().-]", raw_value):
+                return f"+{digits}"
+            return None
+        elif len(digits) == 13 and digits.startswith("091"):
+            return f"+{digits[1:]}"
+        elif 10 < len(digits) <= 13 and raw_value.startswith("+"):
             return f"+{digits}"
         
         return None
+
+    def _extract_phone_candidates(self, raw_content: str) -> List[str]:
+        matches = re.findall(r"(?:\+?\d[\d\s().-]{7,16}\d)", raw_content or "")
+        return self._dedupe_phones(matches)
     
     def _validate_emails(self, emails: List[str]) -> List[str]:
         """

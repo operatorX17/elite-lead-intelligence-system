@@ -415,7 +415,11 @@ function getContactIntelligence(
     signalFacts?.decision_maker_name || agentContext.decision_maker_name || null
   );
   const decisionMakerLinkedin =
-    signalFacts?.decision_maker_linkedin || agentContext.decision_maker_linkedin || null;
+    signalFacts?.decision_maker_linkedin ||
+    signalFacts?.best_contact_linkedin ||
+    agentContext.decision_maker_linkedin ||
+    agentContext.best_contact_linkedin ||
+    null;
   const decisionMakerRole = decisionMakerName
     ? signalFacts?.decision_maker_role || agentContext.decision_maker_role || null
     : null;
@@ -432,6 +436,11 @@ function getContactIntelligence(
     signalFacts?.best_contact_channel || agentContext.best_contact_channel || null;
   const bestContactReason = signalFacts?.best_contact_reason || agentContext.best_contact_reason || null;
   const recommendedOffer = agentContext.recommended_offer || null;
+  const doctorNames = signalFacts?.doctor_names || [];
+  const decisionMakerCandidates =
+    signalFacts?.decision_maker_candidates || agentContext.decision_maker_candidates || [];
+  const branchContacts = signalFacts?.branch_contacts || agentContext.branch_contacts || [];
+  const contactEvidence = signalFacts?.contact_evidence || agentContext.contact_evidence || [];
 
   return {
     decisionMakerName,
@@ -444,13 +453,19 @@ function getContactIntelligence(
     bestContactChannel,
     bestContactReason,
     recommendedOffer,
+    doctorNames,
+    decisionMakerCandidates,
+    branchContacts,
+    contactEvidence,
     hasAny: Boolean(
       decisionMakerName ||
         decisionMakerLinkedin ||
         bestContactPhone ||
         bestContactEmail ||
         bestContactChannel ||
-        recommendedOffer
+        recommendedOffer ||
+        doctorNames.length ||
+        decisionMakerCandidates.length
     ),
   };
 }
@@ -1450,9 +1465,42 @@ function LeadListContent({
                         </a>
                       </div>
                     )}
+                    {!!contactIntel.decisionMakerCandidates.length && (
+                      <div className="rounded-md bg-zinc-100 p-2 dark:bg-zinc-900">
+                        <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Likely contacts</div>
+                        <div className="mt-2 space-y-1 text-xs">
+                          {contactIntel.decisionMakerCandidates.slice(0, 4).map((candidate, index) => (
+                            <div key={`candidate-${index}`} className="rounded border border-zinc-200 px-2 py-1 dark:border-zinc-800">
+                              <div className="font-medium">{String(candidate.name || "Unknown contact")}</div>
+                              <div className="text-zinc-500 dark:text-zinc-400">
+                                {[candidate.role, candidate.clinic].filter(Boolean).join(" | ") || "decision-maker candidate"}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {!!contactIntel.branchContacts.length && (
+                      <div className="rounded-md bg-zinc-100 p-2 dark:bg-zinc-900">
+                        <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Branch phones</div>
+                        <div className="mt-2 space-y-1 text-xs">
+                          {contactIntel.branchContacts.slice(0, 4).map((contact, index) => (
+                            <div key={`branch-contact-${index}`} className="rounded border border-zinc-200 px-2 py-1 dark:border-zinc-800">
+                              <div className="font-medium">{String(contact.name || "Clinic branch")}</div>
+                              <div className="text-zinc-500 dark:text-zinc-400">{String(contact.phone || "-")}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     {(contactIntel.bestContactReason || contactIntel.recommendedOffer || contactIntel.decisionMakerSource) && (
                       <div className="rounded-md bg-zinc-100 p-2 text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
                         {contactIntel.bestContactReason || contactIntel.recommendedOffer || contactIntel.decisionMakerSource}
+                      </div>
+                    )}
+                    {!!contactIntel.contactEvidence.length && (
+                      <div className="rounded-md bg-zinc-100 p-2 text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
+                        {contactIntel.contactEvidence.slice(0, 3).join(" | ")}
                       </div>
                     )}
                   </div>
@@ -1477,6 +1525,11 @@ function LeadListContent({
                   <div className="rounded-md bg-zinc-100 p-2 dark:bg-zinc-900">
                     <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Doctors</div>
                     <div className="mt-1">{signalFacts.doctor_count ?? 0}</div>
+                    {!!contactIntel.doctorNames.length && (
+                      <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                        {contactIntel.doctorNames.slice(0, 4).join(", ")}
+                      </div>
+                    )}
                   </div>
                   <div className="rounded-md bg-zinc-100 p-2 dark:bg-zinc-900">
                     <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Locations</div>

@@ -285,6 +285,8 @@ export function formatLeadForClipboard(
   const bestContactReason =
     signalFacts?.best_contact_reason || agentContext.best_contact_reason || null;
   const recommendedOffer = agentContext.recommended_offer || null;
+  const likelyContacts = signalFacts?.decision_maker_candidates || agentContext.decision_maker_candidates || [];
+  const branchContacts = signalFacts?.branch_contacts || agentContext.branch_contacts || [];
   const topIssue = signalFacts?.top_issue || guidance.top_issue || null;
   const nextBestAction =
     signalFacts?.next_best_action || guidance.next_best_action || null;
@@ -327,6 +329,33 @@ export function formatLeadForClipboard(
 
   if (contactLines.length) {
     sections.push(`Contacts\n${contactLines.join("\n")}`);
+  }
+
+  if (likelyContacts.length) {
+    sections.push(
+      `Likely contacts\n${likelyContacts
+        .slice(0, 4)
+        .map((candidate) =>
+          joinNonEmpty([
+            String(candidate.name || "Unknown contact"),
+            candidate.role ? `role: ${candidate.role}` : null,
+            candidate.clinic ? `clinic: ${candidate.clinic}` : null,
+            candidate.linkedin ? `linkedin: ${candidate.linkedin}` : null,
+            candidate.phones?.length ? `phones: ${candidate.phones.join(", ")}` : null,
+            candidate.emails?.length ? `emails: ${candidate.emails.join(", ")}` : null,
+          ])
+        )
+        .join("\n")}`
+    );
+  }
+
+  if (branchContacts.length) {
+    sections.push(
+      `Branch phones\n${branchContacts
+        .slice(0, 4)
+        .map((contact) => joinNonEmpty([String(contact.name || "Clinic branch"), contact.phone || null]))
+        .join("\n")}`
+    );
   }
 
   if (bestContactReason) {
