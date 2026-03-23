@@ -87,9 +87,13 @@ class OutreachAgent(BaseAgent):
         enrichment = state.get("enrichment", {})
         scoring = state.get("scoring", {})
         proof = state.get("proof", {})
+        metadata = state.get("metadata", {}) or {}
+        analysis_bundle = metadata.get("intelligence") or metadata.get("analysis_bundle") or {}
+        signal_facts = metadata.get("signal_facts") or analysis_bundle.get("facts") or {}
         
         # Get tier
         tier = scoring.get("lead_tier", "B") if scoring else "B"
+        channel = (state.get("metadata", {}).get("channel") or "email").lower()
         
         # Generate personalization data
         personalization = self._create_personalization(lead, enrichment, proof)
@@ -102,6 +106,9 @@ class OutreachAgent(BaseAgent):
             lead, enrichment, proof, personalization,
             variant="A",
             tier=tier,
+            channel=channel,
+            signal_facts=signal_facts,
+            analysis_bundle=analysis_bundle,
         )
         messages.append(variant_a)
         
@@ -110,6 +117,9 @@ class OutreachAgent(BaseAgent):
             lead, enrichment, proof, personalization,
             variant="B",
             tier=tier,
+            channel=channel,
+            signal_facts=signal_facts,
+            analysis_bundle=analysis_bundle,
         )
         messages.append(variant_b)
         
@@ -164,16 +174,31 @@ class OutreachAgent(BaseAgent):
         personalization: Dict[str, Any],
         variant: str,
         tier: str,
+        channel: str,
+        signal_facts: Optional[Dict[str, Any]] = None,
+        analysis_bundle: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Generate outreach message.
         Requirements: 8.1-8.4, 8.6
         """
         # Get observation (evidence from proof pack)
-        observation = self._generate_observation(lead, proof, variant)
+        observation = self._generate_observation(
+            lead,
+            proof,
+            variant,
+            signal_facts,
+            analysis_bundle,
+        )
         
         # Get impact (money/loss framing)
-        impact = self._generate_impact(lead, proof, variant)
+        impact = self._generate_impact(
+            lead,
+            proof,
+            variant,
+            signal_facts,
+            analysis_bundle,
+        )
         
         # Get offer (done-for-you solution)
         offer = self._generate_offer(lead, tier, variant)
@@ -208,14 +233,52 @@ class OutreachAgent(BaseAgent):
         return {
             "outreach_id": str(uuid4()),
             "lead_id": lead.get("lead_id"),
-            "channel": "EMAIL",
+            "channel": channel,
             "variant": variant,
             "subject": subject,
             "body": email_body,
             "attachments": attachments,
             "personalization": personalization,
-            "status": "PENDING",
+            "status": "pending",
             "requires_approval": True,
+        }
+
+    def _extract_proof_truth(
+        self,
+        proof: Dict[str, Any],
+        signal_facts: Optional[Dict[str, Any]] = None,
+        analysis_bundle: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        extraction = (proof or {}).get("extraction_data") or {}
+        analysis_bundle = analysis_bundle or {}
+        guidance = analysis_bundle.get("guidance") or {}
+        signal_facts = signal_facts or analysis_bundle.get("facts") or {}
+        phone_visible = signal_facts.get("phone_visible")
+        if phone_visible is None:
+            phone_visible = str(extraction.get("phone_visibility") or "").lower() in {
+                "hero",
+                "visible",
+                "above_fold",
+                "below_fold",
+            } or bool(extraction.get("phone_numbers"))
+        has_booking = signal_facts.get("booking_detected")
+        if has_booking is None:
+            has_booking = bool(extraction.get("booking_link"))
+        has_whatsapp = signal_facts.get("whatsapp_detected")
+        if has_whatsapp is None:
+            has_whatsapp = extraction.get("chat_widget") == "whatsapp" or bool(
+                extraction.get("whatsapp_target")
+            )
+        form_fields = extraction.get("form_field_count")
+        return {
+            "phone_visible": bool(phone_visible),
+            "has_booking": bool(has_booking),
+            "has_whatsapp": bool(has_whatsapp),
+            "form_fields": form_fields if isinstance(form_fields, int) else None,
+            "booking_link": signal_facts.get("booking_target") or extraction.get("booking_link"),
+            "whatsapp_target": signal_facts.get("whatsapp_target") or extraction.get("whatsapp_target"),
+            "top_issue": signal_facts.get("top_issue") or guidance.get("top_issue"),
+            "next_best_action": signal_facts.get("next_best_action") or guidance.get("next_best_action"),
         }
     
     def _generate_observation(
@@ -223,54 +286,112 @@ class OutreachAgent(BaseAgent):
         lead: Dict[str, Any],
         proof: Dict[str, Any],
         variant: str,
+        signal_facts: Optional[Dict[str, Any]] = None,
+        analysis_bundle: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         Generate observation section (evidence).
         Requirements: 8.3
         """
-        business_name = lead.get("business_name", "your business")
-        
+        business_name = (
+            lead.get("business_name")
+            or lead.get("company_name")
+            or "your business"
+        )
+        truth = self._extract_proof_truth(proof, signal_facts, analysis_bundle)
+
+        if truth["phone_visible"] and truth["has_booking"] and truth["has_whatsapp"]:
+            if variant == "A":
+                return (
+                    f"I reviewed {business_name}'s site and confirmed you already have a visible "
+                    "phone path, booking flow, and WhatsApp capture in place."
+                )
+            return (
+                f"While looking at your website, I confirmed your core contact paths are live: "
+                "phone, booking, and WhatsApp."
+            )
+
+        if truth.get("top_issue") == "WhatsApp capture is missing":
+            if variant == "A":
+                return f"I reviewed {business_name}'s site and noticed there is no clear WhatsApp capture path."
+            return f"While looking at your website, I noticed a likely lead leak: no clear WhatsApp path for visitors."
+
+        if truth.get("top_issue") == "Booking flow is weak":
+            if variant == "A":
+                return f"I reviewed {business_name}'s site and noticed the booking path still looks weak."
+            return f"While looking at your website, I noticed the booking path could be stronger for ready-to-book visitors."
+
         if proof and proof.get("audit_bullets"):
             for bullet in proof["audit_bullets"]:
                 if bullet.get("type") == "leak" and bullet.get("evidence"):
                     evidence = bullet["evidence"].lower()
                     if variant == "A":
                         return f"I was reviewing {business_name}'s lead capture and noticed {evidence}."
-                    else:
-                        return f"While looking at your website, I spotted something that might be costing you leads: {evidence}."
-        
-        # Fallback observation
+                    return f"While looking at your website, I spotted something that might be costing you leads: {evidence}."
+
         if variant == "A":
-            return f"I was reviewing {business_name}'s online presence and noticed some opportunities to capture more leads."
-        else:
-            return f"I came across {business_name} and noticed your lead capture could be optimized."
+            return (
+                f"I reviewed {business_name}'s site and noticed there is still room to improve "
+                "how efficiently visitors convert into booked conversations."
+            )
+        return (
+            f"I came across {business_name} and noticed your site could convert more of the traffic "
+            "you already earn."
+        )
     
     def _generate_impact(
         self,
         lead: Dict[str, Any],
         proof: Dict[str, Any],
         variant: str,
+        signal_facts: Optional[Dict[str, Any]] = None,
+        analysis_bundle: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         Generate impact section (money/loss framing).
         Requirements: 8.3
         """
         category = lead.get("category", "service")
-        
+        truth = self._extract_proof_truth(proof, signal_facts, analysis_bundle)
+
+        if truth["phone_visible"] and truth["has_booking"] and truth["has_whatsapp"]:
+            if variant == "A":
+                return (
+                    f"For high-intent {category} traffic, the upside is usually in conversion rate "
+                    "optimization and faster lead handling rather than adding more contact options."
+                )
+            return (
+                "When the basic contact paths already exist, the next gain usually comes from making "
+                "those paths convert more visitors into booked appointments."
+            )
+
+        if truth.get("top_issue") == "WhatsApp capture is missing":
+            if variant == "A":
+                return (
+                    f"For high-intent {category} traffic, missing WhatsApp usually means ready prospects "
+                    "drop before they ever start a conversation."
+                )
+            return "For businesses like yours, a missing WhatsApp path usually means warm intent leaks before booking starts."
+
+        if truth.get("top_issue") == "Booking flow is weak":
+            if variant == "A":
+                return (
+                    f"For high-intent {category} traffic, a weak booking flow usually means ready visitors stall "
+                    "before they convert into confirmed appointments."
+                )
+            return "When booking is weak, a lot of purchase intent never turns into a real appointment."
+
         if proof and proof.get("audit_bullets"):
             for bullet in proof["audit_bullets"]:
                 if bullet.get("type") == "upside" and bullet.get("estimate"):
                     estimate = bullet["estimate"].lower()
                     if variant == "A":
                         return f"Based on similar {category} businesses, this typically means you could {estimate}."
-                    else:
-                        return f"For businesses like yours, fixing this usually helps {estimate}."
-        
-        # Fallback impact
+                    return f"For businesses like yours, fixing this usually helps {estimate}."
+
         if variant == "A":
             return "Based on similar businesses, optimizing lead capture typically recovers 15-25% of missed opportunities."
-        else:
-            return "Most businesses in your space see a 15-25% improvement after optimizing their lead capture."
+        return "Most businesses in your space see a 15-25% improvement after optimizing their lead capture."
     
     def _generate_offer(
         self,

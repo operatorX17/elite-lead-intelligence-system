@@ -51,7 +51,9 @@ export function getLanguageModel(modelId: string) {
     const openRouterModelId = effectiveModelId.replace(THINKING_SUFFIX_REGEX, "");
 
     return wrapLanguageModel({
-      model: openrouter(openRouterModelId),
+      // OpenRouter's provider package still reports the older model
+      // interface version, but the wrapped model works correctly here.
+      model: openrouter(openRouterModelId) as any,
       middleware: extractReasoningMiddleware({ tagName: "thinking" }),
     });
   }

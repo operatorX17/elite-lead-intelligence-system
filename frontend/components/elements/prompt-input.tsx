@@ -46,6 +46,7 @@ export const PromptInputTextarea = ({
   maxHeight = 164,
   disableAutoResize = false,
   resizeOnNewLinesOnly = false,
+  style,
   ...props
 }: PromptInputTextareaProps) => {
   const handleKeyDown: KeyboardEventHandler<HTMLTextAreaElement> = (e) => {
@@ -72,7 +73,7 @@ export const PromptInputTextarea = ({
   return (
     <Textarea
       className={cn(
-        "w-full resize-none rounded-none border-none p-3 shadow-none outline-hidden ring-0",
+        "w-full !min-h-0 resize-none rounded-none border-none p-3 shadow-none outline-hidden ring-0",
         disableAutoResize
           ? "field-sizing-fixed"
           : resizeOnNewLinesOnly
@@ -88,6 +89,11 @@ export const PromptInputTextarea = ({
       }}
       onKeyDown={handleKeyDown}
       placeholder={placeholder}
+      style={{
+        ...style,
+        minHeight,
+        maxHeight,
+      }}
       {...props}
     />
   );

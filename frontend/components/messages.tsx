@@ -6,8 +6,8 @@ import { useMessages } from "@/hooks/use-messages";
 import type { Vote } from "@/lib/db/schema";
 import type { ChatMessage } from "@/lib/types";
 import { useDataStream } from "./data-stream-provider";
-import { ZRAIGreeting } from "./zrai-greeting";
 import { PreviewMessage, ThinkingMessage } from "./message";
+import { ZRAIGreeting } from "./zrai-greeting";
 
 type MessagesProps = {
   addToolApprovalResponse: UseChatHelpers<ChatMessage>["addToolApprovalResponse"];
@@ -43,7 +43,7 @@ function PureMessages({
     status,
   });
 
-  useDataStream();
+  const { zraiActivityEvents } = useDataStream();
 
   return (
     <div className="relative flex-1">
@@ -58,6 +58,7 @@ function PureMessages({
             <PreviewMessage
               addToolApprovalResponse={addToolApprovalResponse}
               chatId={chatId}
+              isLatestMessage={index === messages.length - 1}
               isLoading={
                 status === "streaming" && messages.length - 1 === index
               }
@@ -82,7 +83,12 @@ function PureMessages({
               msg.parts?.some(
                 (part) => "state" in part && part.state === "approval-responded"
               )
-            ) && <ThinkingMessage />}
+            ) && (
+              <ThinkingMessage
+                detail="Reviewing the request, preparing the agent run, and waiting for the first streamed update."
+                events={zraiActivityEvents}
+              />
+            )}
 
           <div
             className="min-h-[24px] min-w-[24px] shrink-0"
@@ -108,10 +114,6 @@ function PureMessages({
 }
 
 export const Messages = memo(PureMessages, (prevProps, nextProps) => {
-  if (prevProps.isArtifactVisible && nextProps.isArtifactVisible) {
-    return true;
-  }
-
   if (prevProps.status !== nextProps.status) {
     return false;
   }

@@ -23,6 +23,7 @@ import {
   SidebarMenu,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { guestRegex } from "@/lib/constants";
 import type { Chat } from "@/lib/db/schema";
 import { fetcher } from "@/lib/utils";
 import { LoaderIcon } from "./icons";
@@ -101,6 +102,7 @@ export function SidebarHistory({ user }: { user: User | undefined }) {
   const { setOpenMobile } = useSidebar();
   const pathname = usePathname();
   const id = pathname?.startsWith("/chat/") ? pathname.split("/")[2] : null;
+  const isGuest = guestRegex.test(user?.email ?? "");
 
   const {
     data: paginatedChatHistories,
@@ -204,8 +206,22 @@ export function SidebarHistory({ user }: { user: User | undefined }) {
     return (
       <SidebarGroup>
         <SidebarGroupContent>
-          <div className="flex w-full flex-row items-center justify-center gap-2 px-2 text-sm text-zinc-500">
-            Your conversations will appear here once you start chatting!
+          <div className="space-y-2 px-2 text-sm text-zinc-500">
+            <div className="flex w-full flex-row items-center justify-center gap-2 text-center">
+              No saved chats are visible for this session yet.
+            </div>
+            {isGuest ? (
+              <div className="text-center text-xs text-zinc-500/80">
+                Guest history is tied to this browser session and host. If you
+                switch between <span className="font-medium">localhost</span>{" "}
+                and <span className="font-medium">127.0.0.1</span>, the old
+                chats will not appear here.
+              </div>
+            ) : (
+              <div className="text-center text-xs text-zinc-500/80">
+                Start a chat and it will appear here automatically.
+              </div>
+            )}
           </div>
         </SidebarGroupContent>
       </SidebarGroup>

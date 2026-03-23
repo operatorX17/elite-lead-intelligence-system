@@ -5,6 +5,8 @@ import { useSWRConfig } from "swr";
 import { useCopyToClipboard } from "usehooks-ts";
 import type { Vote } from "@/lib/db/schema";
 import type { ChatMessage } from "@/lib/types";
+import { formatArtifactPayloadForClipboard } from "@/lib/zrai/clipboard";
+import { normalizeMessageParts, sanitizeText } from "@/lib/utils";
 import { Action, Actions } from "./elements/actions";
 import { CopyIcon, PencilEditIcon, ThumbDownIcon, ThumbUpIcon } from "./icons";
 
@@ -28,19 +30,56 @@ export function PureMessageActions({
     return null;
   }
 
-  const textFromParts = message.parts
+  const normalizedParts = normalizeMessageParts(message.parts);
+
+  const textFromParts = normalizedParts
     ?.filter((part) => part.type === "text")
-    .map((part) => part.text)
+    .map((part) => sanitizeText(part.text))
+    .filter(Boolean)
     .join("\n")
     .trim();
 
+  const latestArtifactPart = [...normalizedParts].reverse().find((part) => {
+    if (!part || typeof part !== "object") {
+      return false;
+    }
+
+    const candidate = part as {
+      output?: { artifactTrigger?: { data?: unknown; kind?: string } };
+      state?: string;
+      type?: string;
+    };
+
+    return (
+      typeof candidate.type === "string" &&
+      candidate.type.startsWith("tool-") &&
+      candidate.state === "output-available" &&
+      typeof candidate.output?.artifactTrigger?.kind === "string"
+    );
+  }) as
+    | {
+        output?: { artifactTrigger?: { data?: unknown; kind?: string } };
+      }
+    | undefined;
+
+  const artifactText =
+    latestArtifactPart?.output?.artifactTrigger?.kind &&
+    latestArtifactPart.output.artifactTrigger.data
+      ? formatArtifactPayloadForClipboard(
+          latestArtifactPart.output.artifactTrigger.kind,
+          latestArtifactPart.output.artifactTrigger.data
+        )
+      : "";
+
   const handleCopy = async () => {
-    if (!textFromParts) {
+    const copyText = [textFromParts, artifactText].filter(Boolean).join("\n\n");
+
+    if (!copyText) {
       toast.error("There's no text to copy!");
       return;
     }
 
-    await copyToClipboard(textFromParts);
+    await copyToClipboard(copyText);
     toast.success("Copied to clipboard!");
   };
 

@@ -52,6 +52,9 @@ class LeadTier(str, Enum):
 class OutreachChannel(str, Enum):
     """Outreach channels."""
     EMAIL = "email"
+    LINKEDIN = "linkedin"
+    SMS = "sms"
+    WHATSAPP = "whatsapp"
     DM = "dm"
     FORM = "form"
 

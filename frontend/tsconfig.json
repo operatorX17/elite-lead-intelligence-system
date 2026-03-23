@@ -31,5 +31,12 @@
     "next.config.js",
     ".next/dev/types/**/*.ts"
   ],
-  "exclude": ["node_modules"]
+  "exclude": [
+    "node_modules",
+    ".next",
+    "ai-main",
+    "coverage",
+    "playwright-report",
+    "test-results"
+  ]
 }

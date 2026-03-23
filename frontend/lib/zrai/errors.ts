@@ -12,6 +12,7 @@ import type { ZRAIError } from './types';
 // ============================================================================
 
 export type ZRAISurface =
+  | 'health'
   | 'discover'
   | 'enrich'
   | 'intent'

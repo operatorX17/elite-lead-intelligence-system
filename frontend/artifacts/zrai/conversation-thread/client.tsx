@@ -9,6 +9,7 @@
 import { toast } from "sonner";
 import { Artifact } from "@/components/create-artifact";
 import { CopyIcon, RedoIcon, UndoIcon } from "@/components/icons";
+import { formatArtifactPayloadForClipboard } from "@/lib/zrai/clipboard";
 import type { ConversationMessage } from "@/lib/zrai/types";
 
 type ConversationThreadMetadata = {
@@ -192,9 +193,10 @@ export const conversationThreadArtifact = new Artifact<"conversation-thread", Co
       onClick: ({ content }) => {
         try {
           const data = JSON.parse(content);
-          const text = data.messages
-            .map((m: ConversationMessage) => `[${m.sender}] ${m.content}`)
-            .join('\n\n');
+          const text = formatArtifactPayloadForClipboard(
+            "conversation-thread",
+            data
+          );
           navigator.clipboard.writeText(text);
           toast.success("Conversation copied!");
         } catch {

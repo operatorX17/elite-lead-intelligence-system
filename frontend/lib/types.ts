@@ -9,6 +9,21 @@ import type { Suggestion } from "./db/schema";
 
 export type DataPart = { type: "append-message"; message: string };
 
+export type ZRAIStage = {
+  label: string;
+  state: "pending" | "active" | "complete" | "error";
+};
+
+export type ZRAIActivityEvent = {
+  tool: string;
+  title: string;
+  detail: string;
+  status: "running" | "complete" | "error";
+  timestamp: string;
+  stages: ZRAIStage[];
+  metrics?: Record<string, string | number | boolean | null>;
+};
+
 export const messageMetadataSchema = z.object({
   createdAt: z.string(),
 });
@@ -42,6 +57,7 @@ export type CustomUIDataTypes = {
   clear: null;
   finish: null;
   "chat-title": string;
+  "zrai-status": ZRAIActivityEvent;
 };
 
 export type ChatMessage = UIMessage<

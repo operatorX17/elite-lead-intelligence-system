@@ -32,6 +32,12 @@ import { getChatHistoryPaginationKey } from "./sidebar-history";
 import { toast } from "./toast";
 import type { VisibilityType } from "./visibility-selector";
 
+function getMessagesSignature(messages: ChatMessage[]) {
+  return messages
+    .map((message) => `${message.id}:${message.role}:${message.parts?.length ?? 0}`)
+    .join("|");
+}
+
 export function Chat({
   id,
   initialMessages,
@@ -66,12 +72,15 @@ export function Chat({
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
   }, [router]);
-  const { setDataStream } = useDataStream();
+  const { setDataStream, setZraiActivityEvents } = useDataStream();
 
   const [input, setInput] = useState<string>("");
   const [showCreditCardAlert, setShowCreditCardAlert] = useState(false);
   const [currentModelId, setCurrentModelId] = useState(initialChatModel);
   const currentModelIdRef = useRef(currentModelId);
+  const hydratedMessagesSignatureRef = useRef(
+    getMessagesSignature(initialMessages)
+  );
 
   useEffect(() => {
     currentModelIdRef.current = currentModelId;
@@ -194,6 +203,24 @@ export function Chat({
     resumeStream,
     setMessages,
   });
+
+  useEffect(() => {
+    const nextSignature = getMessagesSignature(initialMessages);
+
+    if (
+      status === "ready" &&
+      nextSignature !== hydratedMessagesSignatureRef.current
+    ) {
+      hydratedMessagesSignatureRef.current = nextSignature;
+      setMessages(initialMessages);
+    }
+  }, [initialMessages, setMessages, status]);
+
+  useEffect(() => {
+    if (status === "submitted") {
+      setZraiActivityEvents([]);
+    }
+  }, [setZraiActivityEvents, status]);
 
   return (
     <>

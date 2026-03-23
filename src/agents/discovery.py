@@ -140,6 +140,7 @@ class DiscoveryAgent(BaseAgent, CircuitBreakerMixin, RetryMixin):
         limit: int = 100,
         auto_process: bool = True,
         skip_duplicate_check: bool = False,
+        detailed_scrape: bool = False,
     ) -> List[Lead]:
         """
         Discover businesses from Google Maps.
@@ -160,6 +161,7 @@ class DiscoveryAgent(BaseAgent, CircuitBreakerMixin, RetryMixin):
                 keywords=keywords,
                 geo=geo,
                 limit=limit,
+                detailed=detailed_scrape,
             )
             
             leads = []
@@ -168,8 +170,11 @@ class DiscoveryAgent(BaseAgent, CircuitBreakerMixin, RetryMixin):
                 lead = self._parse_google_maps_result(raw)
                 if lead:
                     self._logger.info(f"Parsed lead: {lead.business_name}")
-                    # Skip duplicate check if requested
-                    if skip_duplicate_check or not self._is_duplicate(lead):
+                    is_duplicate = self._is_duplicate(lead)
+
+                    # Persist only new leads, but allow repeat discovery runs to
+                    # return already-known matches in the response payload.
+                    if not is_duplicate:
                         self._save_lead(lead)
                         
                         # Store raw Apify data in lead_state metadata for enrichment agent
@@ -193,9 +198,7 @@ class DiscoveryAgent(BaseAgent, CircuitBreakerMixin, RetryMixin):
                                 }
                             },
                         })
-                        
-                        leads.append(lead)
-                        
+
                         # Auto-process if enabled (100X upgrade)
                         if auto_process:
                             try:
@@ -206,6 +209,9 @@ class DiscoveryAgent(BaseAgent, CircuitBreakerMixin, RetryMixin):
                                 )
                             except Exception as e:
                                 self._logger.warning(f"Auto-process failed for {lead.business_name}: {e}")
+
+                    if skip_duplicate_check or not is_duplicate:
+                        leads.append(lead)
             
             self._increment_usage("scraper")
             self._record_success("discovery")

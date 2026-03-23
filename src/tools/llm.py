@@ -7,6 +7,7 @@ from typing import Dict, Any, List, Optional, Union
 from abc import ABC, abstractmethod
 import logging
 import json
+import base64
 
 from src.config import load_config, LLMProvider
 
@@ -37,6 +38,16 @@ class BaseLLMClient(ABC):
     ) -> Dict[str, Any]:
         """Generate structured output matching schema."""
         pass
+
+    def generate_structured_from_images(
+        self,
+        prompt: str,
+        images: List[bytes],
+        schema: Dict[str, Any],
+        system_prompt: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Generate structured output from images when supported."""
+        return {}
 
 
 class GoogleLLMClient(BaseLLMClient):
@@ -152,6 +163,76 @@ Respond ONLY with the JSON, no other text.
             logger.debug(f"Response was: {response}")
             return {}
 
+    def generate_structured_from_images(
+        self,
+        prompt: str,
+        images: List[bytes],
+        schema: Dict[str, Any],
+        system_prompt: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Generate structured JSON from one or more images using Gemini."""
+        if not images:
+            return {}
+
+        schema_str = json.dumps(schema, indent=2)
+        full_prompt = f"""
+{prompt}
+
+You MUST respond with valid JSON matching this schema:
+{schema_str}
+
+Rules:
+- Infer only what is actually visible in the provided image(s).
+- If a field is not visually recoverable, use a conservative empty/default value.
+- Respond ONLY with JSON, no markdown or explanation.
+"""
+
+        parts: List[Dict[str, Any]] = []
+        if system_prompt:
+            parts.append({"text": f"System: {system_prompt}"})
+        parts.append({"text": full_prompt})
+        for image in images:
+            parts.append(
+                {
+                    "inlineData": {
+                        "mimeType": "image/png",
+                        "data": base64.b64encode(image).decode(),
+                    }
+                }
+            )
+
+        data = {
+            "contents": [{"role": "user", "parts": parts}],
+            "generationConfig": {
+                "temperature": 0.1,
+                "maxOutputTokens": 2048,
+            },
+        }
+
+        result = self._make_request(
+            f"/models/{self._model}:generateContent",
+            data,
+        )
+
+        response_text = ""
+        if "candidates" in result and result["candidates"]:
+            candidate_parts = result["candidates"][0].get("content", {}).get("parts", [])
+            response_text = "".join(part.get("text", "") for part in candidate_parts)
+
+        try:
+            response_text = response_text.strip()
+            if response_text.startswith("```json"):
+                response_text = response_text[7:]
+            if response_text.startswith("```"):
+                response_text = response_text[3:]
+            if response_text.endswith("```"):
+                response_text = response_text[:-3]
+            return json.loads(response_text.strip())
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse multimodal JSON response: {e}")
+            logger.debug(f"Multimodal response was: {response_text}")
+            return {}
+
 
 class OpenAILLMClient(BaseLLMClient):
     """OpenAI LLM client."""
@@ -241,6 +322,60 @@ class OpenAILLMClient(BaseLLMClient):
             except json.JSONDecodeError:
                 return {}
         
+        return {}
+
+    def generate_structured_from_images(
+        self,
+        prompt: str,
+        images: List[bytes],
+        schema: Dict[str, Any],
+        system_prompt: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Generate structured JSON from one or more images using OpenAI vision."""
+        messages = []
+
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+
+        content: List[Dict[str, Any]] = [{"type": "text", "text": f"""
+{prompt}
+
+You MUST respond with valid JSON matching this schema:
+{json.dumps(schema, indent=2)}
+
+Rules:
+- Infer only what is actually visible in the provided image(s).
+- If a field is not visually recoverable, use a conservative empty/default value.
+- Respond ONLY with JSON, no markdown or explanation.
+"""}]
+        for image in images:
+            content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/png;base64,{base64.b64encode(image).decode()}",
+                    },
+                }
+            )
+
+        messages.append({"role": "user", "content": content})
+
+        data = {
+            "model": self._model,
+            "messages": messages,
+            "temperature": 0.1,
+            "response_format": {"type": "json_object"},
+            "max_tokens": 2048,
+        }
+
+        result = self._make_request("/chat/completions", data)
+        if "choices" in result and result["choices"]:
+            content = result["choices"][0]["message"]["content"]
+            try:
+                return json.loads(content)
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse OpenAI multimodal JSON response: {e}")
+                logger.debug(f"OpenAI multimodal response was: {content}")
         return {}
 
 
@@ -605,6 +740,44 @@ class LLMClient:
     ) -> Dict[str, Any]:
         """Generate structured output."""
         return self._client.generate_structured(prompt, schema, system_prompt)
+
+    def generate_structured_from_images(
+        self,
+        prompt: str,
+        images: List[bytes],
+        schema: Dict[str, Any],
+        system_prompt: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Generate structured output from images when the provider supports it."""
+        try:
+            result = self._client.generate_structured_from_images(
+                prompt,
+                images,
+                schema,
+                system_prompt,
+            )
+            if result:
+                return result
+        except Exception as exc:
+            logger.warning("Primary multimodal LLM failed: %s", exc)
+
+        config = load_config()
+        if not config.llm.openai_api_key:
+            return {}
+        if isinstance(self._client, OpenAILLMClient):
+            return {}
+
+        try:
+            fallback_client = OpenAILLMClient(config.llm.openai_api_key)
+            return fallback_client.generate_structured_from_images(
+                prompt,
+                images,
+                schema,
+                system_prompt,
+            )
+        except Exception as exc:
+            logger.warning("OpenAI multimodal fallback failed: %s", exc)
+            return {}
 
 
 # Global client instance

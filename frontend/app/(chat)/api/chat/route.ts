@@ -23,25 +23,26 @@ import { requestSuggestions } from "@/lib/ai/tools/request-suggestions";
 import { updateDocument } from "@/lib/ai/tools/update-document";
 // ZRAI Tools
 import {
-  discoverLeads,
-  enrichLead,
   analyzeIntent,
-  generateProof,
-  scoreLeads,
-  draftOutreach,
-  sendOutreach,
-  handleConversation,
+  analyzeScreenshot,
   approveEscalation,
   checkGovernance,
+  discoverLeads,
+  draftOutreach,
+  enrichLead,
+  generateProof,
+  handleConversation,
+  importLeads,
   manageABTest,
   runPipeline,
-  importLeads,
-  analyzeScreenshot,
+  scoreLeads,
+  sendOutreach,
 } from "@/lib/ai/tools/zrai";
 import { isProductionEnvironment } from "@/lib/constants";
 import {
   createStreamId,
   deleteChatById,
+  ensureUserRecord,
   getChatById,
   getMessageCountByUserId,
   getMessagesByChatId,
@@ -57,9 +58,53 @@ import { convertToUIMessages, generateUUID } from "@/lib/utils";
 import { generateTitleFromUserMessage } from "../../actions";
 import { type PostRequestBody, postRequestBodySchema } from "./schema";
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 let globalStreamContext: ResumableStreamContext | null = null;
+
+function extractMessageText(parts?: ChatMessage["parts"]) {
+  return (
+    parts
+      ?.filter(
+        (
+          part
+        ): part is Extract<(typeof parts)[number], { type: "text"; text: string }> =>
+          part.type === "text" && typeof part.text === "string"
+      )
+      .map((part) => part.text.trim())
+      .filter(Boolean)
+      .join(" ")
+      .trim() ?? ""
+  );
+}
+
+function shouldPreferContextAnswer(
+  latestUserMessage: string,
+  uiMessages: ChatMessage[]
+) {
+  if (!latestUserMessage) {
+    return false;
+  }
+
+  const hasPriorConversationContext = uiMessages.length > 1;
+
+  if (!hasPriorConversationContext) {
+    return false;
+  }
+
+  const normalized = latestUserMessage.toLowerCase();
+
+  const explicitActionPattern =
+    /\b(discover|find|search|import|enrich|score|rerun|re-run|refresh|analy[sz]e|audit|generate proof|draft|send|process|run full|run pipeline|top 3|check governance|screenshot|scrape|fetch latest|update lead)\b/;
+  const followUpQuestionPattern =
+    /^(why|how|what|which|who|does|is|are|can|could|should|would|will|tell|explain|compare|summarize|so|then|and)\b/;
+
+  if (explicitActionPattern.test(normalized)) {
+    return false;
+  }
+
+  return followUpQuestionPattern.test(normalized) || normalized.includes("?");
+}
 
 export function getStreamContext() {
   if (!globalStreamContext) {
@@ -128,6 +173,11 @@ export async function POST(request: Request) {
         messagesFromDb = await getMessagesByChatId({ id });
       }
     } else if (message?.role === "user") {
+      await ensureUserRecord({
+        id: session.user.id,
+        email: session.user.email,
+      });
+
       // Save chat immediately with placeholder title
       await saveChat({
         id,
@@ -144,6 +194,12 @@ export async function POST(request: Request) {
     const uiMessages = isToolApprovalFlow
       ? (messages as ChatMessage[])
       : [...convertToUIMessages(messagesFromDb), message as ChatMessage];
+    const latestUserMessageText =
+      message?.role === "user" ? extractMessageText(message.parts) : "";
+    const preferContextAnswer = shouldPreferContextAnswer(
+      latestUserMessageText,
+      uiMessages
+    );
 
     const { longitude, latitude, city, country } = geolocation(request);
 
@@ -191,22 +247,33 @@ export async function POST(request: Request) {
 
         // Check if model supports tool calling
         const supportsTools = modelSupportsTools(selectedChatModel);
-        const shouldEnableTools = !isReasoningModel && supportsTools;
+        const shouldEnableTools =
+          !isReasoningModel && supportsTools && !preferContextAnswer;
 
         // Log model info for debugging
-        console.log(`[Chat API] Model: "${selectedChatModel}", supportsTools: ${supportsTools}, isReasoning: ${isReasoningModel}, toolsEnabled: ${shouldEnableTools}`);
+        console.log(
+          `[Chat API] Model: "${selectedChatModel}", supportsTools: ${supportsTools}, isReasoning: ${isReasoningModel}, preferContextAnswer: ${preferContextAnswer}, toolsEnabled: ${shouldEnableTools}`
+        );
 
         // Log warning if tools are disabled due to model limitations
         if (!isReasoningModel && !supportsTools) {
           console.warn(
             `[Chat API] Model "${selectedChatModel}" does not support tool calling. Tools disabled. ` +
-            `Recommended models: DeepSeek V3, Qwen 2.5, Claude 3.5 Sonnet, GPT-4o`
+              "Recommended models: DeepSeek V3, Qwen 2.5, Claude 3.5 Sonnet, GPT-4o"
           );
         }
 
         const result = streamText({
           model: getLanguageModel(selectedChatModel),
-          system: systemPrompt({ selectedChatModel, requestHints }),
+          system: systemPrompt({
+            selectedChatModel,
+            requestHints,
+            toolUseHints: {
+              latestUserMessage: latestUserMessageText,
+              hasPriorConversationContext: uiMessages.length > 1,
+              preferContextAnswer,
+            },
+          }),
           messages: await convertToModelMessages(uiMessages),
           stopWhen: stepCountIs(5),
           experimental_activeTools: shouldEnableTools
@@ -242,30 +309,32 @@ export async function POST(request: Request) {
                 },
               }
             : undefined,
-          tools: shouldEnableTools ? {
-            getWeather,
-            createDocument: createDocument({ session, dataStream }),
-            updateDocument: updateDocument({ session, dataStream }),
-            requestSuggestions: requestSuggestions({
-              session,
-              dataStream,
-            }),
-            // ZRAI Tools
-            discoverLeads,
-            enrichLead,
-            analyzeIntent,
-            generateProof,
-            scoreLeads,
-            draftOutreach,
-            sendOutreach,
-            handleConversation,
-            approveEscalation,
-            checkGovernance,
-            manageABTest,
-            runPipeline,
-            importLeads,
-            analyzeScreenshot,
-          } : {},
+          tools: shouldEnableTools
+            ? {
+                getWeather,
+                createDocument: createDocument({ session, dataStream }),
+                updateDocument: updateDocument({ session, dataStream }),
+                requestSuggestions: requestSuggestions({
+                  session,
+                  dataStream,
+                }),
+                // ZRAI Tools
+                discoverLeads: discoverLeads({ dataStream }),
+                enrichLead: enrichLead({ dataStream }),
+                analyzeIntent: analyzeIntent({ dataStream }),
+                generateProof: generateProof({ dataStream }),
+                scoreLeads: scoreLeads({ dataStream }),
+                draftOutreach: draftOutreach({ dataStream }),
+                sendOutreach,
+                handleConversation: handleConversation({ dataStream }),
+                approveEscalation,
+                checkGovernance: checkGovernance({ dataStream }),
+                manageABTest,
+                runPipeline: runPipeline({ dataStream }),
+                importLeads,
+                analyzeScreenshot,
+              }
+            : {},
           experimental_telemetry: {
             isEnabled: isProductionEnvironment,
             functionId: "stream-text",

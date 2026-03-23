@@ -10,6 +10,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Artifact } from "@/components/create-artifact";
 import { CopyIcon, RedoIcon, UndoIcon } from "@/components/icons";
+import { formatArtifactPayloadForClipboard } from "@/lib/zrai/clipboard";
 import type { Lead } from "@/lib/zrai/types";
 
 type LeadSheetMetadata = {
@@ -335,10 +336,18 @@ export const leadSheetArtifact = new Artifact<"lead-sheet", LeadSheetMetadata>({
     },
     {
       icon: <CopyIcon size={18} />,
-      description: "Copy as JSON",
+      description: "Copy lead sheet",
       onClick: ({ content }) => {
-        navigator.clipboard.writeText(content);
-        toast.success("Copied as JSON!");
+        try {
+          const parsed = JSON.parse(content);
+          navigator.clipboard.writeText(
+            formatArtifactPayloadForClipboard("lead-sheet", parsed)
+          );
+          toast.success("Lead sheet copied!");
+        } catch {
+          navigator.clipboard.writeText(content);
+          toast.success("Copied!");
+        }
       },
     },
   ],

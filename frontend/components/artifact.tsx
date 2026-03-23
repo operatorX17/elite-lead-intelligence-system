@@ -18,14 +18,14 @@ import { sheetArtifact } from "@/artifacts/sheet/client";
 import { textArtifact } from "@/artifacts/text/client";
 // ZRAI Artifacts
 import {
+  conversationThreadArtifact,
   leadCardArtifact,
   leadListArtifact,
+  leadSheetArtifact,
+  metricsDashboardArtifact,
+  outreachDraftArtifact,
   proofViewerArtifact,
   scoringDashboardArtifact,
-  outreachDraftArtifact,
-  conversationThreadArtifact,
-  metricsDashboardArtifact,
-  leadSheetArtifact,
 } from "@/artifacts/zrai";
 import { useArtifact } from "@/hooks/use-artifact";
 import type { Document, Vote } from "@/lib/db/schema";
@@ -56,6 +56,13 @@ export const artifactDefinitions = [
   leadSheetArtifact,
 ];
 export type ArtifactKind = (typeof artifactDefinitions)[number]["kind"];
+
+const persistedArtifactKinds: ArtifactKind[] = [
+  "text",
+  "code",
+  "image",
+  "sheet",
+];
 
 export type UIArtifact = {
   title: string;
@@ -114,7 +121,9 @@ function PureArtifact({
     isLoading: isDocumentsFetching,
     mutate: mutateDocuments,
   } = useSWR<Document[]>(
-    artifact.documentId !== "init" && artifact.status !== "streaming"
+    artifact.documentId !== "init" &&
+      artifact.status !== "streaming" &&
+      persistedArtifactKinds.includes(artifact.kind)
       ? `/api/document?id=${artifact.documentId}`
       : null,
     fetcher
@@ -264,6 +273,12 @@ function PureArtifact({
 
   const { width: windowWidth, height: windowHeight } = useWindowSize();
   const isMobile = windowWidth ? windowWidth < 768 : false;
+  const sidebarOffset = !isMobile && isSidebarOpen ? 256 : 0;
+  const availableDesktopWidth = windowWidth
+    ? Math.max(windowWidth - sidebarOffset, 0)
+    : 0;
+  const desktopArtifactWidth =
+    availableDesktopWidth > 400 ? availableDesktopWidth - 400 : 0;
 
   const artifactDefinition = artifactDefinitions.find(
     (definition) => definition.kind === artifact.kind
@@ -294,15 +309,15 @@ function PureArtifact({
         >
           {!isMobile && (
             <motion.div
-              animate={{ width: windowWidth, right: 0 }}
+              animate={{ width: availableDesktopWidth, left: sidebarOffset }}
               className="fixed h-dvh bg-background"
               exit={{
-                width: isSidebarOpen ? windowWidth - 256 : windowWidth,
-                right: 0,
+                width: availableDesktopWidth,
+                left: sidebarOffset,
               }}
               initial={{
-                width: isSidebarOpen ? windowWidth - 256 : windowWidth,
-                right: 0,
+                width: availableDesktopWidth,
+                left: sidebarOffset,
               }}
             />
           )}
@@ -321,6 +336,7 @@ function PureArtifact({
                 },
               }}
               className="relative h-dvh w-[400px] shrink-0 bg-muted dark:bg-background"
+              style={{ marginLeft: sidebarOffset }}
               exit={{
                 opacity: 0,
                 x: 0,
@@ -394,12 +410,10 @@ function PureArtifact({
                   }
                 : {
                     opacity: 1,
-                    x: 400,
+                    x: sidebarOffset + 400,
                     y: 0,
                     height: windowHeight,
-                    width: windowWidth
-                      ? windowWidth - 400
-                      : "calc(100dvw-400px)",
+                    width: desktopArtifactWidth,
                     borderRadius: 0,
                     transition: {
                       delay: 0,
@@ -503,14 +517,18 @@ function PureArtifact({
               <AnimatePresence>
                 {isCurrentVersion && (
                   <Toolbar
-                    artifactKind={artifact.kind}
-                    isToolbarVisible={isToolbarVisible}
-                    sendMessage={sendMessage}
-                    setIsToolbarVisible={setIsToolbarVisible}
-                    setMessages={setMessages}
-                    status={status}
-                    stop={stop}
-                  />
+                      artifactKind={artifact.kind}
+                      content={artifact.content}
+                      isToolbarVisible={isToolbarVisible}
+                      metadata={metadata}
+                      sendMessage={sendMessage}
+                      setArtifact={setArtifact}
+                      setMetadata={setMetadata}
+                      setIsToolbarVisible={setIsToolbarVisible}
+                      setMessages={setMessages}
+                      status={status}
+                      stop={stop}
+                    />
                 )}
               </AnimatePresence>
             </div>

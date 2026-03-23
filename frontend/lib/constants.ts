@@ -8,6 +8,8 @@ export const isTestEnvironment = Boolean(
     process.env.CI_PLAYWRIGHT
 );
 
-export const guestRegex = /^guest-\d+$/;
+export const ZRAI_GUEST_ID_COOKIE = "zrai_guest_id";
+
+export const guestRegex = /^guest-/;
 
 export const DUMMY_PASSWORD = generateDummyPassword();

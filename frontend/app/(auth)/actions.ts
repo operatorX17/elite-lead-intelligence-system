@@ -3,13 +3,16 @@
 import { z } from "zod";
 
 import { createUser, getUser } from "@/lib/db/queries";
-
 import { signIn } from "./auth";
 
 const authFormSchema = z.object({
   email: z.string().email(),
   password: z.string().min(6),
 });
+
+const ownerEmail = process.env.ZRAI_OWNER_EMAIL?.trim().toLowerCase();
+const ownerPassword = process.env.ZRAI_OWNER_PASSWORD?.trim();
+const isSingleUserMode = Boolean(ownerEmail && ownerPassword);
 
 export type LoginActionState = {
   status: "idle" | "in_progress" | "success" | "failed" | "invalid_data";
@@ -56,6 +59,10 @@ export const register = async (
   formData: FormData
 ): Promise<RegisterActionState> => {
   try {
+    if (isSingleUserMode) {
+      return { status: "failed" };
+    }
+
     const validatedData = authFormSchema.parse({
       email: formData.get("email"),
       password: formData.get("password"),

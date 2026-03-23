@@ -9,7 +9,12 @@ import time
 import json
 import requests
 import base64
+import re
 from datetime import datetime
+from io import BytesIO
+
+from PIL import Image
+from bs4 import BeautifulSoup
 
 from src.config import load_config
 
@@ -20,6 +25,7 @@ class SteelClient:
     """Steel.dev client wrapper - PRODUCTION READY"""
     
     BASE_URL = "https://api.steel.dev/v1"
+    PHONE_REGEX = r"(?:\+?\d[\d\s().-]{8,}\d)"
     
     def __init__(self, api_key: Optional[str] = None):
         config = load_config()
@@ -140,49 +146,98 @@ class SteelClient:
         
         try:
             # Use simple scrape endpoint
-            result = self.scrape(url, screenshot=True, extract_html=True, delay=3)
+            result = self.scrape(url, screenshot=True, extract_html=True, extract_markdown=True, delay=3)
             
             html = result.get("html", "")
-            screenshot_b64 = result.get("screenshot", "")
+            markdown = result.get("markdown", "")
+            rendered_content = "\n".join(part for part in [html, markdown] if part)
+            screenshot_payload = result.get("screenshot", "")
             
-            # Extract data from HTML
-            import re
-            
-            # Phone numbers
-            phone_regex = r'(\+?1?[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})'
-            phone_numbers = list(set(re.findall(phone_regex, html)))
-            
+            phone_numbers = self._extract_phone_numbers(rendered_content)
+
             # Forms (count <form> tags)
             form_count = html.count('<form')
-            
+
             # Booking keywords
             booking_keywords = ['book', 'schedule', 'appointment', 'reserve', 'consultation']
-            has_booking = any(kw in html.lower() for kw in booking_keywords)
-            
+            lowered_rendered = rendered_content.lower()
+            has_booking = any(kw in lowered_rendered for kw in booking_keywords)
+            booking_link = self._extract_first_link(rendered_content, booking_keywords)
+
             # CTA buttons
             cta_keywords = ['contact', 'call', 'email', 'get started', 'book now', 'schedule']
-            has_cta = any(kw in html.lower() for kw in cta_keywords)
-            
+            has_cta = any(kw in lowered_rendered for kw in cta_keywords)
+
+            # Chat / after-hours capture
+            chat_keywords = ['intercom', 'drift', 'zendesk', 'crisp', 'tawk', 'whatsapp', 'chat']
+            chat_widget = self._detect_chat_widget(rendered_content, chat_keywords)
+            whatsapp_target = self._extract_whatsapp_target(rendered_content)
+            if whatsapp_target and not chat_widget:
+                chat_widget = "whatsapp"
+            after_hours_capture = bool(chat_widget or booking_link)
+
             # Business hours
             hours_keywords = ['hours', 'open', 'monday', 'tuesday', 'am', 'pm']
-            has_hours = sum(1 for kw in hours_keywords if kw in html.lower()) >= 3
-            
+            has_hours = sum(1 for kw in hours_keywords if kw in lowered_rendered) >= 3
+
+            phone_visibility = "hero" if phone_numbers else "none"
+
             extraction_data = {
+                "phone_visibility": phone_visibility,
+                "form_field_count": form_count,
+                "booking_link": booking_link,
+                "chat_widget": chat_widget,
+                "whatsapp_target": whatsapp_target,
+                "after_hours_capture": after_hours_capture,
                 "phone_numbers": phone_numbers[:5],  # Top 5
                 "form_count": form_count,
                 "has_booking_link": has_booking,
                 "has_cta": has_cta,
                 "has_business_hours": has_hours,
-                "phone_visible": len(phone_numbers) > 0
+                "phone_visible": len(phone_numbers) > 0,
             }
             
-            # Decode screenshot
-            screenshot_bytes = base64.b64decode(screenshot_b64) if screenshot_b64 else None
+            # Decode screenshot payload. Steel may return either a raw base64
+            # string or an object containing the base64/url fields.
+            screenshot_b64 = screenshot_payload
+            screenshot_source_url = None
+            if isinstance(screenshot_payload, dict):
+                screenshot_b64 = (
+                    screenshot_payload.get("data")
+                    or screenshot_payload.get("base64")
+                    or screenshot_payload.get("content")
+                    or screenshot_payload.get("url")
+                    or ""
+                )
+                screenshot_source_url = screenshot_payload.get("url")
+
+            screenshot_bytes = None
+            if isinstance(screenshot_b64, str) and screenshot_b64:
+                if screenshot_b64.startswith("http://") or screenshot_b64.startswith("https://"):
+                    screenshot_source_url = screenshot_b64
+                    try:
+                        screenshot_response = requests.get(screenshot_b64, timeout=60)
+                        screenshot_response.raise_for_status()
+                        screenshot_bytes = screenshot_response.content
+                    except Exception as exc:
+                        logger.warning("Could not download Steel screenshot URL: %s", exc)
+                else:
+                    screenshot_bytes = base64.b64decode(screenshot_b64)
+
+            hero_screenshot, cta_screenshot = self._split_screenshot_regions(
+                screenshot_bytes
+            )
             
             return {
                 "url": url,
                 "extraction_data": extraction_data,
-                "hero_screenshot": screenshot_bytes,
+                "hero_screenshot": hero_screenshot,
+                "cta_screenshot": cta_screenshot,
+                "hero_screenshot_url": screenshot_source_url,
+                "cta_screenshot_url": screenshot_source_url,
+                "rendered_html": html,
+                "rendered_markdown": markdown,
+                "rendered_content": rendered_content,
                 "html_length": len(html),
                 "success": True,
                 "timestamp": datetime.utcnow().isoformat()
@@ -197,3 +252,187 @@ class SteelClient:
                 "timestamp": datetime.utcnow().isoformat()
             }
 
+    def scrape_page_bundle(self, url: str, delay: int = 3) -> Dict[str, Any]:
+        """
+        Fetch a rendered page bundle for deeper clinic analysis.
+
+        Returns rendered content plus a screenshot payload so downstream
+        extraction can fall back to vision when HTML/markdown is empty.
+        """
+        logger.info(f"Scraping page bundle: {url}")
+        result = self.scrape(
+            url,
+            screenshot=True,
+            extract_html=True,
+            extract_markdown=True,
+            delay=delay,
+        )
+        html = result.get("html", "") or ""
+        markdown = result.get("markdown", "") or ""
+        rendered_content = "\n".join(part for part in [html, markdown] if part)
+
+        screenshot_payload = result.get("screenshot", "")
+        screenshot_b64 = screenshot_payload
+        screenshot_source_url = None
+        if isinstance(screenshot_payload, dict):
+            screenshot_b64 = (
+                screenshot_payload.get("data")
+                or screenshot_payload.get("base64")
+                or screenshot_payload.get("content")
+                or screenshot_payload.get("url")
+                or ""
+            )
+            screenshot_source_url = screenshot_payload.get("url")
+
+        screenshot_bytes = None
+        if isinstance(screenshot_b64, str) and screenshot_b64:
+            if screenshot_b64.startswith("http://") or screenshot_b64.startswith("https://"):
+                screenshot_source_url = screenshot_b64
+                try:
+                    screenshot_response = requests.get(screenshot_b64, timeout=60)
+                    screenshot_response.raise_for_status()
+                    screenshot_bytes = screenshot_response.content
+                except Exception as exc:
+                    logger.warning("Could not download Steel screenshot URL: %s", exc)
+            else:
+                try:
+                    screenshot_bytes = base64.b64decode(screenshot_b64)
+                except Exception as exc:
+                    logger.warning("Could not decode Steel screenshot payload: %s", exc)
+
+        return {
+            "url": url,
+            "html": html,
+            "markdown": markdown,
+            "rendered_content": rendered_content,
+            "screenshot_bytes": screenshot_bytes,
+            "screenshot_url": screenshot_source_url,
+        }
+
+    def _split_screenshot_regions(
+        self, screenshot_bytes: Optional[bytes]
+    ) -> tuple[Optional[bytes], Optional[bytes]]:
+        """Derive hero and CTA crops from a full-page screenshot."""
+        if not screenshot_bytes:
+            return None, None
+
+        try:
+            image = Image.open(BytesIO(screenshot_bytes))
+            width, height = image.size
+
+            hero_box = (0, 0, width, max(height // 3, 1))
+            cta_top = min(max(height // 2, 0), max(height - 1, 0))
+            cta_box = (0, cta_top, width, height)
+
+            hero_image = image.crop(hero_box)
+            cta_image = image.crop(cta_box)
+
+            hero_buffer = BytesIO()
+            cta_buffer = BytesIO()
+            hero_image.save(hero_buffer, format="PNG")
+            cta_image.save(cta_buffer, format="PNG")
+            return hero_buffer.getvalue(), cta_buffer.getvalue()
+        except Exception as exc:
+            logger.warning("Failed to split screenshot regions: %s", exc)
+            return screenshot_bytes, screenshot_bytes
+
+    def _extract_first_link(self, html: str, keywords: List[str]) -> Optional[str]:
+        """Return the first href matching booking keywords."""
+        href_matches = re.findall(r'href=["\']([^"\']+)["\']', html, re.IGNORECASE)
+        for href in href_matches:
+            lowered = href.lower()
+            if any(keyword in lowered for keyword in keywords):
+                return href
+        return None
+
+    def _extract_whatsapp_target(self, html: str) -> Optional[str]:
+        """Return the WhatsApp target phone or link if one exists."""
+        href_matches = re.findall(r'href=["\']([^"\']+)["\']', html, re.IGNORECASE)
+        for href in href_matches:
+            lowered = href.lower()
+            if (
+                "wa.me/" in lowered
+                or "api.whatsapp.com" in lowered
+                or "whatsapp://send" in lowered
+                or "web.whatsapp.com/send" in lowered
+            ):
+                phone_match = re.search(
+                    r"(?:phone=|wa\.me/|send\?phone=)(\+?\d{7,15})",
+                    href,
+                    re.IGNORECASE,
+                )
+                if phone_match:
+                    return phone_match.group(1)
+                return href
+
+        try:
+            soup = BeautifulSoup(html, "html.parser")
+            visible_text = " ".join(soup.stripped_strings)
+            whatsapp_text_match = re.search(
+                r"whatsapp(?:\s*(?:us|now|chat|message|number|at|on))?[:\s-]*(\+?\d[\d\s().-]{7,}\d)",
+                visible_text,
+                re.IGNORECASE,
+            )
+            if whatsapp_text_match:
+                normalized = re.sub(r"[^\d+]", "", whatsapp_text_match.group(1))
+                if normalized:
+                    return normalized
+        except Exception:
+            pass
+
+        return None
+
+    def _extract_phone_numbers(self, html: str) -> List[str]:
+        """Extract international phone-like strings from visible text and link targets."""
+        text_candidates = [html]
+        try:
+            soup = BeautifulSoup(html, "html.parser")
+            visible_text = " ".join(soup.stripped_strings)
+            href_values = " ".join(
+                href
+                for href in (
+                    anchor.get("href", "")
+                    for anchor in soup.find_all("a", href=True)
+                )
+                if href
+            )
+            text_candidates = [visible_text, href_values]
+        except Exception as exc:
+            logger.warning("Failed to parse Steel HTML for phone extraction: %s", exc)
+
+        matches: List[str] = []
+        for candidate in text_candidates:
+            matches.extend(re.findall(self.PHONE_REGEX, candidate))
+        cleaned: List[str] = []
+        seen = set()
+
+        for raw in matches:
+            normalized = re.sub(r"[^\d+]", "", raw.strip())
+            digit_count = len(re.sub(r"\D", "", normalized))
+            if digit_count < 10 or digit_count > 15:
+                continue
+
+            if normalized.startswith("00"):
+                normalized = f"+{normalized[2:]}"
+            elif normalized.startswith("91") and not normalized.startswith("+91"):
+                normalized = f"+{normalized}"
+            elif normalized.startswith("1") and digit_count == 11 and not normalized.startswith("+1"):
+                normalized = f"+{normalized}"
+            elif not normalized.startswith("+") and digit_count == 10:
+                # Keep naked 10-digit numbers as-is to avoid assuming wrong country code.
+                normalized = normalized
+
+            dedupe_key = re.sub(r"\D", "", normalized)
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            cleaned.append(normalized)
+
+        return cleaned[:5]
+
+    def _detect_chat_widget(self, html: str, keywords: List[str]) -> Optional[str]:
+        lowered = html.lower()
+        for keyword in keywords:
+            if keyword in lowered:
+                return keyword
+        return None

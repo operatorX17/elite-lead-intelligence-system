@@ -48,6 +48,7 @@ class ApifyConfig(BaseModel):
     api_token: str = Field(..., description="Apify API token")
     max_concurrent_runs: int = Field(default=5, ge=1, le=20)
     default_timeout_secs: int = Field(default=300, ge=60, le=3600)
+    memory_mbytes: int = Field(default=1024, ge=128, le=8192)
 
 
 class SteelConfig(BaseModel):

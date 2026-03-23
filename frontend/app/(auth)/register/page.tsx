@@ -11,6 +11,9 @@ import { type RegisterActionState, register } from "../actions";
 
 export default function Page() {
   const router = useRouter();
+  const isSingleUserMode = Boolean(
+    process.env.NEXT_PUBLIC_ZRAI_SINGLE_USER_MODE === "true"
+  );
 
   const [email, setEmail] = useState("");
   const [isSuccessful, setIsSuccessful] = useState(false);
@@ -26,6 +29,11 @@ export default function Page() {
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: router and updateSession are stable refs
   useEffect(() => {
+    if (isSingleUserMode) {
+      router.replace("/login");
+      return;
+    }
+
     if (state.status === "user_exists") {
       toast({ type: "error", description: "Account already exists!" });
     } else if (state.status === "failed") {
@@ -42,7 +50,7 @@ export default function Page() {
       updateSession();
       router.refresh();
     }
-  }, [state.status]);
+  }, [isSingleUserMode, router, state.status, updateSession]);
 
   const handleSubmit = (formData: FormData) => {
     setEmail(formData.get("email") as string);
