@@ -11,14 +11,18 @@ import { toast } from "sonner";
 import { Artifact } from "@/components/create-artifact";
 import { CopyIcon, RedoIcon, UndoIcon } from "@/components/icons";
 import { useArtifact } from "@/hooks/use-artifact";
-import { formatLeadForClipboard, formatLeadListForClipboard } from "@/lib/zrai/clipboard";
+import {
+  buildLeadScoreNarrative,
+  buildRankedContactModel,
+  formatLeadForClipboard,
+  formatLeadListForClipboard,
+} from "@/lib/zrai/clipboard";
 import {
   fetchFounderIntelligence,
   mergeFounderIntelligenceIntoProcessedDetails,
   needsFounderIntelligence,
   type FounderIntelPayload,
 } from "@/lib/zrai/founder-intelligence";
-import { sanitizeDecisionMakerName } from "@/lib/zrai/people";
 import type { AnalysisBundle, Lead, SignalFacts } from "@/lib/zrai/types";
 import { getZRAILeadByIdEndpoint, ZRAI_ENDPOINTS } from "@/lib/zrai/constants";
 
@@ -413,65 +417,53 @@ function formatBestContactChannel(value: string | null | undefined) {
 }
 
 function getContactIntelligence(
+  lead: Lead | null,
+  processedDetails: ProcessedLeadDetails | null | undefined,
   signalFacts: SignalFacts | null,
   analysisBundle: AnalysisBundle | null
 ) {
-  const agentContext = analysisBundle?.agent_context || {};
-  const decisionMakerName = sanitizeDecisionMakerName(
-    signalFacts?.decision_maker_name || agentContext.decision_maker_name || null
-  );
-  const decisionMakerLinkedin =
-    signalFacts?.decision_maker_linkedin ||
-    signalFacts?.best_contact_linkedin ||
-    agentContext.decision_maker_linkedin ||
-    agentContext.best_contact_linkedin ||
-    null;
-  const decisionMakerRole = decisionMakerName
-    ? signalFacts?.decision_maker_role || agentContext.decision_maker_role || null
-    : null;
-  const decisionMakerSource = decisionMakerName
-    ? signalFacts?.decision_maker_source || agentContext.decision_maker_source || null
-    : null;
-  const decisionMakerConfidence =
-    decisionMakerName
-      ? signalFacts?.decision_maker_confidence ?? agentContext.decision_maker_confidence ?? null
-      : null;
-  const bestContactPhone = signalFacts?.best_contact_phone || agentContext.best_contact_phone || null;
-  const bestContactEmail = signalFacts?.best_contact_email || agentContext.best_contact_email || null;
-  const bestContactChannel =
-    signalFacts?.best_contact_channel || agentContext.best_contact_channel || null;
-  const bestContactReason = signalFacts?.best_contact_reason || agentContext.best_contact_reason || null;
-  const recommendedOffer = agentContext.recommended_offer || null;
+  const rankedContacts = buildRankedContactModel(lead, processedDetails || null);
+  const scoreNarrative = buildLeadScoreNarrative(lead, processedDetails || null);
+  const topContact = rankedContacts.topContact;
   const doctorNames = signalFacts?.doctor_names || [];
   const decisionMakerCandidates =
-    signalFacts?.decision_maker_candidates || agentContext.decision_maker_candidates || [];
-  const branchContacts = signalFacts?.branch_contacts || agentContext.branch_contacts || [];
-  const contactEvidence = signalFacts?.contact_evidence || agentContext.contact_evidence || [];
+    signalFacts?.decision_maker_candidates || analysisBundle?.agent_context?.decision_maker_candidates || [];
+  const branchContacts = signalFacts?.branch_contacts || analysisBundle?.agent_context?.branch_contacts || [];
 
   return {
-    decisionMakerName,
-    decisionMakerLinkedin,
-    decisionMakerRole,
-    decisionMakerSource,
-    decisionMakerConfidence,
-    bestContactPhone,
-    bestContactEmail,
-    bestContactChannel,
-    bestContactReason,
-    recommendedOffer,
+    ...rankedContacts,
+    scoreNarrative,
+    decisionMakerName: rankedContacts.decisionMakerName,
+    decisionMakerLinkedin:
+      rankedContacts.decisionMakerLinkedin || topContact?.linkedin || null,
+    decisionMakerRole:
+      rankedContacts.decisionMakerRole || topContact?.role || null,
+    decisionMakerSource:
+      rankedContacts.decisionMakerSource || topContact?.source || null,
+    decisionMakerConfidence:
+      rankedContacts.decisionMakerConfidence ?? topContact?.score ?? null,
+    bestContactPhone:
+      rankedContacts.bestContactPhone || topContact?.phone || null,
+    bestContactEmail:
+      rankedContacts.bestContactEmail || topContact?.email || null,
+    bestContactChannel:
+      rankedContacts.bestContactChannel || topContact?.channel || null,
+    bestContactReason:
+      rankedContacts.bestContactReason || topContact?.reason || null,
+    recommendedOffer: rankedContacts.recommendedOffer,
     doctorNames,
     decisionMakerCandidates,
     branchContacts,
-    contactEvidence,
     hasAny: Boolean(
-      decisionMakerName ||
-        decisionMakerLinkedin ||
-        bestContactPhone ||
-        bestContactEmail ||
-        bestContactChannel ||
-        recommendedOffer ||
-        doctorNames.length ||
-        decisionMakerCandidates.length
+      rankedContacts.topContact ||
+        rankedContacts.alternateContacts.length ||
+        rankedContacts.contactEvidence.length ||
+        rankedContacts.bestContactReason ||
+        scoreNarrative.whyThisLead ||
+        scoreNarrative.trustSummary ||
+        scoreNarrative.leakSummary ||
+        scoreNarrative.offerFitSummary ||
+        doctorNames.length
     ),
   };
 }
@@ -1229,7 +1221,13 @@ function LeadListContent({
     (inspectorLead ? processedDetails[inspectorLead.id] : undefined);
   const analysisBundle = getAnalysisBundle(inspectorLead, selectedLeadDetails);
   const signalFacts = getSignalFacts(inspectorLead, selectedLeadDetails);
-  const contactIntel = getContactIntelligence(signalFacts, analysisBundle);
+  const contactIntel = getContactIntelligence(
+    inspectorLead,
+    selectedLeadDetails,
+    signalFacts,
+    analysisBundle
+  );
+  const scoreNarrative = buildLeadScoreNarrative(inspectorLead, selectedLeadDetails);
   const proofExtraction = selectedLeadDetails?.proof?.extraction_data as Record<string, unknown> | undefined;
   const proofFacts = getCanonicalProofFacts(signalFacts, proofExtraction);
   const proofInsights = getCanonicalProofInsights(
@@ -1404,6 +1402,11 @@ function LeadListContent({
                   {getLeadSummary(inspectorLead)}
                 </div>
               )}
+              <div className="mt-2 text-sm text-zinc-500">
+                {scoreNarrative.whyThisLead ||
+                  scoreNarrative.nextBestAction ||
+                  "Ranked contacts, score context, and proof stay visible below."}
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-3 text-sm">
               <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
@@ -1481,6 +1484,29 @@ function LeadListContent({
                     <div className="mt-1">{scoreSnapshot.offerFit ?? "-"}</div>
                   </div>
                 </div>
+                <div className="mt-3 rounded-md bg-zinc-100 p-2 text-sm dark:bg-zinc-900">
+                  <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Score context</div>
+                  <div className="mt-2 space-y-1">
+                    <div>
+                      <span className="font-medium">Why pursue:</span>{" "}
+                      {scoreNarrative.whyThisLead || "No intent narrative captured yet."}
+                    </div>
+                    <div>
+                      <span className="font-medium">Trust:</span> {scoreNarrative.trustSummary}
+                    </div>
+                    <div>
+                      <span className="font-medium">Leak:</span> {scoreNarrative.leakSummary}
+                    </div>
+                    <div>
+                      <span className="font-medium">Offer fit:</span> {scoreNarrative.offerFitSummary}
+                    </div>
+                    {scoreNarrative.nextBestAction && (
+                      <div>
+                        <span className="font-medium">Next action:</span> {scoreNarrative.nextBestAction}
+                      </div>
+                    )}
+                  </div>
+                </div>
                 <div className="mt-3 space-y-2 text-sm">
                   <div className="rounded-md bg-zinc-100 p-2 dark:bg-zinc-900">
                     <span className="font-medium">Top issue:</span> {getTopIssue(signalFacts)}
@@ -1513,6 +1539,25 @@ function LeadListContent({
                         <div className="mt-1 break-all">{contactIntel.bestContactEmail || "-"}</div>
                       </div>
                     </div>
+                    {(contactIntel.decisionMakerSource || contactIntel.decisionMakerConfidence != null) && (
+                      <div className="rounded-md bg-zinc-100 p-2 dark:bg-zinc-900">
+                        <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Contact confidence</div>
+                        <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+                          {[
+                            contactIntel.decisionMakerSource ? `Source: ${contactIntel.decisionMakerSource}` : null,
+                            contactIntel.decisionMakerConfidence != null
+                              ? `Confidence: ${
+                                  contactIntel.decisionMakerConfidence <= 1
+                                    ? `${Math.round(contactIntel.decisionMakerConfidence * 100)}%`
+                                    : `${Math.round(contactIntel.decisionMakerConfidence)}/100`
+                                }`
+                              : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" | ")}
+                        </div>
+                      </div>
+                    )}
                     {contactIntel.decisionMakerLinkedin && (
                       <div className="rounded-md bg-zinc-100 p-2 dark:bg-zinc-900">
                         <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">LinkedIn</div>
@@ -1530,12 +1575,22 @@ function LeadListContent({
                       <div className="rounded-md bg-zinc-100 p-2 dark:bg-zinc-900">
                         <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Likely contacts</div>
                         <div className="mt-2 space-y-1 text-xs">
-                          {contactIntel.decisionMakerCandidates.slice(0, 4).map((candidate, index) => (
+                          {contactIntel.decisionMakerCandidates.slice(0, 6).map((candidate, index) => (
                             <div key={`candidate-${index}`} className="rounded border border-zinc-200 px-2 py-1 dark:border-zinc-800">
                               <div className="font-medium">{String(candidate.name || "Unknown contact")}</div>
                               <div className="text-zinc-500 dark:text-zinc-400">
-                                {[candidate.role, candidate.clinic].filter(Boolean).join(" | ") || "decision-maker candidate"}
+                                {[candidate.role, candidate.clinic, candidate.source].filter(Boolean).join(" | ") || "decision-maker candidate"}
                               </div>
+                              {!!candidate.phones?.length && (
+                                <div className="mt-1 text-zinc-600 dark:text-zinc-300">
+                                  {candidate.phones.slice(0, 2).join(" | ")}
+                                </div>
+                              )}
+                              {!!candidate.emails?.length && (
+                                <div className="mt-1 break-all text-zinc-600 dark:text-zinc-300">
+                                  {candidate.emails.slice(0, 2).join(" | ")}
+                                </div>
+                              )}
                             </div>
                           ))}
                         </div>
@@ -1545,7 +1600,7 @@ function LeadListContent({
                       <div className="rounded-md bg-zinc-100 p-2 dark:bg-zinc-900">
                         <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Branch phones</div>
                         <div className="mt-2 space-y-1 text-xs">
-                          {contactIntel.branchContacts.slice(0, 4).map((contact, index) => (
+                          {contactIntel.branchContacts.slice(0, 6).map((contact, index) => (
                             <div key={`branch-contact-${index}`} className="rounded border border-zinc-200 px-2 py-1 dark:border-zinc-800">
                               <div className="font-medium">{String(contact.name || "Clinic branch")}</div>
                               <div className="text-zinc-500 dark:text-zinc-400">{String(contact.phone || "-")}</div>
@@ -1561,7 +1616,7 @@ function LeadListContent({
                     )}
                     {!!contactIntel.contactEvidence.length && (
                       <div className="rounded-md bg-zinc-100 p-2 text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
-                        {contactIntel.contactEvidence.slice(0, 3).join(" | ")}
+                        {contactIntel.contactEvidence.join(" | ")}
                       </div>
                     )}
                   </div>
