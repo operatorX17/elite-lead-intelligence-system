@@ -1,10 +1,16 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Artifact } from "@/components/create-artifact";
 import { CopyIcon, RedoIcon, UndoIcon } from "@/components/icons";
 import { formatLeadForClipboard } from "@/lib/zrai/clipboard";
+import {
+  fetchFounderIntelligence,
+  mergeFounderIntelligenceIntoProcessedDetails,
+  needsFounderIntelligence,
+  type FounderIntelPayload,
+} from "@/lib/zrai/founder-intelligence";
 import { sanitizeDecisionMakerName } from "@/lib/zrai/people";
 import { getZRAILeadByIdEndpoint, ZRAI_ENDPOINTS } from "@/lib/zrai/constants";
 import type { AnalysisBundle, Lead, SignalFacts } from "@/lib/zrai/types";
@@ -392,12 +398,60 @@ function LeadCardContent({
   const [isRefreshingTruth, setIsRefreshingTruth] = useState(false);
   const [liveLead, setLiveLead] = useState<Lead | null>(null);
   const [liveProcessedDetails, setLiveProcessedDetails] = useState<ProcessedLeadDetails | null>(null);
+  const founderIntelCacheRef = useRef<Record<string, FounderIntelPayload>>({});
   const payload = parseLeadCardPayload(content);
   const lead = metadata?.lead || payload?.lead || null;
   const processedDetails = metadata?.processedDetails || payload?.processed_details || null;
   const displayLead = liveLead || metadata?.liveLead || lead;
   const displayProcessedDetails =
     liveProcessedDetails || metadata?.liveProcessedDetails || processedDetails;
+
+  const hydrateFounderIntel = async (
+    baseLead: Lead,
+    baseProcessedDetails: ProcessedLeadDetails | null | undefined
+  ) => {
+    if (!baseLead?.id || !needsFounderIntelligence(baseLead, baseProcessedDetails)) {
+      return {
+        lead: baseLead,
+        processedDetails: baseProcessedDetails || null,
+      };
+    }
+
+    try {
+      const cachedFounderIntel = founderIntelCacheRef.current[baseLead.id];
+      const founderIntel =
+        cachedFounderIntel || (await fetchFounderIntelligence(baseLead));
+
+      if (!cachedFounderIntel && Object.keys(founderIntel || {}).length > 0) {
+        founderIntelCacheRef.current[baseLead.id] = founderIntel;
+      }
+
+      if (!founderIntel || Object.keys(founderIntel).length === 0) {
+        return {
+          lead: baseLead,
+          processedDetails: baseProcessedDetails || null,
+        };
+      }
+
+      const nextProcessedDetails = mergeFounderIntelligenceIntoProcessedDetails(
+        baseProcessedDetails || null,
+        founderIntel
+      ) as ProcessedLeadDetails;
+
+      return {
+        lead: {
+          ...baseLead,
+          signal_facts: nextProcessedDetails?.signal_facts || baseLead.signal_facts,
+        } as Lead,
+        processedDetails: nextProcessedDetails,
+      };
+    } catch {
+      return {
+        lead: baseLead,
+        processedDetails: baseProcessedDetails || null,
+      };
+    }
+  };
 
   useEffect(() => {
     setLiveLead(null);
@@ -427,7 +481,7 @@ function LeadCardContent({
         }
 
         const nextLiveLead = (latestData?.lead || latestData) as Lead;
-        const nextLiveProcessedDetails =
+        const nextLiveProcessedDetailsRaw =
           latestData?.processed_details
             ? ({
                 ...(latestData.processed_details || {}),
@@ -439,12 +493,16 @@ function LeadCardContent({
                 signals_version: latestData.signals_version || latestData.processed_details?.signals_version || null,
               } as ProcessedLeadDetails)
             : null;
-        setLiveLead(nextLiveLead);
-        setLiveProcessedDetails(nextLiveProcessedDetails);
+        const hydrated = await hydrateFounderIntel(nextLiveLead, nextLiveProcessedDetailsRaw);
+        if (cancelled) {
+          return;
+        }
+        setLiveLead(hydrated.lead);
+        setLiveProcessedDetails(hydrated.processedDetails);
         setMetadata((prev: LeadCardMetadata) => ({
           ...prev,
-          liveLead: nextLiveLead,
-          liveProcessedDetails: nextLiveProcessedDetails,
+          liveLead: hydrated.lead,
+          liveProcessedDetails: hydrated.processedDetails,
         }));
       } catch {
         // Embedded artifact payload remains available if refresh fails.
@@ -509,7 +567,7 @@ function LeadCardContent({
         }
 
         const latestLead = latestData.lead as Lead;
-        const latestProcessedDetails = latestData.processed_details
+        const latestProcessedDetailsRaw = latestData.processed_details
           ? ({
               ...(latestData.processed_details || {}),
               signal_facts: latestData.signal_facts || latestData.processed_details?.signal_facts || null,
@@ -520,15 +578,16 @@ function LeadCardContent({
               signals_version: latestData.signals_version || latestData.processed_details?.signals_version || null,
             } as ProcessedLeadDetails)
           : null;
+      const hydrated = await hydrateFounderIntel(latestLead, latestProcessedDetailsRaw);
       setMetadata((prev: LeadCardMetadata) => ({
         ...prev,
-        lead: latestLead,
-        processedDetails: latestProcessedDetails,
-        liveLead: latestLead,
-        liveProcessedDetails: latestProcessedDetails,
+        lead: hydrated.lead,
+        processedDetails: hydrated.processedDetails,
+        liveLead: hydrated.lead,
+        liveProcessedDetails: hydrated.processedDetails,
       }));
-      setLiveLead(latestLead);
-      setLiveProcessedDetails(latestProcessedDetails);
+      setLiveLead(hydrated.lead);
+      setLiveProcessedDetails(hydrated.processedDetails);
       toast.success("Lead truth refreshed.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Lead truth refresh failed");
@@ -566,7 +625,7 @@ function LeadCardContent({
         continue;
       }
 
-      const latestProcessedDetails = latestData.processed_details
+      const latestProcessedDetailsRaw = latestData.processed_details
         ? ({
             ...(latestData.processed_details || {}),
             signal_facts: latestData.signal_facts || latestData.processed_details?.signal_facts || null,
@@ -577,14 +636,15 @@ function LeadCardContent({
             signals_version: latestData.signals_version || latestData.processed_details?.signals_version || null,
           } as ProcessedLeadDetails)
         : null;
+      const hydrated = await hydrateFounderIntel(latestLead, latestProcessedDetailsRaw);
 
       setMetadata((prev: LeadCardMetadata) => ({
         ...prev,
-        lead: latestLead,
-        processedDetails: latestProcessedDetails,
+        lead: hydrated.lead,
+        processedDetails: hydrated.processedDetails,
       }));
-      setLiveLead(latestLead);
-      setLiveProcessedDetails(latestProcessedDetails);
+      setLiveLead(hydrated.lead);
+      setLiveProcessedDetails(hydrated.processedDetails);
       toast.success("Lead analyzed.");
       return;
     }
@@ -649,7 +709,7 @@ function LeadCardContent({
       }
 
       const nextLead = resultData.lead as Lead;
-      const nextProcessedDetails = {
+      const nextProcessedDetailsRaw = {
         ...(resultData?.processed_details || {}),
         signal_facts: resultData?.signal_facts || resultData?.processed_details?.signal_facts || null,
         analysis_bundle: resultData?.analysis_bundle || resultData?.processed_details?.analysis_bundle || null,
@@ -658,16 +718,17 @@ function LeadCardContent({
           resultData?.analysis_updated_at || resultData?.processed_details?.analysis_updated_at || null,
         signals_version: resultData?.signals_version || resultData?.processed_details?.signals_version || null,
       } as ProcessedLeadDetails;
+      const hydrated = await hydrateFounderIntel(nextLead, nextProcessedDetailsRaw);
 
       setMetadata((prev: LeadCardMetadata) => ({
         ...prev,
-        lead: nextLead,
-        processedDetails: nextProcessedDetails,
-        liveLead: nextLead,
-        liveProcessedDetails: nextProcessedDetails,
+        lead: hydrated.lead,
+        processedDetails: hydrated.processedDetails,
+        liveLead: hydrated.lead,
+        liveProcessedDetails: hydrated.processedDetails,
       }));
-      setLiveLead(nextLead);
-      setLiveProcessedDetails(nextProcessedDetails);
+      setLiveLead(hydrated.lead);
+      setLiveProcessedDetails(hydrated.processedDetails);
       toast.success("Lead analyzed.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Lead analysis failed");

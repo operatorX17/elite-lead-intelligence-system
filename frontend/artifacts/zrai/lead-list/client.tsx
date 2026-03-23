@@ -12,6 +12,12 @@ import { Artifact } from "@/components/create-artifact";
 import { CopyIcon, RedoIcon, UndoIcon } from "@/components/icons";
 import { useArtifact } from "@/hooks/use-artifact";
 import { formatLeadForClipboard, formatLeadListForClipboard } from "@/lib/zrai/clipboard";
+import {
+  fetchFounderIntelligence,
+  mergeFounderIntelligenceIntoProcessedDetails,
+  needsFounderIntelligence,
+  type FounderIntelPayload,
+} from "@/lib/zrai/founder-intelligence";
 import { sanitizeDecisionMakerName } from "@/lib/zrai/people";
 import type { AnalysisBundle, Lead, SignalFacts } from "@/lib/zrai/types";
 import { getZRAILeadByIdEndpoint, ZRAI_ENDPOINTS } from "@/lib/zrai/constants";
@@ -681,6 +687,7 @@ function LeadListContent({
   const [processingIds, setProcessingIds] = useState<string[]>([]);
   const [isRefreshingTruth, setIsRefreshingTruth] = useState(false);
   const processControllersRef = useRef<Record<string, AbortController>>({});
+  const founderIntelCacheRef = useRef<Record<string, FounderIntelPayload>>({});
   const { setArtifact } = useArtifact();
 
   // Prefer metadata because operator actions can mutate leads after the initial artifact is streamed.
@@ -696,6 +703,53 @@ function LeadListContent({
   const sortOrder = metadata?.sortOrder || "desc";
   const sortedLeads = sortLeads(filteredLeads, sortBy, sortOrder);
   const processedDetails = metadata?.processedDetails || {};
+
+  const hydrateFounderIntel = async (
+    baseLead: Lead,
+    baseProcessedDetails: ProcessedLeadDetails | null | undefined
+  ) => {
+    if (!baseLead?.id || !needsFounderIntelligence(baseLead, baseProcessedDetails)) {
+      return {
+        lead: baseLead,
+        processedDetails: baseProcessedDetails || null,
+      };
+    }
+
+    try {
+      const cachedFounderIntel = founderIntelCacheRef.current[baseLead.id];
+      const founderIntel =
+        cachedFounderIntel || (await fetchFounderIntelligence(baseLead));
+
+      if (!cachedFounderIntel && Object.keys(founderIntel || {}).length > 0) {
+        founderIntelCacheRef.current[baseLead.id] = founderIntel;
+      }
+
+      if (!founderIntel || Object.keys(founderIntel).length === 0) {
+        return {
+          lead: baseLead,
+          processedDetails: baseProcessedDetails || null,
+        };
+      }
+
+      const nextProcessedDetails = mergeFounderIntelligenceIntoProcessedDetails(
+        baseProcessedDetails || null,
+        founderIntel
+      ) as ProcessedLeadDetails;
+
+      return {
+        lead: {
+          ...baseLead,
+          signal_facts: nextProcessedDetails?.signal_facts || baseLead.signal_facts,
+        } as Lead,
+        processedDetails: nextProcessedDetails,
+      };
+    } catch {
+      return {
+        lead: baseLead,
+        processedDetails: baseProcessedDetails || null,
+      };
+    }
+  };
 
   const syncLeadListState = ({
     nextLeads,
@@ -764,13 +818,17 @@ function LeadListContent({
         if (!latestLead?.id || !latestLead?.company_name) {
           return;
         }
-        const latestProcessedDetails = payloadData.processed_details as ProcessedLeadDetails | undefined;
-        setSelectedLeadLive(latestLead);
-        setSelectedLeadLiveDetails(latestProcessedDetails || null);
+        const latestProcessedDetailsRaw = payloadData.processed_details as ProcessedLeadDetails | undefined;
+        const hydrated = await hydrateFounderIntel(latestLead, latestProcessedDetailsRaw || null);
+        if (cancelled) {
+          return;
+        }
+        setSelectedLeadLive(hydrated.lead);
+        setSelectedLeadLiveDetails(hydrated.processedDetails);
         setMetadata((prev: LeadListMetadata) => ({
           ...prev,
-          liveSelectedLead: latestLead,
-          liveSelectedLeadDetails: latestProcessedDetails || null,
+          liveSelectedLead: hydrated.lead,
+          liveSelectedLeadDetails: hydrated.processedDetails,
         }));
       } catch {
         // Keep the embedded artifact payload if refresh fails.
@@ -952,7 +1010,7 @@ function LeadListContent({
         }
 
         const latestLead = payloadData.lead as Lead;
-        const latestProcessedDetails = payloadData.processed_details
+        const latestProcessedDetailsRaw = payloadData.processed_details
           ? ({
               ...(payloadData.processed_details || {}),
               signal_facts: payloadData.signal_facts || payloadData.processed_details?.signal_facts || null,
@@ -963,23 +1021,24 @@ function LeadListContent({
               signals_version: payloadData.signals_version || payloadData.processed_details?.signals_version || null,
             } as ProcessedLeadDetails)
           : null;
-      const mergedLeads = mergeLeadRows(leads, [latestLead]);
+      const hydrated = await hydrateFounderIntel(latestLead, latestProcessedDetailsRaw);
+      const mergedLeads = mergeLeadRows(leads, [hydrated.lead]);
       syncLeadListState({
         nextLeads: mergedLeads,
-        nextProcessedDetails: latestProcessedDetails
+        nextProcessedDetails: hydrated.processedDetails
           ? {
               ...(processedDetails || {}),
-              [selectedLead.id]: latestProcessedDetails,
+              [selectedLead.id]: hydrated.processedDetails,
             }
           : processedDetails,
       });
-      setSelectedLead(mergedLeads.find((lead) => lead.id === selectedLead.id) || latestLead);
-      setSelectedLeadLive(latestLead);
-      setSelectedLeadLiveDetails(latestProcessedDetails);
+      setSelectedLead(mergedLeads.find((lead) => lead.id === selectedLead.id) || hydrated.lead);
+      setSelectedLeadLive(hydrated.lead);
+      setSelectedLeadLiveDetails(hydrated.processedDetails);
       setMetadata((prev: LeadListMetadata) => ({
         ...prev,
-        liveSelectedLead: latestLead,
-        liveSelectedLeadDetails: latestProcessedDetails,
+        liveSelectedLead: hydrated.lead,
+        liveSelectedLeadDetails: hydrated.processedDetails,
       }));
       toast.success("Lead truth refreshed.");
     } catch (error) {
@@ -1018,7 +1077,7 @@ function LeadListContent({
         continue;
       }
 
-      const latestProcessedDetails = payloadData.processed_details
+      const latestProcessedDetailsRaw = payloadData.processed_details
         ? ({
             ...(payloadData.processed_details || {}),
             signal_facts: payloadData.signal_facts || payloadData.processed_details?.signal_facts || null,
@@ -1029,24 +1088,25 @@ function LeadListContent({
             signals_version: payloadData.signals_version || payloadData.processed_details?.signals_version || null,
           } as ProcessedLeadDetails)
         : null;
+      const hydrated = await hydrateFounderIntel(latestLead, latestProcessedDetailsRaw);
 
-      const mergedLeads = mergeLeadRows(leads, [latestLead]);
+      const mergedLeads = mergeLeadRows(leads, [hydrated.lead]);
       syncLeadListState({
         nextLeads: mergedLeads,
-        nextProcessedDetails: latestProcessedDetails
+        nextProcessedDetails: hydrated.processedDetails
           ? {
               ...(processedDetails || {}),
-              [leadId]: latestProcessedDetails,
+              [leadId]: hydrated.processedDetails,
             }
           : processedDetails,
       });
-      setSelectedLead(mergedLeads.find((lead) => lead.id === leadId) || latestLead);
-      setSelectedLeadLive(latestLead);
-      setSelectedLeadLiveDetails(latestProcessedDetails);
+      setSelectedLead(mergedLeads.find((lead) => lead.id === leadId) || hydrated.lead);
+      setSelectedLeadLive(hydrated.lead);
+      setSelectedLeadLiveDetails(hydrated.processedDetails);
       setMetadata((prev: LeadListMetadata) => ({
         ...prev,
-        liveSelectedLead: latestLead,
-        liveSelectedLeadDetails: latestProcessedDetails,
+        liveSelectedLead: hydrated.lead,
+        liveSelectedLeadDetails: hydrated.processedDetails,
       }));
       toast.success("Lead analyzed.");
       return;
@@ -1125,7 +1185,7 @@ function LeadListContent({
       }
 
       const analyzedLead = payloadData.lead as Lead;
-      const analyzedProcessedDetails = {
+      const analyzedProcessedDetailsRaw = {
         ...(payloadData.processed_details || {}),
         signal_facts: payloadData.signal_facts || payloadData.processed_details?.signal_facts || null,
         analysis_bundle: payloadData.analysis_bundle || payloadData.processed_details?.analysis_bundle || null,
@@ -1134,18 +1194,19 @@ function LeadListContent({
           payloadData.analysis_updated_at || payloadData.processed_details?.analysis_updated_at || null,
         signals_version: payloadData.signals_version || payloadData.processed_details?.signals_version || null,
       } as ProcessedLeadDetails;
+      const hydrated = await hydrateFounderIntel(analyzedLead, analyzedProcessedDetailsRaw);
 
-      const mergedLeads = mergeLeadRows(leads, [analyzedLead]);
+      const mergedLeads = mergeLeadRows(leads, [hydrated.lead]);
       syncLeadListState({
         nextLeads: mergedLeads,
         nextProcessedDetails: {
           ...(processedDetails || {}),
-          [analyzedLead.id]: analyzedProcessedDetails,
+          [analyzedLead.id]: hydrated.processedDetails || analyzedProcessedDetailsRaw,
         },
       });
-      setSelectedLead(mergedLeads.find((lead) => lead.id === analyzedLead.id) || analyzedLead);
-      setSelectedLeadLive(analyzedLead);
-      setSelectedLeadLiveDetails(analyzedProcessedDetails);
+      setSelectedLead(mergedLeads.find((lead) => lead.id === analyzedLead.id) || hydrated.lead);
+      setSelectedLeadLive(hydrated.lead);
+      setSelectedLeadLiveDetails(hydrated.processedDetails);
       toast.success("Lead analyzed.");
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {

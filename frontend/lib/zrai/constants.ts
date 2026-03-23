@@ -93,6 +93,7 @@ export const ZRAI_ENDPOINTS = {
   leads: `${ZRAI_API_BASE_URL}/leads`,
   analyzeLead: `${ZRAI_API_BASE_URL}/analyze`,
   processLeads: `${ZRAI_API_BASE_URL}/process`,
+  founderIntel: `${ZRAI_API_BASE_URL}/founder-intel`,
 
   // Metrics
   metrics: `${ZRAI_API_BASE_URL}/metrics`,
