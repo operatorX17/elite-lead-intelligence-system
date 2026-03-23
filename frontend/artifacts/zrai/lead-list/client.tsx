@@ -12,6 +12,7 @@ import { Artifact } from "@/components/create-artifact";
 import { CopyIcon, RedoIcon, UndoIcon } from "@/components/icons";
 import { useArtifact } from "@/hooks/use-artifact";
 import { formatLeadForClipboard, formatLeadListForClipboard } from "@/lib/zrai/clipboard";
+import { sanitizeDecisionMakerName } from "@/lib/zrai/people";
 import type { AnalysisBundle, Lead, SignalFacts } from "@/lib/zrai/types";
 import { getZRAILeadByIdEndpoint, ZRAI_ENDPOINTS } from "@/lib/zrai/constants";
 
@@ -23,6 +24,8 @@ type LeadListMetadata = {
   filter: string;
   selectedLeadId?: string | null;
   processedDetails?: Record<string, ProcessedLeadDetails>;
+  liveSelectedLead?: Lead | null;
+  liveSelectedLeadDetails?: ProcessedLeadDetails | null;
 };
 
 type ProcessedLeadDetails = {
@@ -408,13 +411,21 @@ function getContactIntelligence(
   analysisBundle: AnalysisBundle | null
 ) {
   const agentContext = analysisBundle?.agent_context || {};
-  const decisionMakerName = signalFacts?.decision_maker_name || agentContext.decision_maker_name || null;
+  const decisionMakerName = sanitizeDecisionMakerName(
+    signalFacts?.decision_maker_name || agentContext.decision_maker_name || null
+  );
   const decisionMakerLinkedin =
     signalFacts?.decision_maker_linkedin || agentContext.decision_maker_linkedin || null;
-  const decisionMakerRole = signalFacts?.decision_maker_role || agentContext.decision_maker_role || null;
-  const decisionMakerSource = signalFacts?.decision_maker_source || agentContext.decision_maker_source || null;
+  const decisionMakerRole = decisionMakerName
+    ? signalFacts?.decision_maker_role || agentContext.decision_maker_role || null
+    : null;
+  const decisionMakerSource = decisionMakerName
+    ? signalFacts?.decision_maker_source || agentContext.decision_maker_source || null
+    : null;
   const decisionMakerConfidence =
-    signalFacts?.decision_maker_confidence ?? agentContext.decision_maker_confidence ?? null;
+    decisionMakerName
+      ? signalFacts?.decision_maker_confidence ?? agentContext.decision_maker_confidence ?? null
+      : null;
   const bestContactPhone = signalFacts?.best_contact_phone || agentContext.best_contact_phone || null;
   const bestContactEmail = signalFacts?.best_contact_email || agentContext.best_contact_email || null;
   const bestContactChannel =
@@ -741,6 +752,11 @@ function LeadListContent({
         const latestProcessedDetails = payloadData.processed_details as ProcessedLeadDetails | undefined;
         setSelectedLeadLive(latestLead);
         setSelectedLeadLiveDetails(latestProcessedDetails || null);
+        setMetadata((prev: LeadListMetadata) => ({
+          ...prev,
+          liveSelectedLead: latestLead,
+          liveSelectedLeadDetails: latestProcessedDetails || null,
+        }));
       } catch {
         // Keep the embedded artifact payload if refresh fails.
       }
@@ -945,6 +961,11 @@ function LeadListContent({
       setSelectedLead(mergedLeads.find((lead) => lead.id === selectedLead.id) || latestLead);
       setSelectedLeadLive(latestLead);
       setSelectedLeadLiveDetails(latestProcessedDetails);
+      setMetadata((prev: LeadListMetadata) => ({
+        ...prev,
+        liveSelectedLead: latestLead,
+        liveSelectedLeadDetails: latestProcessedDetails,
+      }));
       toast.success("Lead truth refreshed.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Lead truth refresh failed");
@@ -1007,6 +1028,11 @@ function LeadListContent({
       setSelectedLead(mergedLeads.find((lead) => lead.id === leadId) || latestLead);
       setSelectedLeadLive(latestLead);
       setSelectedLeadLiveDetails(latestProcessedDetails);
+      setMetadata((prev: LeadListMetadata) => ({
+        ...prev,
+        liveSelectedLead: latestLead,
+        liveSelectedLeadDetails: latestProcessedDetails,
+      }));
       toast.success("Lead analyzed.");
       return;
     }
@@ -1120,9 +1146,10 @@ function LeadListContent({
   const isSelectedLeadProcessing = selectedLead
     ? processingIds.includes(selectedLead.id)
     : false;
-  const inspectorLead = selectedLeadLive ?? selectedLead;
+  const inspectorLead = selectedLeadLive ?? metadata?.liveSelectedLead ?? selectedLead;
   const selectedLeadDetails =
     selectedLeadLiveDetails ||
+    metadata?.liveSelectedLeadDetails ||
     (inspectorLead ? processedDetails[inspectorLead.id] : undefined);
   const analysisBundle = getAnalysisBundle(inspectorLead, selectedLeadDetails);
   const signalFacts = getSignalFacts(inspectorLead, selectedLeadDetails);
@@ -1229,6 +1256,8 @@ function LeadListContent({
                     setMetadata((prev: LeadListMetadata) => ({
                       ...prev,
                       selectedLeadId: lead.id,
+                      liveSelectedLead: null,
+                      liveSelectedLeadDetails: null,
                     }));
                   }}
                 />
@@ -1253,6 +1282,8 @@ function LeadListContent({
                 setMetadata((prev: LeadListMetadata) => ({
                   ...prev,
                   selectedLeadId: null,
+                  liveSelectedLead: null,
+                  liveSelectedLeadDetails: null,
                 }));
               }}
               type="button"
@@ -1268,21 +1299,26 @@ function LeadListContent({
               <div className="break-all text-sm text-zinc-500">
                 {inspectorLead.domain}
               </div>
-              {selectedLeadLive && (
+              {(selectedLeadLive || metadata?.liveSelectedLead) && (
                 <div className="mt-2 inline-flex rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
                   Live backend state
                 </div>
               )}
-              {!selectedLeadLive && inspectorLead.score_kind !== "final_score" && (
+              {!selectedLeadLive && !metadata?.liveSelectedLead && inspectorLead.score_kind !== "final_score" && (
                 <div className="mt-2 inline-flex rounded-full bg-amber-100 px-2.5 py-1 text-[11px] text-amber-800 dark:bg-amber-950 dark:text-amber-300">
                   Snapshot preview
                 </div>
               )}
-              {selectedLeadLive &&
+              {(selectedLeadLive || metadata?.liveSelectedLead) &&
                 selectedLead &&
-                (selectedLead.score !== selectedLeadLive.score ||
-                  selectedLead.score_kind !== selectedLeadLive.score_kind ||
-                  selectedLead.analysis_state !== selectedLeadLive.analysis_state) && (
+                (() => {
+                  const latestLead = selectedLeadLive || metadata?.liveSelectedLead;
+                  return latestLead
+                    ? selectedLead.score !== latestLead.score ||
+                        selectedLead.score_kind !== latestLead.score_kind ||
+                        selectedLead.analysis_state !== latestLead.analysis_state
+                    : false;
+                })() && (
                   <div className="mt-2 text-xs text-zinc-500">
                     Inspector is showing fresher backend truth. Use <span className="font-medium">Refresh truth</span> to sync the row.
                   </div>
@@ -1717,6 +1753,16 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
       description: "Copy lead summary",
       onClick: ({ content, metadata }) => {
         try {
+          if (metadata?.liveSelectedLead) {
+            navigator.clipboard.writeText(
+              formatLeadForClipboard(
+                metadata.liveSelectedLead,
+                metadata.liveSelectedLeadDetails || null
+              )
+            );
+            toast.success("Live lead summary copied!");
+            return;
+          }
           const parsed = JSON.parse(content);
           const leads = Array.isArray(parsed) ? parsed : parsed.leads || [];
           const readable = formatLeadListForClipboard(

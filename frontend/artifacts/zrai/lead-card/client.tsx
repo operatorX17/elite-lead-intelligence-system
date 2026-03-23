@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Artifact } from "@/components/create-artifact";
 import { CopyIcon, RedoIcon, UndoIcon } from "@/components/icons";
 import { formatLeadForClipboard } from "@/lib/zrai/clipboard";
+import { sanitizeDecisionMakerName } from "@/lib/zrai/people";
 import { getZRAILeadByIdEndpoint, ZRAI_ENDPOINTS } from "@/lib/zrai/constants";
 import type { AnalysisBundle, Lead, SignalFacts } from "@/lib/zrai/types";
 
@@ -42,6 +43,8 @@ type LeadCardMetadata = {
   lead: Lead | null;
   loading: boolean;
   processedDetails?: ProcessedLeadDetails | null;
+  liveLead?: Lead | null;
+  liveProcessedDetails?: ProcessedLeadDetails | null;
 };
 
 function getPayloadData<T = any>(payload: any): T {
@@ -264,13 +267,21 @@ function getContactIntelligence(
   analysisBundle: AnalysisBundle | null
 ) {
   const agentContext = analysisBundle?.agent_context || {};
-  const decisionMakerName = signalFacts?.decision_maker_name || agentContext.decision_maker_name || null;
+  const decisionMakerName = sanitizeDecisionMakerName(
+    signalFacts?.decision_maker_name || agentContext.decision_maker_name || null
+  );
   const decisionMakerLinkedin =
     signalFacts?.decision_maker_linkedin || agentContext.decision_maker_linkedin || null;
-  const decisionMakerRole = signalFacts?.decision_maker_role || agentContext.decision_maker_role || null;
-  const decisionMakerSource = signalFacts?.decision_maker_source || agentContext.decision_maker_source || null;
+  const decisionMakerRole = decisionMakerName
+    ? signalFacts?.decision_maker_role || agentContext.decision_maker_role || null
+    : null;
+  const decisionMakerSource = decisionMakerName
+    ? signalFacts?.decision_maker_source || agentContext.decision_maker_source || null
+    : null;
   const decisionMakerConfidence =
-    signalFacts?.decision_maker_confidence ?? agentContext.decision_maker_confidence ?? null;
+    decisionMakerName
+      ? signalFacts?.decision_maker_confidence ?? agentContext.decision_maker_confidence ?? null
+      : null;
   const bestContactPhone = signalFacts?.best_contact_phone || agentContext.best_contact_phone || null;
   const bestContactEmail = signalFacts?.best_contact_email || agentContext.best_contact_email || null;
   const bestContactChannel =
@@ -369,12 +380,18 @@ function LeadCardContent({
   const payload = parseLeadCardPayload(content);
   const lead = metadata?.lead || payload?.lead || null;
   const processedDetails = metadata?.processedDetails || payload?.processed_details || null;
-  const displayLead = liveLead || lead;
-  const displayProcessedDetails = liveProcessedDetails || processedDetails;
+  const displayLead = liveLead || metadata?.liveLead || lead;
+  const displayProcessedDetails =
+    liveProcessedDetails || metadata?.liveProcessedDetails || processedDetails;
 
   useEffect(() => {
     setLiveLead(null);
     setLiveProcessedDetails(null);
+    setMetadata((prev: LeadCardMetadata) => ({
+      ...prev,
+      liveLead: null,
+      liveProcessedDetails: null,
+    }));
     if (!lead?.id) {
       return;
     }
@@ -394,8 +411,8 @@ function LeadCardContent({
           return;
         }
 
-        setLiveLead((latestData?.lead || latestData) as Lead);
-        setLiveProcessedDetails(
+        const nextLiveLead = (latestData?.lead || latestData) as Lead;
+        const nextLiveProcessedDetails =
           latestData?.processed_details
             ? ({
                 ...(latestData.processed_details || {}),
@@ -406,8 +423,14 @@ function LeadCardContent({
                   latestData.analysis_updated_at || latestData.processed_details?.analysis_updated_at || null,
                 signals_version: latestData.signals_version || latestData.processed_details?.signals_version || null,
               } as ProcessedLeadDetails)
-            : null
-        );
+            : null;
+        setLiveLead(nextLiveLead);
+        setLiveProcessedDetails(nextLiveProcessedDetails);
+        setMetadata((prev: LeadCardMetadata) => ({
+          ...prev,
+          liveLead: nextLiveLead,
+          liveProcessedDetails: nextLiveProcessedDetails,
+        }));
       } catch {
         // Embedded artifact payload remains available if refresh fails.
       }
@@ -486,6 +509,8 @@ function LeadCardContent({
         ...prev,
         lead: latestLead,
         processedDetails: latestProcessedDetails,
+        liveLead: latestLead,
+        liveProcessedDetails: latestProcessedDetails,
       }));
       setLiveLead(latestLead);
       setLiveProcessedDetails(latestProcessedDetails);
@@ -594,6 +619,8 @@ function LeadCardContent({
           ...prev,
           lead: queuedLead,
           processedDetails: queuedProcessedDetails,
+          liveLead: queuedLead,
+          liveProcessedDetails: queuedProcessedDetails,
         }));
         setLiveLead(queuedLead);
         setLiveProcessedDetails(queuedProcessedDetails);
@@ -621,6 +648,8 @@ function LeadCardContent({
         ...prev,
         lead: nextLead,
         processedDetails: nextProcessedDetails,
+        liveLead: nextLead,
+        liveProcessedDetails: nextProcessedDetails,
       }));
       setLiveLead(nextLead);
       setLiveProcessedDetails(nextProcessedDetails);
@@ -656,7 +685,7 @@ function LeadCardContent({
           >
             {displayLead.domain}
           </a>
-          {liveLead ? (
+          {liveLead || metadata?.liveLead ? (
             <div className="mt-2 inline-flex rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
               Live backend state
             </div>
@@ -994,9 +1023,12 @@ export const leadCardArtifact = new Artifact<"lead-card", LeadCardMetadata>({
       description: "Copy lead summary",
       onClick: ({ content, metadata }) => {
         const payload = parseLeadCardPayload(content);
-        const lead = metadata?.lead || payload?.lead || null;
+        const lead = metadata?.liveLead || metadata?.lead || payload?.lead || null;
         const processedDetails =
-          metadata?.processedDetails || payload?.processed_details || null;
+          metadata?.liveProcessedDetails ||
+          metadata?.processedDetails ||
+          payload?.processed_details ||
+          null;
 
         navigator.clipboard.writeText(
           formatLeadForClipboard(lead, processedDetails)

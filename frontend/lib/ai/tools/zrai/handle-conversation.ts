@@ -27,7 +27,7 @@ The AI will analyze the message for qualification signals and generate an approp
         .min(1)
         .describe("The message from the lead to process"),
       channel: z
-        .enum(["email", "linkedin", "sms"])
+        .enum(["email", "linkedin", "sms", "whatsapp"])
         .optional()
         .describe(
           "The communication channel (optional, will be inferred if not provided)"

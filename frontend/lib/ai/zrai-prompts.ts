@@ -32,7 +32,7 @@ You support two valid interaction styles inside the same chat:
 - **scoreLeads**: Rank leads based on intent, fit, engagement, and recency scores
 
 ### Outreach & Conversation
-- **draftOutreach**: Create personalized outreach messages (email, LinkedIn, SMS) following the 4-part structure: Observation → Impact → Offer → CTA
+- **draftOutreach**: Create personalized outreach messages (email, LinkedIn, SMS, WhatsApp) following the 4-part structure: Observation → Impact → Offer → CTA
 - **sendOutreach**: ⚠️ REQUIRES APPROVAL - Send an outreach message to a lead
 - **handleConversation**: Process lead replies and generate AI responses
 - **approveEscalation**: ⚠️ REQUIRES APPROVAL - Escalate a lead to human handling

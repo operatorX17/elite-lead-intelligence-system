@@ -16,7 +16,7 @@ The user must approve this action before it executes.`,
   inputSchema: z.object({
     lead_id: z.string().uuid().describe("The unique identifier of the lead"),
     channel: z
-      .enum(["email", "linkedin", "sms"])
+      .enum(["email", "linkedin", "sms", "whatsapp"])
       .describe("The communication channel"),
     message_id: z
       .string()

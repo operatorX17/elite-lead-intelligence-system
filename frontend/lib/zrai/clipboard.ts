@@ -7,6 +7,7 @@ import type {
   ScoringResult,
   SignalFacts,
 } from "@/lib/zrai/types";
+import { sanitizeDecisionMakerName } from "@/lib/zrai/people";
 
 type LeadProcessedDetails = {
   intent?: Record<string, unknown>;
@@ -273,10 +274,12 @@ export function formatLeadForClipboard(
   const proofInsights = getProofInsights(lead, processedDetails);
   const outreachSummary = getOutreachSummary(processedDetails);
   const finalScore = getFinalScore(lead, processedDetails);
-  const decisionMakerName =
-    signalFacts?.decision_maker_name || agentContext.decision_maker_name || null;
-  const decisionMakerRole =
-    signalFacts?.decision_maker_role || agentContext.decision_maker_role || null;
+  const decisionMakerName = sanitizeDecisionMakerName(
+    signalFacts?.decision_maker_name || agentContext.decision_maker_name || null
+  );
+  const decisionMakerRole = decisionMakerName
+    ? signalFacts?.decision_maker_role || agentContext.decision_maker_role || null
+    : null;
   const bestContactChannel =
     signalFacts?.best_contact_channel || agentContext.best_contact_channel || null;
   const bestContactReason =
