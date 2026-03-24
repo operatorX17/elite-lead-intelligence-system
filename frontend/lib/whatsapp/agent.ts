@@ -93,7 +93,11 @@ export async function generateWhatsAppReplyPlan({
   });
 
   const recentReplies = getRecentAssistantReplies(messages);
-  let replyText = buildWhatsAppFallbackReply(nextState, recentReplies);
+  let replyText = buildWhatsAppFallbackReply(
+    nextState,
+    recentReplies,
+    conversation.leadContext ?? null
+  );
 
   if (
     process.env.OPENROUTER_API_KEY &&

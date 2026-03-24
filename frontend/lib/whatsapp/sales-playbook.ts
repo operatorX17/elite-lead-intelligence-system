@@ -1,5 +1,8 @@
 import type { WhatsAppConversation, WhatsAppMessage } from "@/lib/db/schema";
-import type { WhatsAppAgentState } from "@/lib/whatsapp/state";
+import type {
+  WhatsAppAgentState,
+  WhatsAppLinkedLeadContext,
+} from "@/lib/whatsapp/state";
 
 const OPT_OUT_PATTERNS = [
   /\bstop\b/i,
@@ -109,7 +112,11 @@ function inferRequestedNextStep(text: string) {
   if (/\b(call|speak|talk|demo|walkthrough)\b/i.test(text)) {
     return "call";
   }
-  if (/\b(details|brochure|send|info|explain)\b/i.test(text)) {
+  if (
+    /\b(details|brochure|send|info|explain|show me|show that|share it|share them|tell me more|go on|prove it)\b/i.test(
+      text
+    )
+  ) {
     return "details";
   }
   if (/\b(price|pricing|cost)\b/i.test(text)) {
@@ -133,6 +140,39 @@ function inferRole(text: string) {
   }
 
   return null;
+}
+
+function lastAssistantOfferedProof(messages: WhatsAppMessage[]) {
+  const lastAssistantMessage = [...messages]
+    .reverse()
+    .find(
+      (message) =>
+        message.direction === "outgoing" &&
+        (message.authorType === "bot" || message.authorType === "human")
+    );
+
+  if (!lastAssistantMessage) {
+    return false;
+  }
+
+  return /\b(show|exact leak|leak points|look at first|keep it practical)\b/i.test(
+    lastAssistantMessage.body
+  );
+}
+
+function normalizePainLabel(value: string | null | undefined) {
+  return String(value ?? "")
+    .replace(/_/g, " ")
+    .trim();
+}
+
+function lowerCaseFirst(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) {
+    return "";
+  }
+
+  return normalized.charAt(0).toLowerCase() + normalized.slice(1);
 }
 
 function inferConfidence({
@@ -347,7 +387,8 @@ export function buildHandoffReason(state: WhatsAppAgentState) {
 
 export function buildWhatsAppFallbackReply(
   state: WhatsAppAgentState,
-  recentReplies: Array<string | null | undefined> = []
+  recentReplies: Array<string | null | undefined> = [],
+  leadContext?: WhatsAppLinkedLeadContext | null
 ) {
   const replyHistory = [state.lastSuggestedReply, ...recentReplies];
 
@@ -410,6 +451,42 @@ export function buildWhatsAppFallbackReply(
       ],
       replyHistory
     );
+  }
+
+  if (state.requestedNextStep === "details") {
+    const topIssue = normalizePainLabel(leadContext?.topIssue);
+    const nextBestAction = lowerCaseFirst(leadContext?.nextBestAction);
+    const firstPain = normalizePainLabel(state.painPoints[0]);
+
+    if (topIssue && nextBestAction) {
+      return pickFreshReply(
+        [
+          `First thing I'd tighten is ${topIssue}. I'd start by ${nextBestAction}. If you want, I'll show you the second leak after that.`,
+          `The clearest leak I see is ${topIssue}. First move I'd make is ${nextBestAction}. Want the next one too?`,
+        ],
+        replyHistory
+      );
+    }
+
+    if (topIssue) {
+      return pickFreshReply(
+        [
+          `First thing I'd look at is ${topIssue}. That is usually where warm intent slips. Want the second leak too?`,
+          `The first leak is ${topIssue}. Fix that first and the thread usually gets cleaner. Want the next one?`,
+        ],
+        replyHistory
+      );
+    }
+
+    if (firstPain) {
+      return pickFreshReply(
+        [
+          `First leak I'd check is ${firstPain}. That usually costs replies before the team even gets a proper shot. Want the next one too?`,
+          `I'd start with ${firstPain}. Clean that up first, then look at the second drop-off point. Want me to keep going?`,
+        ],
+        replyHistory
+      );
+    }
   }
 
   return pickFreshReply(
@@ -497,6 +574,14 @@ export function deriveNextWhatsAppAgentState({
   currentState: WhatsAppAgentState;
 }) {
   const classification = classifyInboundLeadMessage(incomingText);
+  const inferredNextStep =
+    classification.requestedNextStep ||
+    (lastAssistantOfferedProof(messages) &&
+    /\b(yes|yeah|yup|ok|okay|sure|show|share|tell me|go on)\b/i.test(
+      incomingText
+    )
+      ? "details"
+      : null);
 
   const nextState: WhatsAppAgentState = {
     ...currentState,
@@ -510,7 +595,7 @@ export function deriveNextWhatsAppAgentState({
       ...classification.objectionCategories,
     ],
     requestedNextStep:
-      classification.requestedNextStep ?? currentState.requestedNextStep,
+      inferredNextStep ?? currentState.requestedNextStep,
     lastIntent: incomingText.trim() || currentState.lastIntent,
     decisionMakerRole:
       currentState.decisionMakerRole ?? classification.roleHint ?? null,
