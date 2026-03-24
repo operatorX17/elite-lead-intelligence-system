@@ -488,8 +488,15 @@ class ScoringAgent(BaseAgent):
         self._db.save_scoring_result(data)
 
 
-_scoring_agent = ScoringAgent()
+_scoring_agent: Optional[ScoringAgent] = None
+
+
+def _get_scoring_agent() -> ScoringAgent:
+    global _scoring_agent
+    if _scoring_agent is None:
+        _scoring_agent = ScoringAgent()
+    return _scoring_agent
 
 
 def scoring_node(state: LeadGraphState) -> LeadGraphState:
-    return _scoring_agent(state)
+    return _get_scoring_agent()(state)

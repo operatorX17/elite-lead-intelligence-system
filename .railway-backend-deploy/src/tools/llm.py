@@ -15,6 +15,23 @@ from src.config import load_config, LLMProvider
 logger = logging.getLogger(__name__)
 
 
+_PROVIDER_ENV_MAP = {
+    LLMProvider.GOOGLE: "GOOGLE_API_KEY",
+    LLMProvider.OPENAI: "OPENAI_API_KEY",
+    LLMProvider.ANTHROPIC: "ANTHROPIC_API_KEY",
+    LLMProvider.OPENROUTER: "OPENROUTER_API_KEY",
+    LLMProvider.MINIMAX: "MINIMAX_API_KEY",
+}
+
+_PROVIDER_DEFAULT_MODELS = {
+    LLMProvider.GOOGLE: "gemini-2.5-flash",
+    LLMProvider.OPENAI: "gpt-4o-mini",
+    LLMProvider.ANTHROPIC: "claude-3-5-sonnet-20241022",
+    LLMProvider.OPENROUTER: "nex-agi/deepseek-v3.1-nex-n1:free",
+    LLMProvider.MINIMAX: "MiniMax-M2.1",
+}
+
+
 class BaseLLMClient(ABC):
     """Base class for LLM clients."""
     
@@ -690,37 +707,91 @@ class LLMClient:
     ):
         config = load_config()
         
-        self._provider = provider or config.llm.provider
-        self._model = model or config.llm.model
+        requested_provider = provider or config.llm.provider
+        requested_model = model or config.llm.model
+        self._provider, api_key, resolved_model = self._resolve_provider(
+            config=config,
+            requested_provider=requested_provider,
+            requested_model=requested_model,
+        )
+        self._model = resolved_model
         
         # Initialize the appropriate client
         if self._provider == LLMProvider.GOOGLE or self._provider == "google":
-            if not config.llm.google_api_key:
-                raise ValueError("Google API key not configured")
-            self._client = GoogleLLMClient(config.llm.google_api_key, self._model)
+            self._client = GoogleLLMClient(api_key, self._model)
         
         elif self._provider == LLMProvider.OPENAI or self._provider == "openai":
-            if not config.llm.openai_api_key:
-                raise ValueError("OpenAI API key not configured")
-            self._client = OpenAILLMClient(config.llm.openai_api_key, self._model)
+            self._client = OpenAILLMClient(api_key, self._model)
         
         elif self._provider == LLMProvider.ANTHROPIC or self._provider == "anthropic":
-            if not config.llm.anthropic_api_key:
-                raise ValueError("Anthropic API key not configured")
-            self._client = AnthropicLLMClient(config.llm.anthropic_api_key, self._model)
+            self._client = AnthropicLLMClient(api_key, self._model)
         
         elif self._provider == LLMProvider.OPENROUTER or self._provider == "openrouter":
-            if not config.llm.openrouter_api_key:
-                raise ValueError("OpenRouter API key not configured")
-            self._client = OpenRouterLLMClient(config.llm.openrouter_api_key, self._model)
+            self._client = OpenRouterLLMClient(api_key, self._model)
         
         elif self._provider == LLMProvider.MINIMAX or self._provider == "minimax":
-            if not config.llm.minimax_api_key:
-                raise ValueError("MiniMax API key not configured")
-            self._client = MiniMaxLLMClient(config.llm.minimax_api_key, self._model)
+            self._client = MiniMaxLLMClient(api_key, self._model)
         
         else:
             raise ValueError(f"Unknown LLM provider: {self._provider}")
+
+    def _resolve_provider(
+        self,
+        config: Any,
+        requested_provider: Union[LLMProvider, str],
+        requested_model: str,
+    ) -> tuple[LLMProvider, str, str]:
+        provider_order: List[LLMProvider] = []
+
+        normalized_requested = (
+            requested_provider
+            if isinstance(requested_provider, LLMProvider)
+            else LLMProvider(str(requested_provider).lower())
+        )
+        provider_order.append(normalized_requested)
+
+        for candidate in (
+            LLMProvider.OPENROUTER,
+            LLMProvider.OPENAI,
+            LLMProvider.ANTHROPIC,
+            LLMProvider.GOOGLE,
+            LLMProvider.MINIMAX,
+        ):
+            if candidate not in provider_order:
+                provider_order.append(candidate)
+
+        provider_keys = {
+            LLMProvider.GOOGLE: config.llm.google_api_key,
+            LLMProvider.OPENAI: config.llm.openai_api_key,
+            LLMProvider.ANTHROPIC: config.llm.anthropic_api_key,
+            LLMProvider.OPENROUTER: config.llm.openrouter_api_key,
+            LLMProvider.MINIMAX: config.llm.minimax_api_key,
+        }
+
+        for candidate in provider_order:
+            api_key = provider_keys.get(candidate)
+            if not api_key:
+                continue
+
+            if candidate != normalized_requested:
+                logger.warning(
+                    "LLM provider %s is not configured, falling back to %s",
+                    normalized_requested,
+                    candidate,
+                )
+
+            resolved_model = (
+                requested_model
+                if candidate == normalized_requested
+                else _PROVIDER_DEFAULT_MODELS[candidate]
+            )
+            return candidate, api_key, resolved_model
+
+        missing_envs = ", ".join(_PROVIDER_ENV_MAP.values())
+        raise ValueError(
+            "No LLM provider credentials configured. Set one of: "
+            f"{missing_envs}"
+        )
     
     def generate(
         self,

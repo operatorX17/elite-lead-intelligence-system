@@ -604,8 +604,15 @@ Requirements:
             self._db.create_conversation(data)
 
 
-_conversation_agent = ConversationAgent()
+_conversation_agent: Optional[ConversationAgent] = None
+
+
+def _get_conversation_agent() -> ConversationAgent:
+    global _conversation_agent
+    if _conversation_agent is None:
+        _conversation_agent = ConversationAgent()
+    return _conversation_agent
 
 
 def conversation_node(state: LeadGraphState) -> LeadGraphState:
-    return _conversation_agent(state)
+    return _get_conversation_agent()(state)

@@ -466,10 +466,16 @@ class DiscoveryAgent(BaseAgent, CircuitBreakerMixin, RetryMixin):
         return result
 
 
-# Create singleton instance for LangGraph node
-_discovery_agent = DiscoveryAgent()
+_discovery_agent: Optional[DiscoveryAgent] = None
+
+
+def _get_discovery_agent() -> DiscoveryAgent:
+    global _discovery_agent
+    if _discovery_agent is None:
+        _discovery_agent = DiscoveryAgent()
+    return _discovery_agent
 
 
 def discovery_node(state: LeadGraphState) -> LeadGraphState:
     """LangGraph node function for discovery."""
-    return _discovery_agent(state)
+    return _get_discovery_agent()(state)

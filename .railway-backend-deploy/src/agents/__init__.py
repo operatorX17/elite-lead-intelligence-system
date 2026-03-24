@@ -1,23 +1,33 @@
-"""Agent nodes for ZRAI Lead OS LangGraph."""
+"""Agent nodes for ZRAI Lead OS LangGraph.
 
-from .discovery import discovery_node
-from .enrichment import enrichment_node
-from .intent import intent_node
-from .audit import audit_node
-from .scoring import scoring_node
-from .outreach import outreach_node
-from .conversation import conversation_node
-from .governance import governance_node
-from .eval import eval_node
+Keep imports lazy so importing one submodule does not eagerly construct every
+agent and all of their external clients during API startup.
+"""
 
-__all__ = [
-    "discovery_node",
-    "enrichment_node",
-    "intent_node",
-    "audit_node",
-    "scoring_node",
-    "outreach_node",
-    "conversation_node",
-    "governance_node",
-    "eval_node",
-]
+from importlib import import_module
+from typing import Any
+
+
+_NODE_MODULES = {
+    "discovery_node": ".discovery",
+    "enrichment_node": ".enrichment",
+    "intent_node": ".intent",
+    "audit_node": ".audit",
+    "scoring_node": ".scoring",
+    "outreach_node": ".outreach",
+    "conversation_node": ".conversation",
+    "governance_node": ".governance",
+    "eval_node": ".eval",
+}
+
+
+def __getattr__(name: str) -> Any:
+    module_name = _NODE_MODULES.get(name)
+    if not module_name:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+    module = import_module(module_name, __name__)
+    return getattr(module, name)
+
+
+__all__ = list(_NODE_MODULES)
