@@ -1611,10 +1611,16 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         self._db.save_enrichment_data(data)
 
 
-# Create singleton instance for LangGraph node
-_enrichment_agent = EnrichmentAgent()
+_enrichment_agent: Optional[EnrichmentAgent] = None
+
+
+def _get_enrichment_agent() -> EnrichmentAgent:
+    global _enrichment_agent
+    if _enrichment_agent is None:
+        _enrichment_agent = EnrichmentAgent()
+    return _enrichment_agent
 
 
 def enrichment_node(state: LeadGraphState) -> LeadGraphState:
     """LangGraph node function for enrichment."""
-    return _enrichment_agent(state)
+    return _get_enrichment_agent()(state)

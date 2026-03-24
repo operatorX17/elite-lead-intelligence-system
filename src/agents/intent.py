@@ -11,7 +11,6 @@ import logging
 from src.agents.base import BaseAgent
 from src.graph.state import LeadGraphState
 from src.db.models import IntentData, SpeedToLeadRisk, ReviewEvidence, CTAType
-from src.tools.llm import get_llm_client
 
 
 logger = logging.getLogger(__name__)
@@ -88,7 +87,6 @@ class IntentAgent(BaseAgent):
     
     def __init__(self):
         super().__init__("intent")
-        self._llm = get_llm_client()
     
     def process(self, state: LeadGraphState) -> LeadGraphState:
         """Process intent detection for a lead."""
@@ -523,10 +521,16 @@ class IntentAgent(BaseAgent):
         self._db.save_intent_data(data)
 
 
-# Create singleton instance for LangGraph node
-_intent_agent = IntentAgent()
+_intent_agent: Optional[IntentAgent] = None
+
+
+def _get_intent_agent() -> IntentAgent:
+    global _intent_agent
+    if _intent_agent is None:
+        _intent_agent = IntentAgent()
+    return _intent_agent
 
 
 def intent_node(state: LeadGraphState) -> LeadGraphState:
     """LangGraph node function for intent detection."""
-    return _intent_agent(state)
+    return _get_intent_agent()(state)

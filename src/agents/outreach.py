@@ -14,7 +14,6 @@ from src.db.models import (
     OutreachQueue, OutreachChannel, OutreachVariant, 
     OutreachStatus, Personalization, LeadTier
 )
-from src.tools.llm import get_llm_client
 from src.tools.pinecone_client import PineconeClient
 
 
@@ -55,11 +54,12 @@ class OutreachAgent(BaseAgent):
 
 {impact}
 
+{offer}
+
 {cta}"""
     
     def __init__(self):
         super().__init__("outreach")
-        self._llm = get_llm_client()
         try:
             self._pinecone = PineconeClient()
         except:
@@ -209,8 +209,8 @@ class OutreachAgent(BaseAgent):
         # Opt-out line (Requirement 8.4)
         opt_out = "[Reply STOP to unsubscribe]"
         
-        # Generate email body
-        email_body = self.EMAIL_TEMPLATE.format(
+        template = self.EMAIL_TEMPLATE if channel == "email" else self.DM_TEMPLATE
+        message_body = template.format(
             decision_maker_name=personalization.get("decision_maker_name", "there"),
             observation=observation,
             impact=impact,
@@ -218,9 +218,8 @@ class OutreachAgent(BaseAgent):
             cta=cta,
             opt_out=opt_out,
         )
-        
-        # Generate subject line
-        subject = self._generate_subject(lead, variant)
+
+        subject = self._generate_subject(lead, variant) if channel == "email" else None
         
         # Get attachments (screenshots)
         attachments = []
@@ -236,7 +235,7 @@ class OutreachAgent(BaseAgent):
             "channel": channel,
             "variant": variant,
             "subject": subject,
-            "body": email_body,
+            "body": message_body,
             "attachments": attachments,
             "personalization": personalization,
             "status": "pending",
@@ -455,10 +454,16 @@ class OutreachAgent(BaseAgent):
         self._db.create_outreach(data)
 
 
-# Create singleton instance for LangGraph node
-_outreach_agent = OutreachAgent()
+_outreach_agent: Optional[OutreachAgent] = None
+
+
+def _get_outreach_agent() -> OutreachAgent:
+    global _outreach_agent
+    if _outreach_agent is None:
+        _outreach_agent = OutreachAgent()
+    return _outreach_agent
 
 
 def outreach_node(state: LeadGraphState) -> LeadGraphState:
     """LangGraph node function for outreach."""
-    return _outreach_agent(state)
+    return _get_outreach_agent()(state)

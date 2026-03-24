@@ -269,6 +269,13 @@ class ScoringAgent(BaseAgent):
         reactivation_fit = self._to_int(intent.get("reactivation_fit"))
         content_ready_score = self._to_int(signal_facts.get("content_ready_score"))
         booking_quality = str(signal_facts.get("booking_flow_quality") or "none").lower()
+        contact_intelligence = signal_facts.get("contact_intelligence") or {}
+        contact_quality_score = self._to_int(
+            signal_facts.get("contact_quality_score") or contact_intelligence.get("contact_quality_score")
+        )
+        top_contact = contact_intelligence.get("top_contact") or {}
+        alternate_contacts = contact_intelligence.get("alternate_contacts") or []
+        branch_contacts = signal_facts.get("branch_contacts") or []
 
         demand_score = 0
         if reviews >= 500:
@@ -307,6 +314,26 @@ class ScoringAgent(BaseAgent):
         if social_count:
             trust_score += min(social_count, 3) * 5
         trust_score += min(int(content_ready_score / 10), 20)
+        if contact_quality_score:
+            trust_score += min(int(contact_quality_score / 8), 15)
+        if top_contact:
+            trust_score += 4
+            contact_type = str(top_contact.get("contact_type") or "").lower()
+            if contact_type in {"founder_direct", "doctor_direct", "actual_contact"}:
+                trust_score += 8
+            if top_contact.get("phone"):
+                trust_score += 3
+            if top_contact.get("email"):
+                trust_score += 3
+            if top_contact.get("linkedin"):
+                trust_score += 3
+            confidence = self._to_int(top_contact.get("confidence"))
+            if confidence:
+                trust_score += min(int(confidence / 15), 6)
+        if alternate_contacts:
+            trust_score += min(len(alternate_contacts), 4) * 2
+        if branch_contacts:
+            trust_score += min(len(branch_contacts), 3) * 2
         if reviews >= 200 and rating >= 4.5:
             trust_score = max(trust_score, 35)
 
@@ -461,8 +488,15 @@ class ScoringAgent(BaseAgent):
         self._db.save_scoring_result(data)
 
 
-_scoring_agent = ScoringAgent()
+_scoring_agent: Optional[ScoringAgent] = None
+
+
+def _get_scoring_agent() -> ScoringAgent:
+    global _scoring_agent
+    if _scoring_agent is None:
+        _scoring_agent = ScoringAgent()
+    return _scoring_agent
 
 
 def scoring_node(state: LeadGraphState) -> LeadGraphState:
-    return _scoring_agent(state)
+    return _get_scoring_agent()(state)

@@ -23,7 +23,6 @@ from src.agents.base import BaseAgent, CircuitBreakerMixin
 from src.graph.state import LeadGraphState
 from src.db.models import ProofArtifact, AuditBullet
 from src.tools.steel import SteelClient
-from src.tools.llm import get_llm_client
 
 
 logger = logging.getLogger(__name__)
@@ -48,7 +47,6 @@ class AuditAgent(BaseAgent, CircuitBreakerMixin):
     def __init__(self):
         super().__init__("audit")
         self._steel = SteelClient()
-        self._llm = get_llm_client()
         self._ocr = RapidOCR() if RapidOCR else None
     
     def process(self, state: LeadGraphState) -> LeadGraphState:
@@ -1270,10 +1268,16 @@ class AuditAgent(BaseAgent, CircuitBreakerMixin):
         self._db.save_proof_artifact(data)
 
 
-# Create singleton instance for LangGraph node
-_audit_agent = AuditAgent()
+_audit_agent: Optional[AuditAgent] = None
+
+
+def _get_audit_agent() -> AuditAgent:
+    global _audit_agent
+    if _audit_agent is None:
+        _audit_agent = AuditAgent()
+    return _audit_agent
 
 
 def audit_node(state: LeadGraphState) -> LeadGraphState:
     """LangGraph node function for audit."""
-    return _audit_agent(state)
+    return _get_audit_agent()(state)

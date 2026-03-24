@@ -341,35 +341,27 @@ async def lifespan(app: FastAPI):
             ", ".join(removed_proxy_keys),
         )
     
-    # Initialize agents and orchestrator
+    # Keep startup lightweight so healthchecks do not depend on every external
+    # service credential being present. Agents are initialized lazily.
+    app.state.orchestrator = None
+    app.state.discovery_agent = None
+    app.state.enrichment_agent = None
+    app.state.intent_agent = None
+    app.state.audit_agent = None
+    app.state.scoring_agent = None
+    app.state.outreach_agent = None
+    app.state.conversation_agent = None
+    app.state.governance_agent = None
+
     try:
-        from src.graph.orchestrator import LeadOrchestrator
-        from src.agents.discovery import DiscoveryAgent
-        from src.agents.enrichment import EnrichmentAgent
-        from src.agents.intent import IntentAgent
-        from src.agents.audit import AuditAgent
-        from src.agents.scoring import ScoringAgent
-        from src.agents.outreach import OutreachAgent
-        from src.agents.conversation import ConversationAgent
-        from src.agents.governance import GovernanceAgent
         from src.db.client import get_supabase_client
-        
-        app.state.orchestrator = LeadOrchestrator()
-        app.state.discovery_agent = DiscoveryAgent()
-        app.state.enrichment_agent = EnrichmentAgent()
-        app.state.intent_agent = IntentAgent()
-        app.state.audit_agent = AuditAgent()
-        app.state.scoring_agent = ScoringAgent()
-        app.state.outreach_agent = OutreachAgent()
-        app.state.conversation_agent = ConversationAgent()
-        app.state.governance_agent = GovernanceAgent()
         app.state.db = get_supabase_client()
-        
-        logger.info("All agents initialized successfully")
+        logger.info("Database initialized; agents will be loaded lazily")
     except Exception as e:
-        logger.error(f"Failed to initialize agents: {e}")
+        logger.error(f"Failed to initialize database: {e}")
         import traceback
         traceback.print_exc()
+        app.state.db = None
         app.state.orchestrator = None
     
     yield
@@ -457,6 +449,97 @@ def get_audit_agent():
             logger.error(f"Failed to initialize audit agent: {e}")
             raise HTTPException(status_code=503, detail=f"Audit agent not initialized: {e}")
     return app.state.audit_agent
+
+
+def get_enrichment_agent():
+    """Get the enrichment agent with lazy initialization."""
+    if not hasattr(app.state, 'enrichment_agent') or app.state.enrichment_agent is None:
+        try:
+            from src.agents.enrichment import EnrichmentAgent
+            app.state.enrichment_agent = EnrichmentAgent()
+            logger.info("Enrichment agent lazily initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize enrichment agent: {e}")
+            raise HTTPException(status_code=503, detail=f"Enrichment agent not initialized: {e}")
+    return app.state.enrichment_agent
+
+
+def get_intent_agent():
+    """Get the intent agent with lazy initialization."""
+    if not hasattr(app.state, 'intent_agent') or app.state.intent_agent is None:
+        try:
+            from src.agents.intent import IntentAgent
+            app.state.intent_agent = IntentAgent()
+            logger.info("Intent agent lazily initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize intent agent: {e}")
+            raise HTTPException(status_code=503, detail=f"Intent agent not initialized: {e}")
+    return app.state.intent_agent
+
+
+def get_scoring_agent():
+    """Get the scoring agent with lazy initialization."""
+    if not hasattr(app.state, 'scoring_agent') or app.state.scoring_agent is None:
+        try:
+            from src.agents.scoring import ScoringAgent
+            app.state.scoring_agent = ScoringAgent()
+            logger.info("Scoring agent lazily initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize scoring agent: {e}")
+            raise HTTPException(status_code=503, detail=f"Scoring agent not initialized: {e}")
+    return app.state.scoring_agent
+
+
+def get_outreach_agent():
+    """Get the outreach agent with lazy initialization."""
+    if not hasattr(app.state, 'outreach_agent') or app.state.outreach_agent is None:
+        try:
+            from src.agents.outreach import OutreachAgent
+            app.state.outreach_agent = OutreachAgent()
+            logger.info("Outreach agent lazily initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize outreach agent: {e}")
+            raise HTTPException(status_code=503, detail=f"Outreach agent not initialized: {e}")
+    return app.state.outreach_agent
+
+
+def get_conversation_agent():
+    """Get the conversation agent with lazy initialization."""
+    if not hasattr(app.state, 'conversation_agent') or app.state.conversation_agent is None:
+        try:
+            from src.agents.conversation import ConversationAgent
+            app.state.conversation_agent = ConversationAgent()
+            logger.info("Conversation agent lazily initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize conversation agent: {e}")
+            raise HTTPException(status_code=503, detail=f"Conversation agent not initialized: {e}")
+    return app.state.conversation_agent
+
+
+def get_governance_agent():
+    """Get the governance agent with lazy initialization."""
+    if not hasattr(app.state, 'governance_agent') or app.state.governance_agent is None:
+        try:
+            from src.agents.governance import GovernanceAgent
+            app.state.governance_agent = GovernanceAgent()
+            logger.info("Governance agent lazily initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize governance agent: {e}")
+            raise HTTPException(status_code=503, detail=f"Governance agent not initialized: {e}")
+    return app.state.governance_agent
+
+
+def get_orchestrator():
+    """Get the orchestrator with lazy initialization."""
+    if not hasattr(app.state, 'orchestrator') or app.state.orchestrator is None:
+        try:
+            from src.graph.orchestrator import LeadOrchestrator
+            app.state.orchestrator = LeadOrchestrator()
+            logger.info("Orchestrator lazily initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize orchestrator: {e}")
+            raise HTTPException(status_code=503, detail=f"Orchestrator not initialized: {e}")
+    return app.state.orchestrator
 
 
 def normalize_lead_status(raw_status: Optional[str]) -> str:
@@ -1907,7 +1990,7 @@ def verify_clinic_ads(
         }
 
     try:
-        items = app.state.discovery_agent._apify.run_facebook_page_ads_scraper(
+        items = get_discovery_agent()._apify.run_facebook_page_ads_scraper(
             [str(facebook_page)],
             count=25,
             country_code="ALL",
@@ -2039,7 +2122,7 @@ def get_processed_details_for_lead(db, lead_id: str) -> Dict[str, Any]:
                 current_stage="scoring",
                 last_node="audit",
             )
-            refreshed_state = app.state.scoring_agent(refreshed_state)
+            refreshed_state = get_scoring_agent()(refreshed_state)
             scoring = refreshed_state.get("scoring") or scoring
 
     signal_facts = build_signal_facts(
@@ -2431,9 +2514,9 @@ def run_discovery_followup_pipeline(db, lead_data: Dict[str, Any]) -> Dict[str, 
         last_node="discovery",
     )
 
-    enrichment_agent = app.state.enrichment_agent
-    intent_agent = app.state.intent_agent
-    scoring_agent = app.state.scoring_agent
+    enrichment_agent = get_enrichment_agent()
+    intent_agent = get_intent_agent()
+    scoring_agent = get_scoring_agent()
 
     state = enrichment_agent(state)
     state = intent_agent(state)
@@ -2474,11 +2557,11 @@ def run_selected_lead_pipeline(
         },
     )
 
-    enrichment_agent = app.state.enrichment_agent
-    intent_agent = app.state.intent_agent
+    enrichment_agent = get_enrichment_agent()
+    intent_agent = get_intent_agent()
     audit_agent = get_audit_agent()
-    scoring_agent = app.state.scoring_agent
-    outreach_agent = app.state.outreach_agent
+    scoring_agent = get_scoring_agent()
+    outreach_agent = get_outreach_agent()
 
     state = enrichment_agent(state)
     state = intent_agent(state)
@@ -3753,7 +3836,7 @@ async def enrich_lead(
         from uuid import UUID
         
         db = get_db()
-        enrichment_agent = app.state.enrichment_agent
+        enrichment_agent = get_enrichment_agent()
         
         # Get lead from database
         lead_data = db.get_lead(request.lead_id)
@@ -3802,7 +3885,7 @@ async def analyze_intent(
         from uuid import UUID
         
         db = get_db()
-        intent_agent = app.state.intent_agent
+        intent_agent = get_intent_agent()
         
         # Get lead from database
         lead_data = db.get_lead(request.lead_id)
@@ -4304,7 +4387,7 @@ async def score_leads(
         from uuid import UUID
         
         db = get_db()
-        scoring_agent = app.state.scoring_agent
+        scoring_agent = get_scoring_agent()
         
         results = []
         
@@ -4400,7 +4483,7 @@ async def handle_outreach(
         from uuid import UUID
         
         db = get_db()
-        outreach_agent = app.state.outreach_agent
+        outreach_agent = get_outreach_agent()
         
         # Get lead from database
         lead_data = db.get_lead(request.lead_id)
@@ -4455,7 +4538,7 @@ async def handle_conversation(
         from uuid import UUID
         
         db = get_db()
-        conversation_agent = app.state.conversation_agent
+        conversation_agent = get_conversation_agent()
         
         # Get lead from database
         lead_data = db.get_lead(request.lead_id)
@@ -4660,9 +4743,7 @@ async def run_pipeline(
     try:
         from uuid import UUID
         
-        orchestrator = app.state.orchestrator
-        if not orchestrator:
-            raise HTTPException(status_code=503, detail="Orchestrator not initialized")
+        orchestrator = get_orchestrator()
         
         run_id = request.run_id or str(uuid4())
         
