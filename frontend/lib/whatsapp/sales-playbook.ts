@@ -38,6 +38,33 @@ const OBJECTION_PATTERNS: Record<string, RegExp[]> = {
   roi: [/\bactual patients\b/i, /\bmore bookings\b/i, /\bwill this work\b/i],
 };
 
+function normalizeReplyFingerprint(value: string | null | undefined) {
+  return String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function pickFreshReply(
+  candidates: string[],
+  recentReplies: Array<string | null | undefined>
+) {
+  const seen = new Set(
+    recentReplies
+      .map((reply) => normalizeReplyFingerprint(reply))
+      .filter(Boolean)
+  );
+
+  for (const candidate of candidates) {
+    const fingerprint = normalizeReplyFingerprint(candidate);
+    if (!seen.has(fingerprint)) {
+      return candidate;
+    }
+  }
+
+  return candidates[0] ?? "";
+}
+
 const PAIN_PATTERNS: Record<string, RegExp[]> = {
   missed_follow_up: [/\bmissed\b/i, /\bdrop ?off\b/i, /\bno follow[- ]?up\b/i],
   slow_response: [/\bslow\b/i, /\blate\b/i, /\bdelay\b/i, /\bnot replied\b/i],
@@ -318,32 +345,80 @@ export function buildHandoffReason(state: WhatsAppAgentState) {
   return null;
 }
 
-export function buildWhatsAppFallbackReply(state: WhatsAppAgentState) {
+export function buildWhatsAppFallbackReply(
+  state: WhatsAppAgentState,
+  recentReplies: Array<string | null | undefined> = []
+) {
+  const replyHistory = [state.lastSuggestedReply, ...recentReplies];
+
   if (state.optOut) {
-    return "Understood. I'll close the loop here and won't continue the follow-up.";
+    return pickFreshReply(
+      [
+        "Understood. I'll close the loop here and won't continue the follow-up.",
+        "Understood. I'll stop the follow-up here and keep you off the list.",
+      ],
+      replyHistory
+    );
   }
 
   if (state.handoffRecommended) {
-    return "Makes sense. I'll have a human from our team take this over so you get a clean answer.";
+    return pickFreshReply(
+      [
+        "Makes sense. I'll have a human from our team take this over so you get a clean answer.",
+        "Got it. I'll pass this to a human so you get a clear answer without the back-and-forth.",
+      ],
+      replyHistory
+    );
   }
 
   if (!state.painConfirmed) {
-    return "Got it. I was only checking because even a small drop between enquiry and booking can quietly cost appointments. Have you looked at that side closely?";
+    return pickFreshReply(
+      [
+        "Got it. Where is the bigger leak right now: enquiries, call pickup, or bookings?",
+        "Understood. Which part is slipping more: getting leads, converting them, or following up fast enough?",
+        "I am checking the bottleneck that is costing bookings. What feels weakest today?",
+      ],
+      replyHistory
+    );
   }
 
   if (state.objectionCategories.length > 0) {
-    return "Fair point. I'm not talking about more noise, just a cleaner way to stop warm enquiries from slipping. Would it help if I keep it to the exact gap I'm seeing?";
+    return pickFreshReply(
+      [
+        "Fair point. I am not talking about more noise, just the exact gap I am seeing. Should I keep it to one practical observation?",
+        "Makes sense. I can keep it to the one leak that matters most if you'd like.",
+      ],
+      replyHistory
+    );
   }
 
   if (!state.decisionMakerConfirmed) {
-    return "Makes sense. Who usually looks after this side for you right now: doctor, manager, or front desk?";
+    return pickFreshReply(
+      [
+        "Makes sense. Who usually looks after this side for you right now: doctor, manager, or front desk?",
+        "Quick check: who usually handles bookings and follow-up there?",
+      ],
+      replyHistory
+    );
   }
 
   if (state.requestedNextStep === "call") {
-    return "Makes sense. A quick 10-minute look will be cleaner than a long text. Would this evening or tomorrow afternoon be easier?";
+    return pickFreshReply(
+      [
+        "Makes sense. A quick 10-minute look will be cleaner than a long text. Would this evening or tomorrow afternoon be easier?",
+        "Happy to keep it short. Would today or tomorrow work better for a quick call?",
+      ],
+      replyHistory
+    );
   }
 
-  return "Understood. If you're open, I can show you the exact leak points I'd look at first and keep it very practical.";
+  return pickFreshReply(
+    [
+      "Understood. If you're open, I can show you the exact leak points I'd look at first and keep it very practical.",
+      "If helpful, I can start with the one thing most likely causing drop-off and keep it tight.",
+    ],
+    replyHistory
+  );
 }
 
 export function buildWhatsAppSystemPrompt({
@@ -381,6 +456,7 @@ export function buildWhatsAppSystemPrompt({
     "Focus on response speed, follow-up discipline, missed bookings, and operational leakage.",
     "If the lead asks for a human, pricing, pilot details, or seems uncomfortable, keep it short and move to handoff.",
     "Do not invent case studies, guaranteed ROI, or direct founder contact if it is not verified.",
+    "Do not repeat your last suggested reply. If a similar reply is already in the recent transcript, vary the wording and ask a different diagnostic question.",
     `Current stage: ${state.stage}`,
     `Priority: ${state.priority}`,
     `Pain points: ${state.painPoints.join(", ") || "not yet confirmed"}`,

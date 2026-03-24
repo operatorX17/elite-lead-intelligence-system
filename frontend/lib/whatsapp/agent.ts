@@ -25,6 +25,39 @@ function normalizeBotReply(reply: string) {
     .slice(0, 420);
 }
 
+function normalizeReplyFingerprint(value: string | null | undefined) {
+  return String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function getRecentAssistantReplies(messages: WhatsAppMessage[]) {
+  return messages
+    .filter(
+      (message) =>
+        message.direction === "outgoing" &&
+        (message.authorType === "bot" || message.authorType === "human")
+    )
+    .slice(-4)
+    .map((message) => message.body)
+    .filter(Boolean);
+}
+
+function isRepeatedReply(
+  reply: string,
+  recentReplies: Array<string | null | undefined>
+) {
+  const fingerprint = normalizeReplyFingerprint(reply);
+  if (!fingerprint) {
+    return true;
+  }
+
+  return recentReplies.some(
+    (recentReply) => normalizeReplyFingerprint(recentReply) === fingerprint
+  );
+}
+
 export type WhatsAppReplyPlan = {
   classification: ReturnType<typeof classifyInboundLeadMessage>;
   nextState: WhatsAppAgentState;
@@ -35,7 +68,7 @@ export type WhatsAppReplyPlan = {
 
 export { classifyInboundLeadMessage };
 
-const WHATSAPP_REPLY_TIMEOUT_MS = 15000;
+const WHATSAPP_REPLY_TIMEOUT_MS = 9000;
 
 export async function generateWhatsAppReplyPlan({
   conversation,
@@ -56,7 +89,8 @@ export async function generateWhatsAppReplyPlan({
     currentState,
   });
 
-  let replyText = buildWhatsAppFallbackReply(nextState);
+  const recentReplies = getRecentAssistantReplies(messages);
+  let replyText = buildWhatsAppFallbackReply(nextState, recentReplies);
 
   if (
     process.env.OPENROUTER_API_KEY &&
@@ -68,6 +102,8 @@ export async function generateWhatsAppReplyPlan({
         generateText({
           model: getLanguageModel(DEFAULT_CHAT_MODEL),
           abortSignal: abortSignal ?? undefined,
+          temperature: 0.35,
+          maxOutputTokens: 120,
           system: buildWhatsAppSystemPrompt({
             conversation,
             state: nextState,
@@ -89,7 +125,7 @@ export async function generateWhatsAppReplyPlan({
       ]);
 
       const normalized = normalizeBotReply(result.text);
-      if (normalized) {
+      if (normalized && !isRepeatedReply(normalized, [nextState.lastSuggestedReply, ...recentReplies])) {
         replyText = normalized;
       }
     } catch (error) {
