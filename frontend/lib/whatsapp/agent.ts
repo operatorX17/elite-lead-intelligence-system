@@ -189,12 +189,17 @@ export async function generateWhatsAppReplyPlan({
     incomingText,
     currentState,
   });
+  const shouldBypassHeavyGeneration =
+    (classification.isGreeting || classification.isAcknowledgement) &&
+    !classification.requestedNextStep &&
+    !classification.handoffRequested &&
+    !classification.optOut;
 
   const recentReplies = getRecentAssistantReplies(messages);
   let replyText: string | null = null;
   let effectiveNextState = nextState;
 
-  if (conversation.linkedLeadId) {
+  if (!shouldBypassHeavyGeneration && conversation.linkedLeadId) {
     const backendAbortController = new AbortController();
     const backendTimeout = setTimeout(
       () => backendAbortController.abort(),
@@ -236,6 +241,7 @@ export async function generateWhatsAppReplyPlan({
 
   if (
     !replyText &&
+    !shouldBypassHeavyGeneration &&
     process.env.OPENROUTER_API_KEY &&
     !effectiveNextState.optOut &&
     !effectiveNextState.handoffRecommended

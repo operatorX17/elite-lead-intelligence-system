@@ -138,6 +138,12 @@ function isLightweightGreeting(text: string) {
   );
 }
 
+function isLightweightAcknowledgement(text: string) {
+  return /^\s*(?:ok(?:ay)?|alright|all\s+right|got\s+it|cool|fine|fair|right|sure|makes\s+sense|noted|hmm|hm|kk|k)[!?.\s]*$/i.test(
+    text
+  );
+}
+
 function inferRole(text: string) {
   for (const [label, patterns] of Object.entries(ROLE_PATTERNS)) {
     if (patterns.some((pattern) => pattern.test(text))) {
@@ -277,6 +283,7 @@ export function classifyInboundLeadMessage(text: string) {
       handoffRequested: false,
       escalateToHuman: false,
       isGreeting: false,
+      isAcknowledgement: false,
     };
   }
 
@@ -304,6 +311,7 @@ export function classifyInboundLeadMessage(text: string) {
         ["price", "safety", "integration"].includes(label)
       ),
     isGreeting: isLightweightGreeting(normalized),
+    isAcknowledgement: isLightweightAcknowledgement(normalized),
   };
 }
 
@@ -476,6 +484,26 @@ export function buildWhatsAppFallbackReply(
       [
         "Hey. What side do you want to look at first: replies, follow-up, or bookings?",
         "Hi. What do you want to sort first: response speed, follow-up, or booking flow?",
+      ],
+      replyHistory
+    );
+  }
+
+  if (isLightweightAcknowledgement(incomingText || "")) {
+    if (state.requestedNextStep === "details") {
+      return pickFreshReply(
+        [
+          "Alright. Do you want the second leak, or do you want to stay on the handoff gap first?",
+          "Okay. I can give you the next leak, or we can unpack the first one properly.",
+        ],
+        replyHistory
+      );
+    }
+
+    return pickFreshReply(
+      [
+        "Alright. Which side do you want to go deeper on: first reply, follow-up, or booking handoff?",
+        "Okay. Do you want to look deeper at response speed, follow-up, or booking flow?",
       ],
       replyHistory
     );
