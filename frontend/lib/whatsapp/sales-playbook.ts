@@ -190,42 +190,41 @@ function buildGenericProofReply(firstPain: string | null) {
   switch (firstPain) {
     case "booking gap":
       return [
-        "First place I'd check is the gap between first enquiry and the actual booking ask. Warm leads usually cool off there before the slot is even offered.",
-        "First leak I'd inspect is enquiry-to-booking handoff. If that step is loose, good intent dies before the calendar gets involved.",
+        "I'd start with the booking handoff after the first enquiry. That's usually where the thread loosens.",
+        "I'd look at whether the first answer turns into a real next step quickly enough. That is usually the leak.",
       ];
     case "slow response":
       return [
-        "First place I'd check is reply speed after the first enquiry. Once response time slips, intent drops much faster than most teams expect.",
-        "First leak I'd inspect is how quickly the first message gets answered. That delay alone can quietly cost a surprising number of bookings.",
+        "I'd start with reply speed on the first enquiry. That is usually where warm intent cools fastest.",
+        "I'd check whether the first message gets a real answer or just a delay. That is the leak I see most.",
       ];
     case "missed follow up":
       return [
-        "First place I'd check is what happens after the first reply. One missed follow-up is often enough for a warm lead to disappear.",
-        "First leak I'd inspect is whether enquiries get a proper second touch. That silent gap usually costs more bookings than people realise.",
+        "I'd start with the second touch. One missed follow-up is often enough to lose the lead.",
+        "I'd look at what happens after the first reply. That quiet gap usually costs bookings.",
       ];
     case "whatsapp gap":
       return [
-        "First place I'd check is the WhatsApp thread itself. If nobody owns the chat cleanly, leads stall after the first question.",
-        "First leak I'd inspect is how WhatsApp chats are handled after the opener. If ownership is fuzzy, intent leaks fast there.",
+        "I'd start with how the WhatsApp thread is owned after the opener. If nobody owns it cleanly, leads stall.",
+        "I'd inspect whether the chat gets a real next step or just more back-and-forth. That is where intent leaks.",
       ];
     case "staff dependency":
       return [
-        "First place I'd check is the handoff between doctor and front desk. Good intent usually leaks when ownership shifts mid-thread.",
-        "First leak I'd inspect is who actually owns the thread after interest shows up. Staff dependency quietly slows the whole close path.",
+        "I'd start with the handoff between doctor and front desk. That is where good intent usually leaks.",
+        "I'd look at who actually owns the first reply and follow-up. Staff dependency slows the close path.",
       ];
     case "no show":
       return [
-        "First place I'd check is the gap between booking and showing up. Loose reminders and reconfirmation usually make that leak worse.",
-        "First leak I'd inspect is what happens after a slot gets booked. If reconfirmation is weak, no-shows stack up quietly.",
+        "I'd start with the gap between booking and showing up. Weak reminders usually make that worse.",
+        "I'd inspect what happens after a slot gets booked. Weak reconfirmation quietly stacks up no-shows.",
       ];
     default:
       return [
-        "First place I'd check is speed from first enquiry to first meaningful reply. If that handoff is loose, warm intent cools before the team really gets a shot.",
-        "First leak I'd inspect is what happens in the first few minutes after someone reaches out. That early drop-off usually decides whether the booking ever happens.",
+        "I'd start with the first reply window after someone reaches out. That is usually where the thread starts slipping.",
+        "I'd check whether the enquiry gets a real next step or just a slow back-and-forth. That is where bookings disappear.",
       ];
   }
 }
-
 function inferConfidence({
   messages,
   painPoints,
@@ -446,8 +445,8 @@ export function buildWhatsAppFallbackReply(
   if (state.optOut) {
     return pickFreshReply(
       [
-        "I’ll close this thread and stop the follow-up.",
-        "I’ll keep you off the follow-up list from here.",
+        "I'll close this thread and stop the follow-up.",
+        "I'll keep you off the follow-up list from here.",
       ],
       replyHistory
     );
@@ -456,8 +455,62 @@ export function buildWhatsAppFallbackReply(
   if (state.handoffRecommended) {
     return pickFreshReply(
       [
-        "I’m handing this to a human so you get a clean answer.",
-        "I’ll pass this to a person on our side and keep it clean.",
+        "I'm handing this to a human so you get a clean answer.",
+        "I'll pass this to a person on our side and keep it clean.",
+      ],
+      replyHistory
+    );
+  }
+
+  if (state.requestedNextStep === "details") {
+    const topIssue = normalizePainLabel(leadContext?.topIssue);
+    const nextBestAction = lowerCaseFirst(leadContext?.nextBestAction);
+    const firstPain = normalizePainLabel(state.painPoints[0]);
+
+    if (topIssue && nextBestAction) {
+      return pickFreshReply(
+        [
+          `I'd tighten ${topIssue} first. I'd start by ${nextBestAction}. Want the second leak too?`,
+          `The clearest leak I see is ${topIssue}. First move I'd make is ${nextBestAction}. I can keep going if useful.`,
+        ],
+        replyHistory
+      );
+    }
+
+    if (topIssue) {
+      return pickFreshReply(
+        [
+          `I'd start with ${topIssue}. That is usually where warm intent slips. Want the next point too?`,
+          `The first leak is ${topIssue}. Fix that first and the thread usually gets cleaner. I can keep going if useful.`,
+        ],
+        replyHistory
+      );
+    }
+
+    if (firstPain) {
+      return pickFreshReply(
+        buildGenericProofReply(firstPain).map(
+          (reply) => `${reply} Want the next point too?`
+        ),
+        replyHistory
+      );
+    }
+
+    return pickFreshReply(
+      [
+        "I'd start with the first reply window after someone reaches out. That is usually where the thread starts slipping.",
+        "The cleanest place to look is who answers first and how quickly it turns into a real next step.",
+        "I'd check whether the enquiry gets a straight answer or just more back-and-forth. That's usually the leak.",
+      ],
+      replyHistory
+    );
+  }
+
+  if (state.requestedNextStep === "call") {
+    return pickFreshReply(
+      [
+        "A quick 10-minute look will be cleaner than a long text. Today or tomorrow?",
+        "Happy to keep it short. Today or tomorrow works better for a quick call?",
       ],
       replyHistory
     );
@@ -466,9 +519,9 @@ export function buildWhatsAppFallbackReply(
   if (!state.painConfirmed) {
     return pickFreshReply(
       [
-        "I’m looking at where bookings leak most: first reply, follow-up, or handoff. Which one feels weakest?",
-        "The first gap I’d check is response speed, lead handling, or booking ownership. Which one is hurting most?",
-        "I’m narrowing the bottleneck that costs bookings. What is slipping today?",
+        "I'm looking at where bookings leak most: first reply, follow-up, or handoff. Which one feels weakest?",
+        "The first gap I'd check is response speed, lead handling, or booking ownership. Which one is hurting most?",
+        "I'm narrowing the bottleneck that costs bookings. What is slipping today?",
       ],
       replyHistory
     );
@@ -477,7 +530,7 @@ export function buildWhatsAppFallbackReply(
   if (state.objectionCategories.length > 0) {
     return pickFreshReply(
       [
-        "Fair point. I’m not talking about more noise, just the one gap that matters. Want the short version?",
+        "Fair point. I'm not talking about more noise, just the one gap that matters. Want the short version?",
         "I can keep it to the leak that matters most and skip the fluff.",
       ],
       replyHistory
@@ -494,67 +547,14 @@ export function buildWhatsAppFallbackReply(
     );
   }
 
-  if (state.requestedNextStep === "call") {
-    return pickFreshReply(
-      [
-        "A quick 10-minute look will be cleaner than a long text. Today or tomorrow?",
-        "Happy to keep it short. Today or tomorrow works better for a quick call?",
-      ],
-      replyHistory
-    );
-  }
-
-  if (state.requestedNextStep === "details") {
-    const topIssue = normalizePainLabel(leadContext?.topIssue);
-    const nextBestAction = lowerCaseFirst(leadContext?.nextBestAction);
-    const firstPain = normalizePainLabel(state.painPoints[0]);
-
-    if (topIssue && nextBestAction) {
-      return pickFreshReply(
-        [
-          `First thing I'd tighten is ${topIssue}. I'd start by ${nextBestAction}. If you want, I'll show you the second leak after that.`,
-          `The clearest leak I see is ${topIssue}. First move I'd make is ${nextBestAction}. Want the next one too?`,
-        ],
-        replyHistory
-      );
-    }
-
-    if (topIssue) {
-      return pickFreshReply(
-        [
-          `First thing I'd look at is ${topIssue}. That is usually where warm intent slips. Want the second leak too?`,
-          `The first leak is ${topIssue}. Fix that first and the thread usually gets cleaner. Want the next one?`,
-        ],
-        replyHistory
-      );
-    }
-
-    if (firstPain) {
-      return pickFreshReply(
-        buildGenericProofReply(firstPain).map(
-          (reply) => `${reply} Want the next one too?`
-        ),
-        replyHistory
-      );
-    }
-
-    return pickFreshReply(
-      buildGenericProofReply(null).map(
-        (reply) => `${reply} If you want, I'll give you the second leak after that.`
-      ),
-      replyHistory
-    );
-  }
-
   return pickFreshReply(
     [
-      "I’d start with the first leak point and keep it practical.",
+      "I'd start with the first leak point and keep it practical.",
       "I can keep this tight and point to the main drop-off spot first.",
     ],
     replyHistory
   );
 }
-
 export function buildWhatsAppSystemPrompt({
   conversation,
   state,

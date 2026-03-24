@@ -300,18 +300,27 @@ def build_sales_fallback_response(
     analysis_bundle: Optional[Dict[str, Any]],
 ) -> str:
     guidance = (analysis_bundle or {}).get("guidance") or {}
-    top_issue = guidance.get("top_issue") or "the follow-up gap"
+    top_issue = guidance.get("top_issue") or "the first reply window"
 
     if entities.get("opt_out"):
         return "Understood. I'll close the loop here and won't continue the follow-up."
     if entities.get("requested_next_step") == "details":
-        return "Makes sense. I can send the short version here first. Would you prefer the quick summary or a 10-minute walkthrough?"
+        return (
+            f"The cleanest leak I see is {top_issue}. I'd start there and keep it practical. "
+            "Want the next point too?"
+        )
     if entities.get("requested_next_step") == "call":
         return "Makes sense. A quick 10-minute look will be cleaner than a long message. Would this evening or tomorrow afternoon be easier?"
     if not entities.get("pain_confirmed"):
-        return f"Got it. I was asking because even a small gap around {top_issue} can quietly lose bookings over time. Have you ever looked into that side closely?"
+        return (
+            f"I was asking because even a small gap around {top_issue} can quietly lose bookings over time. "
+            "Have you looked at that side closely?"
+        )
     if entities.get("objection_categories"):
         return "Fair point. I'm not suggesting more chaos, just a cleaner way to stop warm enquiries from slipping. Would it help if I keep it to the exact gap I'm seeing?"
     if not entities.get("decision_maker_confirmed"):
         return "Makes sense. Who usually oversees this side for you right now: doctor, manager, or front desk?"
-    return "Understood. If you're open, I can show you the exact leak points I'd look at first and keep it very practical."
+    return (
+        f"I'd start with {top_issue} and the first reply window around it. "
+        "That is usually where the thread cools if nobody owns it cleanly."
+    )

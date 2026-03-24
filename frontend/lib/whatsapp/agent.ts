@@ -12,6 +12,10 @@ import {
   deriveNextWhatsAppAgentState,
 } from "@/lib/whatsapp/sales-playbook";
 import {
+  buildLeadAwareAgentStatePatch,
+  requestLeadAwareWhatsAppReply,
+} from "@/lib/whatsapp/lead-context";
+import {
   normalizeWhatsAppAgentState,
   type WhatsAppLinkedLeadContext,
   type WhatsAppAgentState,
@@ -19,6 +23,7 @@ import {
 
 const WHATSAPP_FAST_MODEL =
   process.env.WHATSAPP_FAST_MODEL?.trim() || "openai/gpt-4o";
+const WHATSAPP_BACKEND_REPLY_TIMEOUT_MS = 6000;
 
 function normalizeBotReply(reply: string) {
   return reply
@@ -69,19 +74,41 @@ function isTemplateLikeReply(reply: string) {
   }
 
   const wordCount = normalized.split(/\s+/).filter(Boolean).length;
-  if (wordCount < 7) {
+  if (wordCount < 5) {
     return true;
   }
 
+  // Only reject obvious canned lines. Useful short operator replies should pass.
   return [
-    /^(got it|understood|makes sense)\b/i,
-    /\bif you want\b/i,
-    /\bi can (show|share) (you|that|them)\b/i,
-    /\bfirst place i'?d check\b/i,
-    /\bfirst thing i'?d look at\b/i,
-    /\bquick check\b/i,
-    /\bexact leak\b/i,
+    /^(got it|understood|makes sense)(?:[.!]?\s*)?$/i,
+    /^i(?:'|’)m looking at where bookings leak most(?:[.!]?\s*)?$/i,
+    /^the first gap i(?:'|’)d check is\b/i,
+    /^i(?:'|’)d start with the first few minutes after someone reaches out\b/i,
+    /^i(?:'|’)d start with reply speed after the first enquiry\b/i,
   ].some((pattern) => pattern.test(normalized));
+}
+
+function extractBackendReplyText(
+  response: Awaited<ReturnType<typeof requestLeadAwareWhatsAppReply>>
+) {
+  if (typeof response.response === "string") {
+    return response.response.trim();
+  }
+
+  const responseMessage = response.response?.message?.trim();
+  if (responseMessage) {
+    return responseMessage;
+  }
+
+  const aiResponse = response.ai_response?.trim();
+  if (aiResponse) {
+    return aiResponse;
+  }
+
+  const transcriptReply = String(
+    response.conversation?.entities?.last_ai_response ?? ""
+  ).trim();
+  return transcriptReply || null;
 }
 
 function buildReplyPrompt({
@@ -165,11 +192,53 @@ export async function generateWhatsAppReplyPlan({
 
   const recentReplies = getRecentAssistantReplies(messages);
   let replyText: string | null = null;
+  let effectiveNextState = nextState;
+
+  if (conversation.linkedLeadId) {
+    const backendAbortController = new AbortController();
+    const backendTimeout = setTimeout(
+      () => backendAbortController.abort(),
+      WHATSAPP_BACKEND_REPLY_TIMEOUT_MS
+    );
+
+    try {
+      const backendResponse = await requestLeadAwareWhatsAppReply({
+        leadId: conversation.linkedLeadId,
+        incomingText,
+        abortSignal: backendAbortController.signal,
+      });
+
+      const backendReply = normalizeBotReply(
+        extractBackendReplyText(backendResponse) || ""
+      );
+
+      if (
+        backendReply &&
+        !isRepeatedReply(backendReply, [nextState.lastSuggestedReply, ...recentReplies]) &&
+        !isTemplateLikeReply(backendReply)
+      ) {
+        replyText = backendReply;
+        effectiveNextState = buildLeadAwareAgentStatePatch({
+          currentState,
+          leadContext: conversation.leadContext ?? null,
+          aiResponse: backendReply,
+          conversation: backendResponse.conversation ?? null,
+          needsEscalation: backendResponse.needs_escalation,
+          escalationReason: backendResponse.escalation_reason || null,
+        });
+      }
+    } catch (error) {
+      console.warn("[whatsapp:agent] Backend conversation reply failed", error);
+    } finally {
+      clearTimeout(backendTimeout);
+    }
+  }
 
   if (
+    !replyText &&
     process.env.OPENROUTER_API_KEY &&
-    !nextState.optOut &&
-    !nextState.handoffRecommended
+    !effectiveNextState.optOut &&
+    !effectiveNextState.handoffRecommended
   ) {
     try {
       const generateReply = (system: string) =>
@@ -183,7 +252,7 @@ export async function generateWhatsAppReplyPlan({
             prompt: buildReplyPrompt({
               conversation,
               incomingText,
-              state: nextState,
+              state: effectiveNextState,
               messages,
               leadContext: conversation.leadContext ?? null,
               recentReplies,
@@ -199,7 +268,7 @@ export async function generateWhatsAppReplyPlan({
 
       const system = buildWhatsAppSystemPrompt({
         conversation,
-        state: nextState,
+        state: effectiveNextState,
         messages,
         leadContext: conversation.leadContext ?? null,
       });
@@ -231,7 +300,7 @@ export async function generateWhatsAppReplyPlan({
             prompt: buildReplyPrompt({
               conversation,
               incomingText,
-              state: nextState,
+              state: effectiveNextState,
               messages,
               leadContext: conversation.leadContext ?? null,
               recentReplies,
@@ -261,14 +330,14 @@ export async function generateWhatsAppReplyPlan({
 
   if (!replyText) {
     replyText = buildWhatsAppFallbackReply(
-      nextState,
+      effectiveNextState,
       recentReplies,
       conversation.leadContext ?? null
     );
   }
 
   const finalState = normalizeWhatsAppAgentState({
-    ...nextState,
+    ...effectiveNextState,
     lastSuggestedReply: replyText,
   });
 
