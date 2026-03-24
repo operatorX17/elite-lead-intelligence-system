@@ -16,6 +16,9 @@ import {
   type WhatsAppAgentState,
 } from "@/lib/whatsapp/state";
 
+const WHATSAPP_FAST_MODEL =
+  process.env.WHATSAPP_FAST_MODEL?.trim() || "openai/gpt-4o-mini";
+
 function normalizeBotReply(reply: string) {
   return reply
     .replace(/\*\*/g, "")
@@ -68,7 +71,7 @@ export type WhatsAppReplyPlan = {
 
 export { classifyInboundLeadMessage };
 
-const WHATSAPP_REPLY_TIMEOUT_MS = 9000;
+const WHATSAPP_REPLY_TIMEOUT_MS = 4500;
 
 export async function generateWhatsAppReplyPlan({
   conversation,
@@ -100,7 +103,7 @@ export async function generateWhatsAppReplyPlan({
     try {
       const result = await Promise.race([
         generateText({
-          model: getLanguageModel(DEFAULT_CHAT_MODEL),
+          model: getLanguageModel(WHATSAPP_FAST_MODEL || DEFAULT_CHAT_MODEL),
           abortSignal: abortSignal ?? undefined,
           temperature: 0.35,
           maxOutputTokens: 120,

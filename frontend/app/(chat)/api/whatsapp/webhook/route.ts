@@ -11,9 +11,8 @@ import {
 } from "@/lib/db/queries";
 import { generateWhatsAppReplyPlan } from "@/lib/whatsapp/agent";
 import {
-  buildLeadAwareAgentStatePatch,
-  requestLeadAwareWhatsAppReply,
   resolveLeadContextForWhatsAppThread,
+  syncWhatsAppMessageToLeadMemory,
 } from "@/lib/whatsapp/lead-context";
 import { getWhatsAppConfig } from "@/lib/whatsapp/config";
 import {
@@ -24,7 +23,7 @@ import {
 } from "@/lib/whatsapp/provider";
 import { waitUntil } from "@vercel/functions";
 
-const WHATSAPP_REPLY_BUDGET_MS = 20000;
+const WHATSAPP_REPLY_BUDGET_MS = 8000;
 
 async function processInboundWhatsAppMessage({
   conversationId,
@@ -71,121 +70,6 @@ async function processInboundWhatsAppMessage({
     const conversationMessages = await getWhatsAppMessagesByConversationId({
       conversationId: latestConversation.id,
     });
-
-    if (latestConversation.linkedLeadId) {
-      try {
-        const backendReply = await requestLeadAwareWhatsAppReply({
-          leadId: latestConversation.linkedLeadId,
-          incomingText: inboundMessage.body,
-          abortSignal: replyAbortController.signal,
-        });
-
-        const aiResponse =
-          String(
-            typeof backendReply.response === "string"
-              ? backendReply.response
-              : backendReply.response?.message ||
-                  backendReply.ai_response ||
-                  ""
-          ).trim() || "";
-        const nextState = buildLeadAwareAgentStatePatch({
-          currentState: latestConversation.agentState,
-          leadContext: latestConversation.leadContext,
-          aiResponse,
-          conversation: backendReply.conversation,
-          needsEscalation: backendReply.needs_escalation,
-          escalationReason: backendReply.escalation_reason || null,
-        });
-
-        let conversationWithState = await updateWhatsAppConversationAgentState({
-          id: latestConversation.id,
-          patch: nextState,
-        });
-
-        if (
-          latestConversation.linkedLeadId &&
-          backendReply.conversation?.conversation_id
-        ) {
-          conversationWithState =
-            (await updateWhatsAppConversationLeadLink({
-              id: latestConversation.id,
-              linkedLeadId: latestConversation.linkedLeadId,
-              backendConversationId:
-                backendReply.conversation.conversation_id,
-              leadContext: latestConversation.leadContext,
-            })) || conversationWithState;
-        }
-
-        if (nextState.optOut) {
-          await updateWhatsAppConversationStatus({
-            id: latestConversation.id,
-            status: "closed",
-          });
-          return;
-        }
-
-        if (backendReply.needs_escalation) {
-          await updateWhatsAppConversationMode({
-            id: latestConversation.id,
-            mode: "human",
-            assignedOperatorLabel: latestConversation.assignedOperatorLabel,
-          });
-        }
-
-        const shouldSendReply =
-          latestConversation.mode === "bot" &&
-          !backendReply.needs_escalation &&
-          Boolean(aiResponse);
-
-        if (shouldSendReply) {
-          const delivery = await sendWhatsAppTextMessage({
-            to: latestConversation.contactPhone,
-            body: aiResponse,
-          });
-
-          await appendWhatsAppMessage({
-            conversationId: latestConversation.id,
-            direction: "outgoing",
-            authorType: "bot",
-            authorLabel: "ZRAI Bot",
-            body: aiResponse,
-            providerMessageId: delivery.providerMessageId,
-            status: delivery.status,
-            errorText: delivery.error,
-          });
-
-          if (conversationWithState?.linkedLeadId) {
-            try {
-              await updateWhatsAppConversationLeadLink({
-                id: latestConversation.id,
-                linkedLeadId: conversationWithState.linkedLeadId,
-                backendConversationId:
-                  backendReply.conversation?.conversation_id ||
-                  conversationWithState.backendConversationId,
-                leadContext: conversationWithState.leadContext,
-              });
-            } catch (error) {
-              console.error(
-                "[whatsapp:webhook] Failed to persist backend conversation id",
-                error
-              );
-            }
-          }
-
-          return;
-        }
-
-        console.warn(
-          "[whatsapp:webhook] Lead-aware agent returned no reply text; falling back to local planner"
-        );
-
-      } catch (error) {
-        console.error(
-          "[whatsapp:webhook] Lead-aware reply failed, falling back",
-          error
-        );
-      }
-    }
 
     const replyPlan = await generateWhatsAppReplyPlan({
       conversation: latestConversation,
@@ -234,13 +118,40 @@ async function processInboundWhatsAppMessage({
       errorText: delivery.error,
     });
 
-    if (conversationWithState?.mode === "human") {
-      await updateWhatsAppConversationAgentState({
-        id: latestConversation.id,
-        patch: {
-          lastSuggestedReply: replyPlan.replyText,
-        },
-      });
+    if (latestConversation.linkedLeadId) {
+      try {
+        const inboundSync = await syncWhatsAppMessageToLeadMemory({
+          leadId: latestConversation.linkedLeadId,
+          role: "prospect",
+          message: inboundMessage.body,
+          conversationId: conversationWithState?.backendConversationId,
+          abortSignal: replyAbortController.signal,
+        });
+
+        const backendConversationId =
+          inboundSync.conversation?.conversation_id ||
+          conversationWithState?.backendConversationId ||
+          null;
+
+        if (backendConversationId) {
+          await updateWhatsAppConversationLeadLink({
+            id: latestConversation.id,
+            linkedLeadId: latestConversation.linkedLeadId,
+            backendConversationId,
+            leadContext: conversationWithState?.leadContext || latestConversation.leadContext,
+          });
+        }
+
+        await syncWhatsAppMessageToLeadMemory({
+          leadId: latestConversation.linkedLeadId,
+          role: "ai",
+          message: replyPlan.replyText,
+          conversationId: backendConversationId,
+          abortSignal: replyAbortController.signal,
+        });
+      } catch (error) {
+        console.error("[whatsapp:webhook] Failed to sync WhatsApp memory", error);
+      }
     }
   } catch (error) {
     console.error("[whatsapp:webhook] Background inbound processing failed", error);
