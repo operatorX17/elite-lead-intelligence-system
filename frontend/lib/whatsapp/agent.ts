@@ -29,7 +29,9 @@ function normalizeBotReply(reply: string) {
   return reply
     .replace(/\*\*/g, "")
     .replace(/^[`'"]+|[`'"]+$/g, "")
-    .replace(/\s+/g, " ")
+    .replace(/\r/g, "")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
     .trim()
     .slice(0, 420);
 }
@@ -190,12 +192,15 @@ export async function generateWhatsAppReplyPlan({
     currentState,
   });
   const shouldBypassHeavyGeneration =
-    (classification.isGreeting || classification.isAcknowledgement) &&
+    (classification.isGreeting ||
+      classification.isAcknowledgement ||
+      classification.isAffirmation) &&
     !classification.requestedNextStep &&
     !classification.handoffRequested &&
     !classification.optOut;
 
   const recentReplies = getRecentAssistantReplies(messages);
+  const latestAssistantReply = recentReplies[recentReplies.length - 1] ?? null;
   let replyText: string | null = null;
   let effectiveNextState = nextState;
 
@@ -339,7 +344,8 @@ export async function generateWhatsAppReplyPlan({
       effectiveNextState,
       recentReplies,
       conversation.leadContext ?? null,
-      incomingText
+      incomingText,
+      latestAssistantReply
     );
   }
 

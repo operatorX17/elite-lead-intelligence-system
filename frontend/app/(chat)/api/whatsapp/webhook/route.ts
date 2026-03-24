@@ -25,6 +25,14 @@ import { waitUntil } from "@vercel/functions";
 
 const WHATSAPP_REPLY_BUDGET_MS = 8000;
 
+function splitOutgoingWhatsAppReply(reply: string) {
+  return reply
+    .split(/\n{2,}/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .slice(0, 3);
+}
+
 async function processInboundWhatsAppMessage({
   conversationId,
   inboundMessage,
@@ -102,21 +110,27 @@ async function processInboundWhatsAppMessage({
       return;
     }
 
-    const delivery = await sendWhatsAppTextMessage({
-      to: latestConversation.contactPhone,
-      body: replyPlan.replyText,
-    });
+    const splitReplyParts = splitOutgoingWhatsAppReply(replyPlan.replyText);
+    const outgoingParts =
+      splitReplyParts.length > 0 ? splitReplyParts : [replyPlan.replyText];
 
-    await appendWhatsAppMessage({
-      conversationId: latestConversation.id,
-      direction: "outgoing",
-      authorType: "bot",
-      authorLabel: "ZRAI Bot",
-      body: replyPlan.replyText,
-      providerMessageId: delivery.providerMessageId,
-      status: delivery.status,
-      errorText: delivery.error,
-    });
+    for (const body of outgoingParts) {
+      const delivery = await sendWhatsAppTextMessage({
+        to: latestConversation.contactPhone,
+        body,
+      });
+
+      await appendWhatsAppMessage({
+        conversationId: latestConversation.id,
+        direction: "outgoing",
+        authorType: "bot",
+        authorLabel: "ZRAI Bot",
+        body,
+        providerMessageId: delivery.providerMessageId,
+        status: delivery.status,
+        errorText: delivery.error,
+      });
+    }
 
     if (latestConversation.linkedLeadId) {
       try {

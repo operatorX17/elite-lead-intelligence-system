@@ -144,6 +144,29 @@ function isLightweightAcknowledgement(text: string) {
   );
 }
 
+function isLightweightAffirmation(text: string) {
+  return /^\s*(?:yes|yeah|yep|yup|ya|sure|absolutely|of\s+course|definitely|please\s+do|go\s+ahead)[!?.\s]*$/i.test(
+    text
+  );
+}
+
+function lastAssistantAskedFocusChoice(reply: string | null | undefined) {
+  const normalized = String(reply ?? "");
+  return (
+    /\b(which|what side|look at|look at first|sort first|looking at first)\b/i.test(
+      normalized
+    ) && /\b(reply speed|follow-?up|booking handoff|booking flow)\b/i.test(normalized)
+  );
+}
+
+function lastAssistantAskedRoleChoice(reply: string | null | undefined) {
+  return /\bdoctor,\s*manager,\s*or front desk\b/i.test(String(reply ?? ""));
+}
+
+function lastAssistantOfferedNextLeak(reply: string | null | undefined) {
+  return /\bwant the next (?:one|point) too\b/i.test(String(reply ?? ""));
+}
+
 function inferRole(text: string) {
   for (const [label, patterns] of Object.entries(ROLE_PATTERNS)) {
     if (patterns.some((pattern) => pattern.test(text))) {
@@ -284,6 +307,7 @@ export function classifyInboundLeadMessage(text: string) {
       escalateToHuman: false,
       isGreeting: false,
       isAcknowledgement: false,
+      isAffirmation: false,
     };
   }
 
@@ -312,6 +336,7 @@ export function classifyInboundLeadMessage(text: string) {
       ),
     isGreeting: isLightweightGreeting(normalized),
     isAcknowledgement: isLightweightAcknowledgement(normalized),
+    isAffirmation: isLightweightAffirmation(normalized),
   };
 }
 
@@ -455,7 +480,8 @@ export function buildWhatsAppFallbackReply(
   state: WhatsAppAgentState,
   recentReplies: Array<string | null | undefined> = [],
   leadContext?: WhatsAppLinkedLeadContext | null,
-  incomingText?: string | null
+  incomingText?: string | null,
+  latestAssistantReply?: string | null
 ) {
   const replyHistory = [state.lastSuggestedReply, ...recentReplies];
 
@@ -507,6 +533,38 @@ export function buildWhatsAppFallbackReply(
       ],
       replyHistory
     );
+  }
+
+  if (isLightweightAffirmation(incomingText || "")) {
+    if (lastAssistantAskedFocusChoice(latestAssistantReply)) {
+      return pickFreshReply(
+        [
+          "Which one do you want first: reply speed, follow-up, or booking handoff?",
+          "Good. Pick the lane you want to start with: first reply, follow-up, or booking handoff.",
+        ],
+        replyHistory
+      );
+    }
+
+    if (lastAssistantAskedRoleChoice(latestAssistantReply)) {
+      return pickFreshReply(
+        [
+          "Which one is it right now: doctor, manager, or front desk?",
+          "Tell me who owns it day to day: doctor, manager, or front desk?",
+        ],
+        replyHistory
+      );
+    }
+
+    if (lastAssistantOfferedNextLeak(latestAssistantReply)) {
+      return pickFreshReply(
+        [
+          "Second leak I'd inspect is follow-up after the first reply. If nobody keeps control after that first exchange, warm leads drift before a slot gets locked.",
+          "Next place I'd look is what happens after the first response. If follow-up is loose there, intent fades before the booking ask lands.",
+        ],
+        replyHistory
+      );
+    }
   }
 
   if (state.optOut) {
@@ -652,6 +710,7 @@ export function buildWhatsAppSystemPrompt({
     "Never say you are an AI.",
     "Never use markdown, bullet formatting, or long paragraphs.",
     "Reply in 1-3 short WhatsApp-style chat bubbles worth of text.",
+    "If you use more than one bubble, separate them with a blank line.",
     "Do not pitch too early.",
     "Do not explain tech unless asked.",
     "Focus on response speed, follow-up discipline, missed bookings, and operational leakage.",
