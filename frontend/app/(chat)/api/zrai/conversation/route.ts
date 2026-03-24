@@ -18,6 +18,14 @@ import {
 import { toConversation } from "@/lib/zrai/transformers";
 import type { Conversation } from "@/lib/zrai/types";
 
+
+
+
+
+
+
+
+
 // ============================================================================
 // Request Schema
 // ============================================================================
@@ -25,7 +33,7 @@ import type { Conversation } from "@/lib/zrai/types";
 const conversationRequestSchema = z.object({
   lead_id: z.string().uuid("Invalid lead ID format"),
   message: z.string().min(1, "Message is required"),
-  channel: z.enum(["email", "linkedin", "sms"]).optional(),
+  channel: z.enum(["email", "linkedin", "sms", "whatsapp", "instagram", "website_chat"]).optional(),
 });
 
 type ConversationRequest = z.infer<typeof conversationRequestSchema>;
@@ -168,7 +176,13 @@ export async function POST(request: Request): Promise<Response> {
       success: true,
       data: {
         conversation,
-        ai_response: lastAiMessage?.content || data.response?.message || "",
+        ai_response:
+          lastAiMessage?.content ||
+          (typeof data.response === "string"
+            ? data.response
+            : data.response?.message) ||
+          data.ai_response ||
+          "",
         needs_escalation: data.needs_escalation || false,
         escalation_reason: data.escalation_reason,
       },
@@ -257,3 +271,4 @@ async function handleEscalation(
     ).toResponse();
   }
 }
+

@@ -4580,7 +4580,10 @@ async def handle_conversation(
                 result_state.get("scoring") or {},
             ),
             "conversation": conversation,
-            "response": ai_response,
+            "response": {
+                "message": ai_response,
+            },
+            "ai_response": ai_response,
             "needs_escalation": result_state.get("is_escalated", False),
             "escalation_reason": metadata.get("objection_summary"),
         }

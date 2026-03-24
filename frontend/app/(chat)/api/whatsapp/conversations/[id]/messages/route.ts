@@ -11,7 +11,7 @@ import {
   resolveLeadContextForWhatsAppThread,
   syncWhatsAppMessageToLeadMemory,
 } from "@/lib/whatsapp/lead-context";
-import { sendWhatsAppTextMessage } from "@/lib/whatsapp/meta";
+import { sendWhatsAppTextMessage } from "@/lib/whatsapp/provider";
 
 const sendMessageSchema = z.object({
   body: z.string().trim().min(1, "Message body is required"),

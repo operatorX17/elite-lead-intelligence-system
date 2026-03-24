@@ -38,9 +38,8 @@ type ZRAIConversationResponse = {
     conversation_id?: string | null;
     entities?: Record<string, any>;
   };
-  response?: {
-    message?: string;
-  };
+  response?: string | { message?: string | null };
+  ai_response?: string | null;
   needs_escalation?: boolean;
   escalation_reason?: string | null;
 };
@@ -306,10 +305,12 @@ export async function resolveLeadForWhatsAppThread({
   contactPhone,
   contactName,
   userId,
+  abortSignal,
 }: {
   contactPhone: string;
   contactName?: string | null;
   userId?: string | null;
+  abortSignal?: AbortSignal | null;
 }) {
   if (!String(contactPhone || "").trim()) {
     return null;
@@ -319,6 +320,7 @@ export async function resolveLeadForWhatsAppThread({
     "/api/v1/leads/resolve-contact",
     {
       method: "POST",
+      signal: abortSignal ?? undefined,
       body: JSON.stringify({
         contact_phone: contactPhone,
         contact_name: contactName || null,
@@ -334,14 +336,16 @@ export async function fetchLinkedLeadContext({
   leadId,
   match,
   userId,
+  abortSignal,
 }: {
   leadId: string;
   match?: ResolveContactMatch | null;
   userId?: string | null;
+  abortSignal?: AbortSignal | null;
 }) {
   const payload = await backendJson<LeadDetailsResponse>(
     `/api/v1/leads/${leadId}`,
-    { method: "GET" },
+    { method: "GET", signal: abortSignal ?? undefined },
     userId
   );
 
@@ -352,15 +356,18 @@ export async function resolveLeadContextForWhatsAppThread({
   contactPhone,
   contactName,
   userId,
+  abortSignal,
 }: {
   contactPhone: string;
   contactName?: string | null;
   userId?: string | null;
+  abortSignal?: AbortSignal | null;
 }) {
   const match = await resolveLeadForWhatsAppThread({
     contactPhone,
     contactName,
     userId,
+    abortSignal,
   });
 
   if (!match?.lead_id) {
@@ -371,6 +378,7 @@ export async function resolveLeadContextForWhatsAppThread({
     leadId: match.lead_id,
     match,
     userId,
+    abortSignal,
   });
 
   if (!leadContext) {
@@ -387,15 +395,18 @@ export async function requestLeadAwareWhatsAppReply({
   leadId,
   incomingText,
   userId,
+  abortSignal,
 }: {
   leadId: string;
   incomingText: string;
   userId?: string | null;
+  abortSignal?: AbortSignal | null;
 }) {
   return backendJson<ZRAIConversationResponse>(
     "/api/v1/conversation",
     {
       method: "POST",
+      signal: abortSignal ?? undefined,
       body: JSON.stringify({
         lead_id: leadId,
         message: incomingText,
@@ -412,12 +423,14 @@ export async function syncWhatsAppMessageToLeadMemory({
   role,
   conversationId,
   userId,
+  abortSignal,
 }: {
   leadId: string;
   message: string;
   role: "human" | "prospect" | "ai";
   conversationId?: string | null;
   userId?: string | null;
+  abortSignal?: AbortSignal | null;
 }) {
   return backendJson<{
     success: boolean;
@@ -426,6 +439,7 @@ export async function syncWhatsAppMessageToLeadMemory({
     "/api/v1/conversation/sync",
     {
       method: "POST",
+      signal: abortSignal ?? undefined,
       body: JSON.stringify({
         lead_id: leadId,
         role,

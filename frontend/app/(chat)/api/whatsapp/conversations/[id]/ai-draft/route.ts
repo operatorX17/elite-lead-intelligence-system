@@ -80,7 +80,10 @@ export async function POST(
       });
       suggestedReply =
         String(
-          backendReply.response?.message ||
+          typeof backendReply.response === "string"
+            ? backendReply.response
+            : backendReply.response?.message ||
+              backendReply.ai_response ||
             backendReply.conversation?.entities?.last_ai_response ||
             ""
         ).trim() || suggestedReply;

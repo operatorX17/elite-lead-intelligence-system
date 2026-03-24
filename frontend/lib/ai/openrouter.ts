@@ -4,24 +4,39 @@
 
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 
-// Create OpenRouter provider using the official package
-const openrouterProvider = createOpenRouter({
-  apiKey: process.env.OPENROUTER_API_KEY || "",
-});
+function cleanEnvValue(value: string | null | undefined) {
+  if (!value) {
+    return "";
+  }
+
+  return value
+    .trim()
+    .replace(/^"|"$/g, "")
+    .replace(/\\r\\n/g, "")
+    .replace(/\\n/g, "")
+    .trim();
+}
+
+function createRuntimeOpenRouterProvider() {
+  return createOpenRouter({
+    apiKey: cleanEnvValue(process.env.OPENROUTER_API_KEY),
+  });
+}
 
 // Wrapper that logs model calls and returns a chat model
 export const openrouter = (modelId: string) => {
+  const apiKey = cleanEnvValue(process.env.OPENROUTER_API_KEY);
   console.log(`[OpenRouter] Creating model: ${modelId}`);
-  if (!process.env.OPENROUTER_API_KEY) {
+  if (!apiKey) {
     console.error("[OpenRouter] ERROR: OPENROUTER_API_KEY is not set!");
   }
-  return openrouterProvider(modelId);
+  return createRuntimeOpenRouterProvider()(modelId);
 };
 
 // Factory function for creating custom OpenRouter instances with different API keys
 export function createCustomOpenRouter(config: { apiKey?: string } = {}) {
   const provider = createOpenRouter({
-    apiKey: config.apiKey || process.env.OPENROUTER_API_KEY || "",
+    apiKey: cleanEnvValue(config.apiKey || process.env.OPENROUTER_API_KEY),
   });
   
   return (modelId: string) => {

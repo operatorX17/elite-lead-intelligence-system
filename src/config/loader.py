@@ -117,7 +117,7 @@ class ConfigLoader:
     
     def _load_llm_config(self) -> LLMConfig:
         """Load LLM configuration from environment."""
-        provider_str = get_env("DEFAULT_LLM_PROVIDER", "google")
+        provider_str = get_env("DEFAULT_LLM_PROVIDER", "openrouter")
         return LLMConfig(
             provider=provider_str,
             model=get_env("DEFAULT_LLM_MODEL", "gemini-2.5-flash"),

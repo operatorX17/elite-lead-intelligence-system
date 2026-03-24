@@ -35,14 +35,18 @@ export type WhatsAppReplyPlan = {
 
 export { classifyInboundLeadMessage };
 
+const WHATSAPP_REPLY_TIMEOUT_MS = 15000;
+
 export async function generateWhatsAppReplyPlan({
   conversation,
   messages,
   incomingText,
+  abortSignal,
 }: {
   conversation: WhatsAppConversation;
   messages: WhatsAppMessage[];
   incomingText: string;
+  abortSignal?: AbortSignal | null;
 }): Promise<WhatsAppReplyPlan> {
   const currentState = normalizeWhatsAppAgentState(conversation.agentState);
   const { classification, nextState } = deriveNextWhatsAppAgentState({
@@ -59,24 +63,37 @@ export async function generateWhatsAppReplyPlan({
     !nextState.optOut &&
     !nextState.handoffRecommended
   ) {
-    const result = await generateText({
-      model: getLanguageModel(DEFAULT_CHAT_MODEL),
-      system: buildWhatsAppSystemPrompt({
-        conversation,
-        state: nextState,
-        messages,
-        leadContext: conversation.leadContext ?? null,
-      }),
-      prompt: [
-        `Contact: ${conversation.contactName} (${conversation.contactPhone})`,
-        `Latest inbound message: ${incomingText}`,
-        "Reply text:",
-      ].join("\n"),
-    });
+    try {
+      const result = await Promise.race([
+        generateText({
+          model: getLanguageModel(DEFAULT_CHAT_MODEL),
+          abortSignal: abortSignal ?? undefined,
+          system: buildWhatsAppSystemPrompt({
+            conversation,
+            state: nextState,
+            messages,
+            leadContext: conversation.leadContext ?? null,
+          }),
+          prompt: [
+            `Contact: ${conversation.contactName} (${conversation.contactPhone})`,
+            `Latest inbound message: ${incomingText}`,
+            "Reply text:",
+          ].join("\n"),
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error("WhatsApp reply generation timed out")),
+            WHATSAPP_REPLY_TIMEOUT_MS
+          )
+        ),
+      ]);
 
-    const normalized = normalizeBotReply(result.text);
-    if (normalized) {
-      replyText = normalized;
+      const normalized = normalizeBotReply(result.text);
+      if (normalized) {
+        replyText = normalized;
+      }
+    } catch (error) {
+      console.error("[whatsapp:agent] Falling back to deterministic reply", error);
     }
   }
 
