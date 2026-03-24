@@ -446,8 +446,8 @@ export function buildWhatsAppFallbackReply(
   if (state.optOut) {
     return pickFreshReply(
       [
-        "Understood. I'll close the loop here and won't continue the follow-up.",
-        "Understood. I'll stop the follow-up here and keep you off the list.",
+        "I’ll close this thread and stop the follow-up.",
+        "I’ll keep you off the follow-up list from here.",
       ],
       replyHistory
     );
@@ -456,8 +456,8 @@ export function buildWhatsAppFallbackReply(
   if (state.handoffRecommended) {
     return pickFreshReply(
       [
-        "Makes sense. I'll have a human from our team take this over so you get a clean answer.",
-        "Got it. I'll pass this to a human so you get a clear answer without the back-and-forth.",
+        "I’m handing this to a human so you get a clean answer.",
+        "I’ll pass this to a person on our side and keep it clean.",
       ],
       replyHistory
     );
@@ -466,9 +466,9 @@ export function buildWhatsAppFallbackReply(
   if (!state.painConfirmed) {
     return pickFreshReply(
       [
-        "Got it. Where is the bigger leak right now: enquiries, call pickup, or bookings?",
-        "Understood. Which part is slipping more: getting leads, converting them, or following up fast enough?",
-        "I am checking the bottleneck that is costing bookings. What feels weakest today?",
+        "I’m looking at where bookings leak most: first reply, follow-up, or handoff. Which one feels weakest?",
+        "The first gap I’d check is response speed, lead handling, or booking ownership. Which one is hurting most?",
+        "I’m narrowing the bottleneck that costs bookings. What is slipping today?",
       ],
       replyHistory
     );
@@ -477,8 +477,8 @@ export function buildWhatsAppFallbackReply(
   if (state.objectionCategories.length > 0) {
     return pickFreshReply(
       [
-        "Fair point. I am not talking about more noise, just the exact gap I am seeing. Should I keep it to one practical observation?",
-        "Makes sense. I can keep it to the one leak that matters most if you'd like.",
+        "Fair point. I’m not talking about more noise, just the one gap that matters. Want the short version?",
+        "I can keep it to the leak that matters most and skip the fluff.",
       ],
       replyHistory
     );
@@ -487,8 +487,8 @@ export function buildWhatsAppFallbackReply(
   if (!state.decisionMakerConfirmed) {
     return pickFreshReply(
       [
-        "Makes sense. Who usually looks after this side for you right now: doctor, manager, or front desk?",
-        "Quick check: who usually handles bookings and follow-up there?",
+        "Who usually owns bookings and follow-up there: doctor, manager, or front desk?",
+        "Quick check, who actually handles this side right now?",
       ],
       replyHistory
     );
@@ -497,8 +497,8 @@ export function buildWhatsAppFallbackReply(
   if (state.requestedNextStep === "call") {
     return pickFreshReply(
       [
-        "Makes sense. A quick 10-minute look will be cleaner than a long text. Would this evening or tomorrow afternoon be easier?",
-        "Happy to keep it short. Would today or tomorrow work better for a quick call?",
+        "A quick 10-minute look will be cleaner than a long text. Today or tomorrow?",
+        "Happy to keep it short. Today or tomorrow works better for a quick call?",
       ],
       replyHistory
     );
@@ -548,8 +548,8 @@ export function buildWhatsAppFallbackReply(
 
   return pickFreshReply(
     [
-      "Understood. If you're open, I can show you the exact leak points I'd look at first and keep it very practical.",
-      "If helpful, I can start with the one thing most likely causing drop-off and keep it tight.",
+      "I’d start with the first leak point and keep it practical.",
+      "I can keep this tight and point to the main drop-off spot first.",
     ],
     replyHistory
   );
@@ -592,6 +592,7 @@ export function buildWhatsAppSystemPrompt({
     "Do not invent case studies, guaranteed ROI, or direct founder contact if it is not verified.",
     "Sound like a real operator, not a support bot or assistant.",
     "Do not start every message with 'Got it', 'Makes sense', or 'Understood'.",
+    "Do not sound templated, scripted, or like a sales sequence.",
     "Keep the tone composed, direct, slightly sharp, and trustworthy.",
     "Use one concrete question or one concrete observation per reply.",
     "If the lead asks to see details, proof, or leak points, actually give the first leak immediately.",
@@ -599,8 +600,12 @@ export function buildWhatsAppSystemPrompt({
     "Do not offer a consultation, a call, automation, or a system unless the lead asked for that next step.",
     "Prefer grounded operational observations over generic sales language.",
     "Do not repeat your last suggested reply. If a similar reply is already in the recent transcript, vary the wording and ask a different diagnostic question.",
+    "Use the conversation memory as your anchor. If the memory is thin, infer the most likely leak from the thread instead of restarting the conversation.",
     `Current stage: ${state.stage}`,
     `Priority: ${state.priority}`,
+    `State summary: ${state.summary ?? "none"}`,
+    `Next best move: ${state.nextBestMove ?? "none"}`,
+    `Last suggested reply: ${state.lastSuggestedReply ?? "none"}`,
     `Pain points: ${state.painPoints.join(", ") || "not yet confirmed"}`,
     `Objections: ${state.objectionCategories.join(", ") || "none"}`,
     `Requested next step: ${state.requestedNextStep ?? "unknown"}`,
@@ -620,6 +625,8 @@ export function buildWhatsAppSystemPrompt({
     leadContext?.bestContactChannel
       ? `Best contact channel: ${leadContext.bestContactChannel}`
       : null,
+    "If the message is a proof request, answer with the actual first leak instead of promising to show it later.",
+    "If the message is a follow-up or check-in, keep the reply human and move the thread forward instead of re-opening the same question.",
     `Recent transcript:\n${transcript || "No prior transcript"}`,
   ]
     .filter(Boolean)
