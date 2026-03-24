@@ -14,6 +14,7 @@ from datetime import datetime
 from urllib.parse import urlparse, parse_qs, unquote
 import re
 from functools import lru_cache
+from difflib import SequenceMatcher
 
 import requests
 from bs4 import BeautifulSoup
@@ -23,6 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from src.db.models import Lead, LeadLifecycleState
+from src.agents.contact_intelligence import build_contact_intelligence
 from src.graph.state import LeadGraphState
 
 # Configure logging
@@ -259,6 +261,13 @@ class DiscoverResponse(BaseModel):
     count: int
     run_id: str
 
+
+def normalize_lead_id_value(lead_id: str | UUID) -> str:
+    """Normalize lead IDs so API handlers always talk to the DB consistently."""
+    if isinstance(lead_id, UUID):
+        return str(lead_id)
+    return str(UUID(str(lead_id)))
+
 class EnrichRequest(BaseModel):
     lead_id: str
 
@@ -285,6 +294,20 @@ class ConversationRequest(BaseModel):
     lead_id: str
     message: str
     channel: Optional[str] = "email"
+
+
+class ResolveContactRequest(BaseModel):
+    contact_phone: Optional[str] = None
+    contact_name: Optional[str] = None
+    max_candidates: int = Field(default=150, ge=10, le=500)
+
+
+class ConversationSyncRequest(BaseModel):
+    lead_id: str
+    role: str = Field(..., pattern="^(human|prospect|ai)$")
+    message: str = Field(..., min_length=1)
+    channel: Optional[str] = "whatsapp"
+    conversation_id: Optional[str] = None
 
 class RunPipelineRequest(BaseModel):
     mode: str = "full"
@@ -656,6 +679,34 @@ def _pick_best_email(emails: List[Any], website: Optional[str]) -> Optional[str]
     return (exact_domain_matches or custom_domain_emails or generic_emails or deduped)[0]
 
 
+def _is_plausible_person_name(value: Optional[str]) -> bool:
+    if not value:
+        return False
+
+    blocked_tokens = {
+        "clinic",
+        "skin",
+        "hair",
+        "laser",
+        "care",
+        "center",
+        "centre",
+        "hospital",
+        "dermatology",
+        "aesthetic",
+        "aesthetics",
+        "cosmetic",
+        "cosmetology",
+    }
+    tokens = [token.lower() for token in re.findall(r"[A-Za-z]+", str(value))]
+    significant_tokens = [token for token in tokens if len(token) > 1]
+    if len(significant_tokens) < 2:
+        return False
+    if any(token in blocked_tokens for token in significant_tokens):
+        return False
+    return True
+
+
 def _derive_best_contact_channel(
     *,
     phone_numbers: List[str],
@@ -756,11 +807,15 @@ def build_signal_facts(
     proof: Optional[Dict[str, Any]] = None,
     scoring: Optional[Dict[str, Any]] = None,
     lead_state: Optional[Dict[str, Any]] = None,
+    runtime_metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     enrichment_payload = enrichment or {}
     intent_payload = intent or {}
     proof_extraction = (proof or {}).get("extraction_data") or {}
-    lead_state_metadata = (lead_state or {}).get("metadata") or {}
+    lead_state_metadata = {
+        **dict((lead_state or {}).get("metadata") or {}),
+        **dict(runtime_metadata or {}),
+    }
     stored_analysis_bundle = (
         lead_state_metadata.get("analysis_bundle")
         or lead_state_metadata.get("intelligence")
@@ -768,11 +823,18 @@ def build_signal_facts(
     )
     stored_signal_facts = dict(stored_analysis_bundle.get("facts") or {})
     ads_verification = lead_state_metadata.get("ads_verification") or {}
+    people_intelligence = dict(lead_state_metadata.get("people_intelligence") or {})
 
     phone_numbers = _dedupe_strings(
         list(proof_extraction.get("phone_numbers") or [])
         + ([enrichment_payload.get("normalized_phone")] if enrichment_payload.get("normalized_phone") else [])
         + ([lead_data.get("phone")] if lead_data.get("phone") else [])
+        + list(people_intelligence.get("phone_numbers") or [])
+        + [
+            contact.get("phone")
+            for contact in list(people_intelligence.get("branch_contacts") or [])
+            if isinstance(contact, dict)
+        ]
     )
     phone_visible = (
         str(proof_extraction.get("phone_visibility") or "").lower()
@@ -837,10 +899,36 @@ def build_signal_facts(
         _build_social_profiles(lead_data),
         enrichment_payload.get("social_profiles") or {},
         proof_extraction.get("social_profiles") or {},
+        people_intelligence.get("social_profiles") or {},
         stored_signal_facts.get("social_profiles") or {},
     )
-    branch_names = _dedupe_strings(list(proof_extraction.get("branch_names") or []))
-    doctor_names = _dedupe_strings(list(proof_extraction.get("doctor_names") or []))
+    doctor_profiles = list(people_intelligence.get("doctor_profiles") or []) or list(stored_signal_facts.get("doctor_profiles") or [])
+    decision_maker_candidates = list(people_intelligence.get("decision_maker_candidates") or []) or list(stored_signal_facts.get("decision_maker_candidates") or [])
+    branch_contacts = list(people_intelligence.get("branch_contacts") or []) or list(stored_signal_facts.get("branch_contacts") or [])
+    contact_evidence = _dedupe_strings(
+        list(people_intelligence.get("contact_evidence") or [])
+        + list(stored_signal_facts.get("contact_evidence") or [])
+    )
+    branch_names = _dedupe_strings(
+        list(proof_extraction.get("branch_names") or [])
+        + list(people_intelligence.get("branch_names") or [])
+        + list(stored_signal_facts.get("branch_names") or [])
+        + [
+            contact.get("name")
+            for contact in branch_contacts
+            if isinstance(contact, dict)
+        ]
+    )
+    doctor_names = _dedupe_strings(
+        list(proof_extraction.get("doctor_names") or [])
+        + list(people_intelligence.get("doctor_names") or [])
+        + list(stored_signal_facts.get("doctor_names") or [])
+        + [
+            profile.get("name")
+            for profile in doctor_profiles
+            if isinstance(profile, dict)
+        ]
+    )
     multi_clinic = bool(proof_extraction.get("multi_clinic") or len(branch_names) > 1)
     branch_count = proof_extraction.get("branch_count")
     if not isinstance(branch_count, int):
@@ -877,38 +965,91 @@ def build_signal_facts(
     email_contacts = _dedupe_strings(
         list(lead_data.get("emails_found") or [])
         + list(enrichment_payload.get("validated_emails") or [])
+        + list(people_intelligence.get("emails") or [])
+        + [
+            email
+            for candidate in decision_maker_candidates
+            if isinstance(candidate, dict)
+            for email in list(candidate.get("emails") or [])
+        ]
         + ([stored_signal_facts.get("best_contact_email")] if stored_signal_facts.get("best_contact_email") else [])
     )
-    decision_maker_name = enrichment_payload.get("decision_maker_name") or stored_signal_facts.get("decision_maker_name")
+    ranked_candidate = next(
+        (
+            candidate
+            for candidate in decision_maker_candidates
+            if isinstance(candidate, dict) and candidate.get("name")
+        ),
+        {},
+    )
+    decision_maker_name = (
+        enrichment_payload.get("decision_maker_name")
+        or people_intelligence.get("decision_maker_name")
+        or ranked_candidate.get("name")
+        or stored_signal_facts.get("decision_maker_name")
+    )
     if not decision_maker_name and doctor_names:
         decision_maker_name = doctor_names[0]
     decision_maker_linkedin = (
         enrichment_payload.get("decision_maker_linkedin")
+        or people_intelligence.get("decision_maker_linkedin")
+        or people_intelligence.get("best_contact_linkedin")
+        or ranked_candidate.get("linkedin")
         or stored_signal_facts.get("decision_maker_linkedin")
     )
     decision_maker_role = (
         enrichment_payload.get("decision_maker_role")
+        or people_intelligence.get("decision_maker_role")
+        or ranked_candidate.get("role")
         or stored_signal_facts.get("decision_maker_role")
     )
     decision_maker_source = (
         enrichment_payload.get("decision_maker_source")
+        or ranked_candidate.get("source")
         or stored_signal_facts.get("decision_maker_source")
     )
     decision_maker_confidence = (
         enrichment_payload.get("decision_maker_confidence")
+        or (min(float(ranked_candidate.get("score", 0)) / 100.0, 0.98) if ranked_candidate else None)
         or stored_signal_facts.get("decision_maker_confidence")
     )
-    best_contact_phone = phone_numbers[0] if phone_numbers else stored_signal_facts.get("best_contact_phone")
-    best_contact_email = _pick_best_email(
-        email_contacts,
-        lead_data.get("website") or lead_data.get("landing_page_url"),
-    ) or stored_signal_facts.get("best_contact_email")
+    if decision_maker_name and not _is_plausible_person_name(str(decision_maker_name)):
+        decision_maker_name = None
+        decision_maker_role = None
+        decision_maker_source = None
+        decision_maker_confidence = None
+    best_contact_phone = (
+        people_intelligence.get("best_contact_phone")
+        or (phone_numbers[0] if phone_numbers else None)
+        or stored_signal_facts.get("best_contact_phone")
+    )
+    best_contact_email = (
+        people_intelligence.get("best_contact_email")
+        or _pick_best_email(
+            email_contacts,
+            lead_data.get("website") or lead_data.get("landing_page_url"),
+        )
+        or stored_signal_facts.get("best_contact_email")
+    )
+    best_contact_linkedin = (
+        people_intelligence.get("best_contact_linkedin")
+        or ranked_candidate.get("linkedin")
+        or decision_maker_linkedin
+        or stored_signal_facts.get("best_contact_linkedin")
+    )
+    if not decision_maker_name and doctor_names:
+        plausible_doctors = [name for name in doctor_names if _is_plausible_person_name(str(name))]
+        if plausible_doctors:
+            decision_maker_name = plausible_doctors[0]
+            decision_maker_role = decision_maker_role or "primary_doctor_contact"
+            decision_maker_source = decision_maker_source or "doctor_roster"
+            decision_maker_confidence = decision_maker_confidence or 0.55
     recommended_channel, best_contact_reason = _derive_best_contact_channel(
         phone_numbers=phone_numbers,
         best_contact_email=best_contact_email,
         whatsapp_detected=whatsapp_detected,
         whatsapp_target=str(whatsapp_target) if whatsapp_target else None,
-        decision_maker_linkedin=str(decision_maker_linkedin) if decision_maker_linkedin else None,
+        decision_maker_linkedin=str(best_contact_linkedin or decision_maker_linkedin) if (best_contact_linkedin or decision_maker_linkedin) else None,
     )
     if not recommended_channel:
         recommended_channel = stored_signal_facts.get("best_contact_channel")
@@ -943,6 +1084,7 @@ def build_signal_facts(
         "branch_names": branch_names,
         "doctor_count": doctor_count,
         "doctor_names": doctor_names,
+        "doctor_profiles": doctor_profiles,
         "instagram_present": instagram_present,
         "youtube_present": youtube_present,
         "testimonials_present": testimonials_present,
@@ -970,8 +1112,32 @@ def build_signal_facts(
         "decision_maker_confidence": float(decision_maker_confidence) if decision_maker_confidence is not None else None,
         "best_contact_phone": str(best_contact_phone) if best_contact_phone else None,
         "best_contact_email": str(best_contact_email) if best_contact_email else None,
+        "best_contact_linkedin": str(best_contact_linkedin) if best_contact_linkedin else None,
         "best_contact_channel": recommended_channel,
         "best_contact_reason": str(best_contact_reason) if best_contact_reason else None,
+        "decision_maker_candidates": decision_maker_candidates,
+        "branch_contacts": branch_contacts,
+        "contact_evidence": contact_evidence,
+        "contact_intelligence": build_contact_intelligence(
+            {
+                "business_name": lead_data.get("business_name"),
+                "decision_maker_name": decision_maker_name,
+                "decision_maker_linkedin": decision_maker_linkedin,
+                "decision_maker_role": decision_maker_role,
+                "decision_maker_source": decision_maker_source,
+                "decision_maker_confidence": decision_maker_confidence,
+                "best_contact_phone": best_contact_phone,
+                "best_contact_email": best_contact_email,
+                "best_contact_linkedin": best_contact_linkedin,
+                "best_contact_channel": recommended_channel,
+                "best_contact_reason": best_contact_reason,
+                "decision_maker_candidates": decision_maker_candidates,
+                "branch_contacts": branch_contacts,
+                "doctor_profiles": doctor_profiles,
+                "contact_evidence": contact_evidence,
+                "contact_quality_score": enrichment_payload.get("contact_quality_score"),
+            }
+        ),
         "recommended_channel": recommended_channel,
         "recommended_message_type": "consultative_outreach" if recommended_channel else None,
         "draft_template_key": "clinic_conversion_audit",
@@ -1095,10 +1261,26 @@ def build_commercial_reason_from_signal_facts(
     decision_maker_confidence = signal_facts.get("decision_maker_confidence")
     best_contact_phone = signal_facts.get("best_contact_phone")
     best_contact_email = signal_facts.get("best_contact_email")
+    best_contact_linkedin = signal_facts.get("best_contact_linkedin")
     best_contact_channel = signal_facts.get("best_contact_channel")
     best_contact_reason = signal_facts.get("best_contact_reason")
+    decision_maker_candidates = signal_facts.get("decision_maker_candidates") or []
+    doctor_profiles = signal_facts.get("doctor_profiles") or []
+    branch_contacts = signal_facts.get("branch_contacts") or []
+    contact_evidence = signal_facts.get("contact_evidence") or []
     if isinstance(content_ready_score, int) and content_ready_score >= 50:
         positives.append("content-ready brand")
+    contact_intelligence = signal_facts.get("contact_intelligence") or {}
+    top_contact = contact_intelligence.get("top_contact") or {}
+    if top_contact.get("name"):
+        contact_label = str(top_contact.get("contact_type") or top_contact.get("owner_scope") or "contact").replace("_", " ")
+        positives.append(f"{top_contact.get('name')} ({contact_label})")
+    contact_quality_score = signal_facts.get("contact_quality_score")
+    if contact_quality_score is not None:
+        try:
+            positives.append(f"contact quality {int(float(contact_quality_score))}/100")
+        except (TypeError, ValueError):
+            pass
 
     if not signal_facts.get("phone_visible"):
         problems.append("phone is not prominent")
@@ -1419,6 +1601,8 @@ def build_analysis_bundle(
     best_contact_email = signal_facts.get("best_contact_email")
     best_contact_channel = signal_facts.get("best_contact_channel")
     best_contact_reason = signal_facts.get("best_contact_reason")
+    contact_intelligence = signal_facts.get("contact_intelligence") or {}
+    top_contact = contact_intelligence.get("top_contact") or {}
 
     trust_markers: List[str] = []
     pain_points: List[str] = []
@@ -1432,6 +1616,15 @@ def build_analysis_bundle(
         trust_markers.append(f"{doctor_count} doctors")
     if isinstance(content_ready_score, int) and content_ready_score >= 70:
         trust_markers.append("strong content readiness")
+    if top_contact.get("name"):
+        contact_label = str(top_contact.get("contact_type") or top_contact.get("owner_scope") or "contact").replace("_", " ")
+        trust_markers.append(f"{top_contact.get('name')} ({contact_label})")
+    contact_quality_score = signal_facts.get("contact_quality_score")
+    if contact_quality_score is not None:
+        try:
+            trust_markers.append(f"contact quality {int(float(contact_quality_score))}/100")
+        except (TypeError, ValueError):
+            pass
 
     if not whatsapp_detected:
         pain_points.append("missing WhatsApp capture")
@@ -1516,6 +1709,7 @@ def build_analysis_bundle(
             "category": (lead or {}).get("category"),
             "location": (lead or {}).get("location"),
         },
+        "contact_intelligence": contact_intelligence,
         "agent_context": {
             "business_summary": f"{business_name} looks commercially credible with {trust_summary}.",
             "conversion_summary": f"Primary opportunity: {pain_summary}.",
@@ -1528,11 +1722,17 @@ def build_analysis_bundle(
             "decision_maker_confidence": decision_maker_confidence,
             "best_contact_phone": best_contact_phone,
             "best_contact_email": best_contact_email,
+            "best_contact_linkedin": best_contact_linkedin,
             "best_contact_channel": best_contact_channel,
             "best_contact_reason": best_contact_reason,
+            "decision_maker_candidates": decision_maker_candidates,
+            "doctor_profiles": doctor_profiles,
+            "branch_contacts": branch_contacts,
+            "contact_evidence": contact_evidence,
             "recommended_offer": recommended_offer,
             "recommended_channel": signal_facts.get("recommended_channel"),
             "recommended_next_step": signal_facts.get("next_best_action"),
+            "contact_intelligence": contact_intelligence,
         },
     }
 
@@ -1912,6 +2112,270 @@ def get_processed_details_for_lead(db, lead_id: str) -> Dict[str, Any]:
     }
 
 
+def _normalize_contact_phone(value: Any) -> Optional[str]:
+    digits = re.sub(r"\D", "", str(value or ""))
+    if not digits:
+        return None
+    if len(digits) > 10:
+        return digits[-10:]
+    return digits
+
+
+def _tokenize_contact_name(value: Any) -> List[str]:
+    tokens = re.findall(r"[a-z0-9]+", str(value or "").lower())
+    return [token for token in tokens if len(token) > 1]
+
+
+def _phone_match_score(contact_phone: Optional[str], candidates: List[str]) -> tuple[float, Optional[str]]:
+    normalized_input = _normalize_contact_phone(contact_phone)
+    if not normalized_input:
+        return 0.0, None
+
+    best_score = 0.0
+    best_match = None
+    for candidate in candidates:
+        normalized_candidate = _normalize_contact_phone(candidate)
+        if not normalized_candidate:
+            continue
+        if normalized_candidate == normalized_input:
+            return 1.0, candidate
+        if normalized_candidate.endswith(normalized_input) or normalized_input.endswith(normalized_candidate):
+            if 0.96 > best_score:
+                best_score = 0.96
+                best_match = candidate
+            continue
+        if len(normalized_input) >= 8 and len(normalized_candidate) >= 8:
+            if normalized_candidate[-8:] == normalized_input[-8:] and 0.82 > best_score:
+                best_score = 0.82
+                best_match = candidate
+    return best_score, best_match
+
+
+def _name_match_score(contact_name: Optional[str], candidates: List[str]) -> tuple[float, Optional[str]]:
+    normalized_input = str(contact_name or "").strip()
+    input_tokens = set(_tokenize_contact_name(contact_name))
+    if not normalized_input and not input_tokens:
+        return 0.0, None
+
+    best_score = 0.0
+    best_match = None
+    for candidate in candidates:
+        normalized_candidate = str(candidate or "").strip()
+        if not normalized_candidate:
+            continue
+        candidate_tokens = set(_tokenize_contact_name(normalized_candidate))
+        token_score = 0.0
+        if input_tokens and candidate_tokens:
+            overlap = len(input_tokens & candidate_tokens)
+            token_score = overlap / max(len(input_tokens), len(candidate_tokens))
+        sequence_score = SequenceMatcher(
+            None,
+            normalized_input.lower(),
+            normalized_candidate.lower(),
+        ).ratio()
+        score = max(token_score, sequence_score)
+        if score > best_score:
+            best_score = score
+            best_match = normalized_candidate
+    return best_score, best_match
+
+
+def _collect_signal_contact_values(
+    lead_data: Dict[str, Any],
+    signal_facts: Dict[str, Any],
+) -> tuple[List[str], List[str]]:
+    phones = _dedupe_strings(
+        [
+            lead_data.get("phone"),
+            signal_facts.get("best_contact_phone"),
+            *(signal_facts.get("phone_numbers") or []),
+            *[
+                candidate.get("phone")
+                for candidate in (signal_facts.get("decision_maker_candidates") or [])
+            ],
+            *[
+                phone
+                for candidate in (signal_facts.get("decision_maker_candidates") or [])
+                for phone in (candidate.get("phones") or [])
+            ],
+            *[
+                branch.get("phone")
+                for branch in (signal_facts.get("branch_contacts") or [])
+            ],
+            *[
+                phone
+                for doctor in (signal_facts.get("doctor_profiles") or [])
+                for phone in (doctor.get("phones") or [])
+            ],
+        ]
+    )
+
+    names = _dedupe_strings(
+        [
+            lead_data.get("business_name"),
+            signal_facts.get("decision_maker_name"),
+            *(signal_facts.get("doctor_names") or []),
+            *[
+                candidate.get("name")
+                for candidate in (signal_facts.get("decision_maker_candidates") or [])
+            ],
+            *[
+                doctor.get("name")
+                for doctor in (signal_facts.get("doctor_profiles") or [])
+            ],
+        ]
+    )
+
+    return phones, names
+
+
+def resolve_contact_to_lead(
+    db,
+    *,
+    contact_phone: Optional[str],
+    contact_name: Optional[str],
+    max_candidates: int = 150,
+) -> Optional[Dict[str, Any]]:
+    leads = db.get_leads(limit=max_candidates)
+    best_match: Optional[Dict[str, Any]] = None
+    best_score = 0.0
+
+    for lead_data in leads:
+        lead_id = lead_data.get("lead_id")
+        if not lead_id:
+            continue
+
+        lead_uuid = UUID(str(lead_id))
+        enrichment = db.get_enrichment_data(lead_uuid) or {}
+        intent = db.get_intent_data(lead_uuid) or {}
+        proof = db.get_proof_artifact(lead_uuid) or {}
+        scoring = db.get_scoring_result(lead_uuid) or {}
+        lead_state = db.get_lead_state(lead_uuid) or {}
+        signal_facts = build_signal_facts(
+            lead_data,
+            enrichment=enrichment,
+            intent=intent,
+            proof=proof,
+            scoring=scoring,
+            lead_state=lead_state,
+        )
+        phones, names = _collect_signal_contact_values(lead_data, signal_facts)
+        phone_score, matched_phone = _phone_match_score(contact_phone, phones)
+        name_score, matched_name = _name_match_score(contact_name, names)
+
+        combined_score = phone_score * 0.78 + name_score * 0.35
+        if not contact_phone:
+            combined_score = name_score
+
+        if matched_phone:
+            combined_score += 0.08
+        if matched_name and matched_name.lower() == str(contact_name or "").strip().lower():
+            combined_score += 0.04
+
+        if combined_score <= best_score:
+            continue
+
+        threshold = 0.68 if contact_phone else 0.72
+        if combined_score < threshold:
+            continue
+
+        reasons: List[str] = []
+        if matched_phone:
+            reasons.append(f"Matched phone {matched_phone}")
+        if matched_name:
+            reasons.append(f"Matched name {matched_name}")
+        if signal_facts.get("decision_maker_name"):
+            reasons.append(
+                f"Decision maker candidate {signal_facts.get('decision_maker_name')}"
+            )
+
+        best_score = combined_score
+        best_match = {
+            "lead_id": str(lead_id),
+            "business_name": lead_data.get("business_name"),
+            "confidence": round(min(combined_score, 1.0), 3),
+            "reasons": reasons,
+            "matched_phone": matched_phone,
+            "matched_name": matched_name,
+        }
+
+    return best_match
+
+
+def sync_conversation_message(
+    db,
+    *,
+    lead_id: str,
+    role: str,
+    message: str,
+    channel: Optional[str] = None,
+    conversation_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    lead_uuid = UUID(lead_id)
+    existing_conversations = db.get_conversations_for_lead(lead_uuid) or []
+    selected_conversation = None
+
+    if conversation_id:
+        selected_conversation = next(
+            (
+                item
+                for item in existing_conversations
+                if str(item.get("conversation_id")) == str(conversation_id)
+            ),
+            None,
+        )
+
+    if not selected_conversation and existing_conversations:
+        selected_conversation = max(
+            existing_conversations,
+            key=lambda item: item.get("updated_at") or item.get("created_at") or "",
+        )
+
+    now_iso = datetime.utcnow().isoformat()
+    transcript = list((selected_conversation or {}).get("transcript") or [])
+    transcript.append(
+        {
+            "role": role,
+            "message": message,
+            "timestamp": now_iso,
+        }
+    )
+
+    entities = dict((selected_conversation or {}).get("entities") or {})
+    channel_history = _dedupe_strings([*(entities.get("channel_history") or []), channel])
+    entities["current_channel"] = channel or entities.get("current_channel")
+    entities["channel_history"] = channel_history
+    if role in {"human", "ai"}:
+        entities["current_reply_owner"] = role
+
+    payload = {
+        "lead_id": lead_id,
+        "transcript": transcript,
+        "entities": entities,
+        "objection_summary": (selected_conversation or {}).get("objection_summary"),
+        "suggested_close_angle": (selected_conversation or {}).get("suggested_close_angle"),
+        "escalated": bool((selected_conversation or {}).get("escalated")),
+        "escalated_at": (selected_conversation or {}).get("escalated_at"),
+    }
+
+    if selected_conversation and selected_conversation.get("conversation_id"):
+        updated = db.update_conversation(
+            UUID(str(selected_conversation.get("conversation_id"))),
+            payload,
+        )
+        return updated or selected_conversation
+
+    created = db.create_conversation(
+        {
+            "conversation_id": str(uuid4()),
+            **payload,
+            "created_at": now_iso,
+            "updated_at": now_iso,
+        }
+    )
+    return created
+
+
 def serialize_lead_for_storage(lead: Lead, raw_niche: str) -> Dict[str, Any]:
     """Convert a discovered Lead model into a DB-ready lead row."""
     return {
@@ -2026,6 +2490,7 @@ def run_selected_lead_pipeline(
         intent=state.get("intent") or {},
         proof=state.get("proof") or {},
         lead_state={"metadata": {"ads_verification": ads_verification}},
+        runtime_metadata=state.get("metadata") or {},
     )
     state["metadata"] = {
         **(state.get("metadata") or {}),
@@ -2046,6 +2511,7 @@ def run_selected_lead_pipeline(
         proof=state.get("proof") or {},
         scoring=state.get("scoring") or {},
         lead_state={"metadata": {"ads_verification": ads_verification}},
+        runtime_metadata=state.get("metadata") or {},
     )
     state["metadata"] = {
         **(state.get("metadata") or {}),
@@ -3586,7 +4052,7 @@ async def analyze_lead(
 
     try:
         db = get_db()
-        lead_data = db.get_lead(request.lead_id)
+        lead_data = db.get_lead(UUID(request.lead_id))
         if not lead_data:
             raise HTTPException(status_code=404, detail="Lead not found")
 
@@ -3769,16 +4235,17 @@ async def analyze_lead_async(
 
     try:
         db = get_db()
-        lead_data = db.get_lead(request.lead_id)
+        normalized_lead_id = normalize_lead_id_value(request.lead_id)
+        lead_data = db.get_lead(normalized_lead_id)
         if not lead_data:
             raise HTTPException(status_code=404, detail="Lead not found")
 
-        lead_state = db.get_lead_state(UUID(str(request.lead_id))) or {}
+        lead_state = db.get_lead_state(UUID(normalized_lead_id)) or {}
         metadata = dict(lead_state.get("metadata") or {})
         now = datetime.utcnow().isoformat()
         persist_analysis_snapshot(
             db,
-            str(request.lead_id),
+            normalized_lead_id,
             analysis_state="analyzing",
             signal_facts=metadata.get("signal_facts") or {},
             analysis_updated_at=now,
@@ -3787,7 +4254,7 @@ async def analyze_lead_async(
         )
         db.save_lead_state(
             {
-                "lead_id": str(request.lead_id),
+                "lead_id": normalized_lead_id,
                 "current_stage": "analysis",
                 "last_node": "analysis",
                 "last_error": None,
@@ -3804,13 +4271,13 @@ async def analyze_lead_async(
         )
         background_tasks.add_task(
             run_lead_analysis_background,
-            str(request.lead_id),
+            normalized_lead_id,
             request.include_outreach,
         )
         return {
             "success": True,
             "queued": True,
-            "lead_id": str(request.lead_id),
+            "lead_id": normalized_lead_id,
             "analysis_state": "analyzing",
             "analysis_updated_at": now,
         }
@@ -4038,6 +4505,66 @@ async def handle_conversation(
         raise
     except Exception as e:
         logger.error(f"Conversation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/conversation/sync")
+async def sync_conversation(
+    request: ConversationSyncRequest,
+    user_id: Optional[str] = Depends(get_user_id),
+):
+    """Persist a human/AI/prospect message into canonical lead conversation memory."""
+    try:
+        db = get_db()
+        try:
+            normalized_lead_id = str(UUID(str(request.lead_id)))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Invalid lead_id")
+
+        lead_data = db.get_lead(normalized_lead_id)
+        if not lead_data:
+            raise HTTPException(status_code=404, detail="Lead not found")
+
+        conversation = sync_conversation_message(
+            db,
+            lead_id=normalized_lead_id,
+            role=request.role,
+            message=request.message,
+            channel=request.channel,
+            conversation_id=request.conversation_id,
+        )
+
+        return {
+            "success": True,
+            "conversation": conversation,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Conversation sync error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/leads/resolve-contact")
+async def resolve_contact(
+    request: ResolveContactRequest,
+    user_id: Optional[str] = Depends(get_user_id),
+):
+    """Resolve a WhatsApp/public contact against the known lead set."""
+    try:
+        db = get_db()
+        match = resolve_contact_to_lead(
+            db,
+            contact_phone=request.contact_phone,
+            contact_name=request.contact_name,
+            max_candidates=request.max_candidates,
+        )
+        return {
+            "success": True,
+            "match": match,
+        }
+    except Exception as e:
+        logger.error(f"Resolve contact error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ============================================================================
@@ -4285,12 +4812,13 @@ async def get_lead(
     """Get a single lead by ID."""
     try:
         db = get_db()
-        lead = db.get_lead(lead_id)
+        normalized_lead_id = normalize_lead_id_value(lead_id)
+        lead = db.get_lead(normalized_lead_id)
         
         if not lead:
             raise HTTPException(status_code=404, detail="Lead not found")
 
-        processed_details = get_processed_details_for_lead(db, lead_id)
+        processed_details = get_processed_details_for_lead(db, normalized_lead_id)
         lead_model = lead_data_to_model(lead)
         source = infer_discovery_source_from_niche(lead.get("category") or "")
         preview = build_discovery_preview(

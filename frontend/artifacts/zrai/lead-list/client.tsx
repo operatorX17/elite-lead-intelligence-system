@@ -373,6 +373,42 @@ function getAnalysisBundle(
   return processedDetails?.analysis_bundle || lead?.analysis_bundle || null;
 }
 
+function hydrateLeadFromStoredAnalysis(
+  lead: Lead | null | undefined,
+  processedDetails: ProcessedLeadDetails | null | undefined
+) {
+  if (!lead) {
+    return null;
+  }
+
+  if (processedDetails?.analysis_state !== "analyzed") {
+    return lead;
+  }
+
+  const analysisBundle = getAnalysisBundle(lead, processedDetails || undefined);
+  const scoring = (processedDetails?.scoring || {}) as Record<string, unknown>;
+  const scores = analysisBundle?.scores || {};
+  const scoreBreakdown = (scoring.score_breakdown || scoring.breakdown || {}) as Record<string, unknown>;
+  const finalScore =
+    lead.final_score ??
+    lead.score ??
+    (scores.final_score as number | undefined) ??
+    (scores.total_score as number | undefined) ??
+    (scoreBreakdown.total_score as number | undefined) ??
+    null;
+
+  return {
+    ...lead,
+    score: finalScore ?? lead.score,
+    final_score: finalScore ?? lead.final_score,
+    score_kind: "final_score" as const,
+    analysis_state: "analyzed" as const,
+    analysis_updated_at: processedDetails.analysis_updated_at || lead.analysis_updated_at,
+    signals_version: processedDetails.signals_version || lead.signals_version,
+    signal_facts: processedDetails.signal_facts || lead.signal_facts,
+  };
+}
+
 function getScoreSnapshot(
   lead: Lead | null | undefined,
   processedDetails: ProcessedLeadDetails | undefined
@@ -1214,7 +1250,14 @@ function LeadListContent({
   const isSelectedLeadProcessing = selectedLead
     ? processingIds.includes(selectedLead.id)
     : false;
-  const inspectorLead = selectedLeadLive ?? metadata?.liveSelectedLead ?? selectedLead;
+  const inspectorLead =
+    hydrateLeadFromStoredAnalysis(selectedLeadLive, selectedLeadLiveDetails) ||
+    hydrateLeadFromStoredAnalysis(metadata?.liveSelectedLead, metadata?.liveSelectedLeadDetails || null) ||
+    hydrateLeadFromStoredAnalysis(
+      selectedLead,
+      selectedLead ? processedDetails[selectedLead.id] : undefined
+    ) ||
+    selectedLead;
   const selectedLeadDetails =
     selectedLeadLiveDetails ||
     metadata?.liveSelectedLeadDetails ||

@@ -232,6 +232,42 @@ function getAnalysisBundle(
   return processedDetails?.analysis_bundle || lead?.analysis_bundle || null;
 }
 
+function hydrateLeadFromStoredAnalysis(
+  lead: Lead | null | undefined,
+  processedDetails: ProcessedLeadDetails | null | undefined
+) {
+  if (!lead) {
+    return null;
+  }
+
+  if (processedDetails?.analysis_state !== "analyzed") {
+    return lead;
+  }
+
+  const analysisBundle = getAnalysisBundle(lead, processedDetails);
+  const scoring = (processedDetails?.scoring || {}) as Record<string, unknown>;
+  const scores = analysisBundle?.scores || {};
+  const scoreBreakdown = (scoring.score_breakdown || scoring.breakdown || {}) as Record<string, unknown>;
+  const finalScore =
+    lead.final_score ??
+    lead.score ??
+    (scores.final_score as number | undefined) ??
+    (scores.total_score as number | undefined) ??
+    (scoreBreakdown.total_score as number | undefined) ??
+    null;
+
+  return {
+    ...lead,
+    score: finalScore ?? lead.score,
+    final_score: finalScore ?? lead.final_score,
+    score_kind: "final_score" as const,
+    analysis_state: "analyzed" as const,
+    analysis_updated_at: processedDetails.analysis_updated_at || lead.analysis_updated_at,
+    signals_version: processedDetails.signals_version || lead.signals_version,
+    signal_facts: processedDetails.signal_facts || lead.signal_facts,
+  };
+}
+
 function getScoreSnapshot(
   lead: Lead | null | undefined,
   processedDetails: ProcessedLeadDetails | null | undefined
@@ -393,7 +429,11 @@ function LeadCardContent({
   const payload = parseLeadCardPayload(content);
   const lead = metadata?.lead || payload?.lead || null;
   const processedDetails = metadata?.processedDetails || payload?.processed_details || null;
-  const displayLead = liveLead || metadata?.liveLead || lead;
+  const displayLead =
+    hydrateLeadFromStoredAnalysis(liveLead || null, liveProcessedDetails || null) ||
+    hydrateLeadFromStoredAnalysis(metadata?.liveLead || null, metadata?.liveProcessedDetails || null) ||
+    hydrateLeadFromStoredAnalysis(lead, processedDetails) ||
+    lead;
   const displayProcessedDetails =
     liveProcessedDetails || metadata?.liveProcessedDetails || processedDetails;
 

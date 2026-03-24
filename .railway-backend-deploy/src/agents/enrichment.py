@@ -8,8 +8,10 @@ from datetime import datetime
 import re
 import logging
 import os
+from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 import requests
+from bs4 import BeautifulSoup
 
 from src.agents.base import BaseAgent, CircuitBreakerMixin
 from src.graph.state import LeadGraphState
@@ -18,6 +20,16 @@ from src.tools.apify import ApifyClient
 
 
 logger = logging.getLogger(__name__)
+
+BRAVE_SEARCH_API_URL = "https://api.search.brave.com/res/v1/web/search"
+DISCOVERY_HTTP_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/123.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "en-US,en;q=0.9",
+}
 
 
 # Tech signal patterns
@@ -204,36 +216,7 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
 
         website = self._normalize_url(website)
 
-        raw_content = ""
-
-        try:
-            api_key = os.getenv("FIRECRAWL_API_KEY")
-            if api_key:
-                headers = {
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                }
-                payload = {
-                    "url": website,
-                    "formats": ["markdown", "html"],
-                    "onlyMainContent": False,
-                }
-                response = requests.post(
-                    "https://api.firecrawl.dev/v1/scrape",
-                    json=payload,
-                    headers=headers,
-                    timeout=30,
-                )
-                response.raise_for_status()
-                data = response.json().get("data", {})
-                raw_content = " ".join(
-                    [
-                        str(data.get("html") or ""),
-                        str(data.get("markdown") or ""),
-                    ]
-                )
-        except Exception as exc:
-            self._logger.warning("Firecrawl scrape failed for %s: %s", website, exc)
+        raw_content = self._fetch_page_content(website)
 
         if not raw_content:
             try:
@@ -242,17 +225,17 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             except Exception as exc:
                 self._logger.warning("Apify crawl fallback failed for %s: %s", website, exc)
 
-        if not raw_content:
-            try:
-                response = requests.get(
-                    website,
-                    timeout=20,
-                    headers={"User-Agent": "Mozilla/5.0"},
-                )
-                response.raise_for_status()
-                raw_content = response.text
-            except Exception as exc:
-                self._logger.warning("Static website fallback failed for %s: %s", website, exc)
+        supporting_urls = self._extract_candidate_page_urls(raw_content, website)
+        supporting_content: List[str] = []
+        for supporting_url in supporting_urls[:3]:
+            if supporting_url.rstrip("/") == website.rstrip("/"):
+                continue
+            extra_page = self._fetch_page_content(supporting_url)
+            if extra_page:
+                supporting_content.append(extra_page)
+
+        if supporting_content:
+            raw_content = "\n".join([raw_content, *supporting_content])
 
         lower_content = raw_content.lower()
         context["raw_content"] = raw_content
@@ -308,6 +291,92 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         context["contact_paths"] = deduped_paths
 
         return context
+
+    def _fetch_page_content(self, url: str) -> str:
+        raw_content = ""
+        try:
+            api_key = os.getenv("FIRECRAWL_API_KEY")
+            if api_key:
+                headers = {
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                }
+                payload = {
+                    "url": url,
+                    "formats": ["markdown", "html"],
+                    "onlyMainContent": False,
+                }
+                response = requests.post(
+                    "https://api.firecrawl.dev/v1/scrape",
+                    json=payload,
+                    headers=headers,
+                    timeout=30,
+                )
+                response.raise_for_status()
+                data = response.json().get("data", {})
+                raw_content = " ".join(
+                    [
+                        str(data.get("html") or ""),
+                        str(data.get("markdown") or ""),
+                    ]
+                ).strip()
+        except Exception as exc:
+            self._logger.warning("Firecrawl scrape failed for %s: %s", url, exc)
+
+        if raw_content:
+            return raw_content
+
+        try:
+            response = requests.get(
+                url,
+                timeout=20,
+                headers=DISCOVERY_HTTP_HEADERS,
+            )
+            response.raise_for_status()
+            return response.text
+        except Exception as exc:
+            self._logger.warning("Static website fallback failed for %s: %s", url, exc)
+            return ""
+
+    def _extract_candidate_page_urls(self, raw_content: str, base_url: str) -> List[str]:
+        if not raw_content:
+            return []
+
+        keywords = (
+            "contact",
+            "about",
+            "team",
+            "doctor",
+            "doctors",
+            "founder",
+            "director",
+            "management",
+            "locations",
+            "clinics",
+        )
+
+        base_host = (urlparse(base_url).netloc or "").lower()
+        candidates: List[str] = []
+        raw_links = re.findall(r'href=["\']([^"\']+)["\']', raw_content, flags=re.IGNORECASE)
+        raw_links.extend(re.findall(r"\((https?://[^\s)]+|/[^\s)]+)\)", raw_content))
+
+        for href in raw_links:
+            if not href:
+                continue
+            absolute = urljoin(base_url, href)
+            parsed = urlparse(absolute)
+            if parsed.scheme not in {"http", "https"}:
+                continue
+            if base_host and (parsed.netloc or "").lower() != base_host:
+                continue
+            lowered = absolute.lower()
+            if not any(keyword in lowered for keyword in keywords):
+                continue
+            normalized = f"{parsed.scheme}://{parsed.netloc}{parsed.path or ''}"
+            if normalized not in candidates:
+                candidates.append(normalized)
+
+        return candidates
 
     def _normalize_url(self, url: str) -> str:
         normalized = url.strip()
@@ -381,18 +450,16 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
 
         candidates: List[Dict[str, Any]] = []
         business_name = str(lead.get("business_name", "")).strip()
-        token_match = re.match(r"^([A-Za-z][A-Za-z'-]{2,})", business_name)
-        if token_match:
-            potential = token_match.group(1).replace("'s", "").strip()
-            if potential and potential.lower() not in stopwords:
-                candidates.append(
-                    {
-                        "name": potential,
-                        "role": "brand_owner_hint",
-                        "source": "business_name",
-                        "score": 15,
-                    }
-                )
+        business_name_person = self._extract_person_name_from_business_name(business_name)
+        if business_name_person:
+            candidates.append(
+                {
+                    "name": business_name_person,
+                    "role": "doctor_named_brand",
+                    "source": "business_name",
+                    "score": 40,
+                }
+            )
 
         if raw_content:
             role_patterns = [
@@ -430,7 +497,7 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
                 for pattern in patterns:
                     for match in re.finditer(pattern, raw_content):
                         name = self._normalize_person_name(match.group("name"))
-                        if not name or self._looks_like_business_label(name):
+                        if not name or not self._is_plausible_person_name(name):
                             continue
                         candidates.append(
                             {
@@ -440,6 +507,12 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
                                 "score": score,
                             }
                         )
+
+        search_candidates = self._search_decision_maker_candidates(
+            business_name=business_name,
+            location=str(lead.get("location") or ""),
+        )
+        candidates.extend(search_candidates)
 
         deduped_candidates: List[Dict[str, Any]] = []
         seen_names = set()
@@ -460,12 +533,15 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
                 2,
             )
 
-            matched_linkedin = self._match_candidate_linkedin(
-                str(best_candidate.get("name") or ""),
-                linkedin_profiles,
-            )
-            if matched_linkedin:
-                decision_maker["linkedin"] = matched_linkedin
+            if best_candidate.get("linkedin"):
+                decision_maker["linkedin"] = str(best_candidate.get("linkedin"))
+            else:
+                matched_linkedin = self._match_candidate_linkedin(
+                    str(best_candidate.get("name") or ""),
+                    linkedin_profiles,
+                )
+                if matched_linkedin:
+                    decision_maker["linkedin"] = matched_linkedin
         elif linkedin_profiles:
             decision_maker["linkedin"] = linkedin_profiles[0]
 
@@ -509,6 +585,29 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             return None
         return " ".join(parts)
 
+    def _extract_person_name_from_business_name(self, business_name: str) -> Optional[str]:
+        if not business_name:
+            return None
+
+        dr_match = re.search(
+            r"(?i)\bdr\.?\s+(?P<name>[A-Z][A-Za-z.\-]+(?:\s+[A-Z][A-Za-z.\-]+){1,3})",
+            business_name,
+        )
+        if dr_match:
+            name = self._normalize_person_name(dr_match.group("name"))
+            if name and self._is_plausible_person_name(name):
+                return name
+        return None
+
+    def _is_plausible_person_name(self, value: str) -> bool:
+        tokens = [token.strip(".").lower() for token in value.split() if token.strip(".")]
+        significant_tokens = [token for token in tokens if len(token) > 1]
+        if len(significant_tokens) < 2:
+            return False
+        if self._looks_like_business_label(value):
+            return False
+        return True
+
     def _looks_like_business_label(self, value: str) -> bool:
         tokens = [token.strip(".").lower() for token in value.split() if token.strip(".")]
         if not tokens:
@@ -532,6 +631,142 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         if any(token.isdigit() for token in tokens):
             return True
         return False
+
+    def _normalize_search_result_url(self, raw_url: str) -> Optional[str]:
+        if not raw_url:
+            return None
+
+        parsed = urlparse(raw_url)
+        if "duckduckgo.com" in (parsed.netloc or "").lower() and parsed.path.startswith("/l/"):
+            uddg_values = parse_qs(parsed.query).get("uddg", [])
+            if uddg_values:
+                raw_url = unquote(uddg_values[0])
+                parsed = urlparse(raw_url)
+
+        if parsed.scheme not in {"http", "https"}:
+            if raw_url.startswith("//"):
+                return self._normalize_search_result_url(f"https:{raw_url}")
+            return None
+
+        return f"{parsed.scheme}://{parsed.netloc}{parsed.path or ''}"
+
+    def _fetch_search_results(self, query: str, max_results: int = 6) -> List[Dict[str, str]]:
+        brave_api_key = os.getenv("BRAVE_API_KEY")
+        if brave_api_key:
+            try:
+                response = requests.get(
+                    BRAVE_SEARCH_API_URL,
+                    params={"q": query, "count": max(1, min(max_results, 10)), "search_lang": "en"},
+                    headers={
+                        **DISCOVERY_HTTP_HEADERS,
+                        "Accept": "application/json",
+                        "X-Subscription-Token": brave_api_key,
+                    },
+                    timeout=20,
+                )
+                response.raise_for_status()
+                payload = response.json()
+                results: List[Dict[str, str]] = []
+                for item in payload.get("web", {}).get("results", []):
+                    normalized = self._normalize_search_result_url(item.get("url") or "")
+                    if not normalized:
+                        continue
+                    results.append(
+                        {
+                            "title": str(item.get("title") or ""),
+                            "snippet": str(item.get("description") or ""),
+                            "url": normalized,
+                        }
+                    )
+                    if len(results) >= max_results:
+                        break
+                if results:
+                    return results
+            except Exception as exc:
+                self._logger.warning("Brave search failed for %s: %s", query, exc)
+
+        try:
+            response = requests.get(
+                "https://html.duckduckgo.com/html/",
+                params={"q": query},
+                headers=DISCOVERY_HTTP_HEADERS,
+                timeout=20,
+            )
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, "html.parser")
+            results: List[Dict[str, str]] = []
+            for anchor in soup.select("a.result__a"):
+                normalized = self._normalize_search_result_url(anchor.get("href") or "")
+                if not normalized:
+                    continue
+                container = anchor.find_parent("div", class_="result")
+                snippet_node = container.select_one(".result__snippet") if container else None
+                results.append(
+                    {
+                        "title": anchor.get_text(" ", strip=True),
+                        "snippet": snippet_node.get_text(" ", strip=True) if snippet_node else "",
+                        "url": normalized,
+                    }
+                )
+                if len(results) >= max_results:
+                    break
+            return results
+        except Exception as exc:
+            self._logger.warning("DuckDuckGo search failed for %s: %s", query, exc)
+            return []
+
+    def _search_decision_maker_candidates(self, business_name: str, location: str) -> List[Dict[str, Any]]:
+        if not business_name:
+            return []
+
+        queries = [
+            f'"{business_name}" founder {location}'.strip(),
+            f'"{business_name}" owner dermatologist {location}'.strip(),
+            f'"{business_name}" linkedin doctor {location}'.strip(),
+        ]
+
+        candidates: List[Dict[str, Any]] = []
+        role_patterns = [
+            ("founder", 88, r"(?i)(?:founder|co[-\s]?founder|owner|promoter)[^A-Za-z]{0,24}(?:dr\.?\s*)?(?P<name>[A-Z][A-Za-z.\-]+(?:\s+[A-Z][A-Za-z.\-]+){1,3})"),
+            ("director", 82, r"(?i)(?:director|medical director|managing director)[^A-Za-z]{0,24}(?:dr\.?\s*)?(?P<name>[A-Z][A-Za-z.\-]+(?:\s+[A-Z][A-Za-z.\-]+){1,3})"),
+            ("doctor", 68, r"(?i)\bdr\.?\s+(?P<name>[A-Z][A-Za-z.\-]+(?:\s+[A-Z][A-Za-z.\-]+){1,3})"),
+        ]
+
+        for query in queries:
+            for result in self._fetch_search_results(query, max_results=5):
+                text = " ".join([result.get("title") or "", result.get("snippet") or ""])
+                for role, score, pattern in role_patterns:
+                    for match in re.finditer(pattern, text):
+                        name = self._normalize_person_name(match.group("name"))
+                        if not name or not self._is_plausible_person_name(name):
+                            continue
+                        candidate: Dict[str, Any] = {
+                            "name": name,
+                            "role": role,
+                            "source": "search_result",
+                            "score": score,
+                        }
+                        if "linkedin.com/" in (result.get("url") or "").lower():
+                            candidate["linkedin"] = result.get("url")
+                            candidate["score"] += 4
+                        candidates.append(candidate)
+
+                if "linkedin.com/" in (result.get("url") or "").lower():
+                    title = str(result.get("title") or "")
+                    title_prefix = title.split("|")[0].split("-")[0].strip()
+                    linkedin_name = self._normalize_person_name(title_prefix)
+                    if linkedin_name and self._is_plausible_person_name(linkedin_name):
+                        candidates.append(
+                            {
+                                "name": linkedin_name,
+                                "role": "linkedin_profile",
+                                "source": "search_result",
+                                "score": 72,
+                                "linkedin": result.get("url"),
+                            }
+                        )
+
+        return candidates
 
     def _match_candidate_linkedin(self, candidate_name: str, linkedin_profiles: List[str]) -> Optional[str]:
         if not candidate_name or not linkedin_profiles:
