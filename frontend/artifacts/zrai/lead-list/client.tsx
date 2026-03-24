@@ -38,6 +38,16 @@ type LeadListMetadata = {
   liveSelectedLeadDetails?: ProcessedLeadDetails | null;
 };
 
+type LeadListPayload = {
+  filter?: string;
+  leads?: Lead[];
+  processedDetails?: Record<string, ProcessedLeadDetails>;
+  processed_details?: Record<string, ProcessedLeadDetails>;
+  selectedLeadId?: string | null;
+  sortBy?: string;
+  sortOrder?: "asc" | "desc";
+};
+
 type ProcessedLeadDetails = {
   enrichment?: Record<string, unknown>;
   intent?: Record<string, unknown>;
@@ -686,16 +696,49 @@ function LeadRow({ lead, onClick }: { lead: Lead; onClick: () => void }) {
 }
 
 function parseLeads(content: string): Lead[] {
+  return parseLeadListPayload(content).leads;
+}
+
+function parseLeadListPayload(content: string): {
+  filter: string;
+  leads: Lead[];
+  processedDetails: Record<string, ProcessedLeadDetails>;
+  selectedLeadId: string | null;
+  sortBy: string;
+  sortOrder: "asc" | "desc";
+} {
   if (!content) {
-    return [];
+    return {
+      filter: "",
+      leads: [],
+      processedDetails: {},
+      selectedLeadId: null,
+      sortBy: "score",
+      sortOrder: "desc",
+    };
   }
 
   try {
-    const parsed = JSON.parse(content);
-    const leads = Array.isArray(parsed) ? parsed : parsed.leads || [];
-    return sanitizeLeadRows(leads);
+    const parsed = JSON.parse(content) as Lead[] | LeadListPayload;
+    const payload = Array.isArray(parsed) ? ({ leads: parsed } satisfies LeadListPayload) : parsed;
+
+    return {
+      filter: payload.filter || "",
+      leads: sanitizeLeadRows(payload.leads || []),
+      processedDetails: payload.processedDetails || payload.processed_details || {},
+      selectedLeadId: payload.selectedLeadId || null,
+      sortBy: payload.sortBy || "score",
+      sortOrder: payload.sortOrder === "asc" ? "asc" : "desc",
+    };
   } catch {
-    return [];
+    return {
+      filter: "",
+      leads: [],
+      processedDetails: {},
+      selectedLeadId: null,
+      sortBy: "score",
+      sortOrder: "desc",
+    };
   }
 }
 
@@ -719,18 +762,22 @@ function LeadListContent({
   const { setArtifact } = useArtifact();
 
   // Prefer metadata because operator actions can mutate leads after the initial artifact is streamed.
-  const contentLeads = parseLeads(content);
+  const contentPayload = parseLeadListPayload(content);
+  const contentLeads = contentPayload.leads;
   const leads = sanitizeLeadRows(
     metadata?.leads?.length > 0 ? metadata.leads : contentLeads
   );
 
-  const filter = metadata?.filter || "";
+  const filter = metadata?.filter || contentPayload.filter || "";
   const filteredLeads = filterLeads(leads, filter);
 
-  const sortBy = metadata?.sortBy || "score";
-  const sortOrder = metadata?.sortOrder || "desc";
+  const sortBy = metadata?.sortBy || contentPayload.sortBy || "score";
+  const sortOrder = metadata?.sortOrder || contentPayload.sortOrder || "desc";
   const sortedLeads = sortLeads(filteredLeads, sortBy, sortOrder);
-  const processedDetails = metadata?.processedDetails || {};
+  const processedDetails =
+    metadata?.processedDetails && Object.keys(metadata.processedDetails).length > 0
+      ? metadata.processedDetails
+      : contentPayload.processedDetails;
 
   const hydrateFounderIntel = async (
     baseLead: Lead,
@@ -1927,15 +1974,31 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
   },
   onStreamPart: ({ streamPart, setArtifact, setMetadata }) => {
     if ((streamPart as any).type === "data-leadList") {
-      const data = (streamPart as any).data as Lead[];
+      const data = (streamPart as any).data as Lead[] | LeadListPayload;
+      const payload = Array.isArray(data) ? ({ leads: data } satisfies LeadListPayload) : data;
+      const leads = sanitizeLeadRows(payload.leads || []);
+      const processedDetails = payload.processedDetails || payload.processed_details || {};
       setMetadata((prev: LeadListMetadata) => ({
         ...prev,
-        leads: data,
+        filter: payload.filter || prev.filter || "",
+        leads,
         loading: false,
+        processedDetails:
+          Object.keys(processedDetails).length > 0
+            ? processedDetails
+            : (prev.processedDetails || {}),
+        selectedLeadId: payload.selectedLeadId || prev.selectedLeadId || null,
+        sortBy: payload.sortBy || prev.sortBy || "score",
+        sortOrder: payload.sortOrder || prev.sortOrder || "desc",
       }));
       setArtifact((draft) => ({
         ...draft,
-        content: JSON.stringify(data),
+        content: serializeLeadListPayload(leads, {
+          filter: payload.filter || "",
+          processedDetails,
+          sortBy: payload.sortBy || "score",
+          sortOrder: payload.sortOrder || "desc",
+        }),
         status: "idle",
       }));
     }
