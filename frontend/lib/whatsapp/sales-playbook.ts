@@ -175,6 +175,57 @@ function lowerCaseFirst(value: string | null | undefined) {
   return normalized.charAt(0).toLowerCase() + normalized.slice(1);
 }
 
+function inferPainPointsFromTranscript(
+  messages: WhatsAppMessage[],
+  incomingText: string
+) {
+  const transcript = [...messages.slice(-8).map((message) => message.body), incomingText]
+    .filter(Boolean)
+    .join(" ");
+
+  return findMatches(transcript, PAIN_PATTERNS);
+}
+
+function buildGenericProofReply(firstPain: string | null) {
+  switch (firstPain) {
+    case "booking gap":
+      return [
+        "First place I'd check is the gap between first enquiry and the actual booking ask. Warm leads usually cool off there before the slot is even offered.",
+        "First leak I'd inspect is enquiry-to-booking handoff. If that step is loose, good intent dies before the calendar gets involved.",
+      ];
+    case "slow response":
+      return [
+        "First place I'd check is reply speed after the first enquiry. Once response time slips, intent drops much faster than most teams expect.",
+        "First leak I'd inspect is how quickly the first message gets answered. That delay alone can quietly cost a surprising number of bookings.",
+      ];
+    case "missed follow up":
+      return [
+        "First place I'd check is what happens after the first reply. One missed follow-up is often enough for a warm lead to disappear.",
+        "First leak I'd inspect is whether enquiries get a proper second touch. That silent gap usually costs more bookings than people realise.",
+      ];
+    case "whatsapp gap":
+      return [
+        "First place I'd check is the WhatsApp thread itself. If nobody owns the chat cleanly, leads stall after the first question.",
+        "First leak I'd inspect is how WhatsApp chats are handled after the opener. If ownership is fuzzy, intent leaks fast there.",
+      ];
+    case "staff dependency":
+      return [
+        "First place I'd check is the handoff between doctor and front desk. Good intent usually leaks when ownership shifts mid-thread.",
+        "First leak I'd inspect is who actually owns the thread after interest shows up. Staff dependency quietly slows the whole close path.",
+      ];
+    case "no show":
+      return [
+        "First place I'd check is the gap between booking and showing up. Loose reminders and reconfirmation usually make that leak worse.",
+        "First leak I'd inspect is what happens after a slot gets booked. If reconfirmation is weak, no-shows stack up quietly.",
+      ];
+    default:
+      return [
+        "First place I'd check is speed from first enquiry to first meaningful reply. If that handoff is loose, warm intent cools before the team really gets a shot.",
+        "First leak I'd inspect is what happens in the first few minutes after someone reaches out. That early drop-off usually decides whether the booking ever happens.",
+      ];
+  }
+}
+
 function inferConfidence({
   messages,
   painPoints,
@@ -480,13 +531,19 @@ export function buildWhatsAppFallbackReply(
 
     if (firstPain) {
       return pickFreshReply(
-        [
-          `First leak I'd check is ${firstPain}. That usually costs replies before the team even gets a proper shot. Want the next one too?`,
-          `I'd start with ${firstPain}. Clean that up first, then look at the second drop-off point. Want me to keep going?`,
-        ],
+        buildGenericProofReply(firstPain).map(
+          (reply) => `${reply} Want the next one too?`
+        ),
         replyHistory
       );
     }
+
+    return pickFreshReply(
+      buildGenericProofReply(null).map(
+        (reply) => `${reply} If you want, I'll give you the second leak after that.`
+      ),
+      replyHistory
+    );
   }
 
   return pickFreshReply(
@@ -537,12 +594,19 @@ export function buildWhatsAppSystemPrompt({
     "Do not start every message with 'Got it', 'Makes sense', or 'Understood'.",
     "Keep the tone composed, direct, slightly sharp, and trustworthy.",
     "Use one concrete question or one concrete observation per reply.",
+    "If the lead asks to see details, proof, or leak points, actually give the first leak immediately.",
+    "Do not say 'I can show you' or 'I can share' when the lead already asked for it. Just show the first point.",
+    "Do not offer a consultation, a call, automation, or a system unless the lead asked for that next step.",
+    "Prefer grounded operational observations over generic sales language.",
     "Do not repeat your last suggested reply. If a similar reply is already in the recent transcript, vary the wording and ask a different diagnostic question.",
     `Current stage: ${state.stage}`,
     `Priority: ${state.priority}`,
     `Pain points: ${state.painPoints.join(", ") || "not yet confirmed"}`,
     `Objections: ${state.objectionCategories.join(", ") || "none"}`,
     `Requested next step: ${state.requestedNextStep ?? "unknown"}`,
+    state.requestedNextStep === "details"
+      ? "Priority instruction: give the first concrete leak point now, then ask if they want the second one."
+      : null,
     `Current mode: ${conversation.mode}`,
     leadContext?.companyName ? `Linked clinic: ${leadContext.companyName}` : null,
     leadContext?.finalScore != null ? `Lead score: ${leadContext.finalScore}` : null,
@@ -574,6 +638,17 @@ export function deriveNextWhatsAppAgentState({
   currentState: WhatsAppAgentState;
 }) {
   const classification = classifyInboundLeadMessage(incomingText);
+  const contextualPainPoints =
+    currentState.painPoints.length > 0 ||
+    !(
+      currentState.painConfirmed ||
+      classification.requestedNextStep === "details" ||
+      /\b(yes|yeah|yup|ok|okay|sure|show|share|tell me|go on|exactly|correct|true|sometimes)\b/i.test(
+        incomingText
+      )
+    )
+      ? []
+      : inferPainPointsFromTranscript(messages, incomingText);
   const inferredNextStep =
     classification.requestedNextStep ||
     (lastAssistantOfferedProof(messages) &&
@@ -589,7 +664,11 @@ export function deriveNextWhatsAppAgentState({
       ...currentState.leadChannels,
       ...classification.leadChannels,
     ],
-    painPoints: [...currentState.painPoints, ...classification.painPoints],
+    painPoints: [
+      ...currentState.painPoints,
+      ...classification.painPoints,
+      ...contextualPainPoints,
+    ],
     objectionCategories: [
       ...currentState.objectionCategories,
       ...classification.objectionCategories,
