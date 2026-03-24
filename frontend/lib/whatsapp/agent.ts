@@ -332,7 +332,8 @@ export async function generateWhatsAppReplyPlan({
     replyText = buildWhatsAppFallbackReply(
       effectiveNextState,
       recentReplies,
-      conversation.leadContext ?? null
+      conversation.leadContext ?? null,
+      incomingText
     );
   }
 

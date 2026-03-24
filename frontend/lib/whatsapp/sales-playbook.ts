@@ -132,6 +132,12 @@ function inferRequestedNextStep(text: string) {
   return null;
 }
 
+function isLightweightGreeting(text: string) {
+  return /^\s*(?:hi|hello|hey|yo|hiya|good\s+morning|good\s+afternoon|good\s+evening)(?:\s+[a-z][a-z'_-]*){0,2}[!?.\s]*$/i.test(
+    text
+  );
+}
+
 function inferRole(text: string) {
   for (const [label, patterns] of Object.entries(ROLE_PATTERNS)) {
     if (patterns.some((pattern) => pattern.test(text))) {
@@ -270,6 +276,7 @@ export function classifyInboundLeadMessage(text: string) {
       optOut: false,
       handoffRequested: false,
       escalateToHuman: false,
+      isGreeting: false,
     };
   }
 
@@ -296,6 +303,7 @@ export function classifyInboundLeadMessage(text: string) {
       objectionCategories.some((label) =>
         ["price", "safety", "integration"].includes(label)
       ),
+    isGreeting: isLightweightGreeting(normalized),
   };
 }
 
@@ -438,9 +446,40 @@ export function buildHandoffReason(state: WhatsAppAgentState) {
 export function buildWhatsAppFallbackReply(
   state: WhatsAppAgentState,
   recentReplies: Array<string | null | undefined> = [],
-  leadContext?: WhatsAppLinkedLeadContext | null
+  leadContext?: WhatsAppLinkedLeadContext | null,
+  incomingText?: string | null
 ) {
   const replyHistory = [state.lastSuggestedReply, ...recentReplies];
+
+  if (isLightweightGreeting(incomingText || "")) {
+    if (state.painConfirmed && state.decisionMakerConfirmed) {
+      return pickFreshReply(
+        [
+          "Good to hear from you. Do you want to look at reply speed, follow-up, or booking handoff first?",
+          "Hey. Which side do you want to look at first: first reply, follow-up, or booking handoff?",
+        ],
+        replyHistory
+      );
+    }
+
+    if (state.painConfirmed) {
+      return pickFreshReply(
+        [
+          "Hey. Are we looking at reply speed, follow-up, or booking handoff today?",
+          "Good to hear from you. Which part feels worth looking at first: replies, follow-up, or bookings?",
+        ],
+        replyHistory
+      );
+    }
+
+    return pickFreshReply(
+      [
+        "Hey. What side do you want to look at first: replies, follow-up, or bookings?",
+        "Hi. What do you want to sort first: response speed, follow-up, or booking flow?",
+      ],
+      replyHistory
+    );
+  }
 
   if (state.optOut) {
     return pickFreshReply(
@@ -595,6 +634,7 @@ export function buildWhatsAppSystemPrompt({
     "Do not sound templated, scripted, or like a sales sequence.",
     "Keep the tone composed, direct, slightly sharp, and trustworthy.",
     "Use one concrete question or one concrete observation per reply.",
+    "If the latest inbound is just a greeting, do not resume an old proof or call prompt. Re-open naturally and ask what they want to look at now.",
     "If the lead asks to see details, proof, or leak points, actually give the first leak immediately.",
     "Do not say 'I can show you' or 'I can share' when the lead already asked for it. Just show the first point.",
     "Do not offer a consultation, a call, automation, or a system unless the lead asked for that next step.",
@@ -645,6 +685,14 @@ export function deriveNextWhatsAppAgentState({
   currentState: WhatsAppAgentState;
 }) {
   const classification = classifyInboundLeadMessage(incomingText);
+  const shouldResetNextStep =
+    classification.isGreeting &&
+    !classification.requestedNextStep &&
+    classification.painPoints.length === 0 &&
+    classification.objectionCategories.length === 0 &&
+    !classification.roleHint &&
+    !classification.handoffRequested &&
+    !classification.optOut;
   const contextualPainPoints =
     currentState.painPoints.length > 0 ||
     !(
@@ -681,7 +729,9 @@ export function deriveNextWhatsAppAgentState({
       ...classification.objectionCategories,
     ],
     requestedNextStep:
-      inferredNextStep ?? currentState.requestedNextStep,
+      shouldResetNextStep
+        ? null
+        : inferredNextStep ?? currentState.requestedNextStep,
     lastIntent: incomingText.trim() || currentState.lastIntent,
     decisionMakerRole:
       currentState.decisionMakerRole ?? classification.roleHint ?? null,
