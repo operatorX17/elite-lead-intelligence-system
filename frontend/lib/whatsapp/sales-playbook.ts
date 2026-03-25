@@ -798,7 +798,7 @@ export function buildWhatsAppSystemPrompt({
     .map((message) => `${message.authorLabel}: ${message.body}`)
     .join("\n");
 
-  if (!leadContext?.leadId && !conversation.linkedLeadId) {
+  if (!conversation.linkedLeadId) {
     return [
       "You are a human-sounding WhatsApp assistant handling a manual contact thread.",
       "Do not act like a clinic auditor, growth consultant, or lead-scoring bot unless the contact explicitly goes there.",
