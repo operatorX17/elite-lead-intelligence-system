@@ -1,7 +1,8 @@
 import type { WhatsAppConversation, WhatsAppMessage } from "@/lib/db/schema";
-import type {
-  WhatsAppAgentState,
-  WhatsAppLinkedLeadContext,
+import {
+  DEFAULT_WHATSAPP_AGENT_STATE,
+  type WhatsAppAgentState,
+  type WhatsAppLinkedLeadContext,
 } from "@/lib/whatsapp/state";
 
 const OPT_OUT_PATTERNS = [
@@ -188,6 +189,12 @@ function lastAssistantAskedRoleChoice(reply: string | null | undefined) {
 
 function lastAssistantOfferedNextLeak(reply: string | null | undefined) {
   return /\bwant the next (?:one|point) too\b/i.test(String(reply ?? ""));
+}
+
+function isGeneralCapabilityQuestion(text: string) {
+  return /\b(what can you do|who are you|what is this|what do you do|how can you help)\b/i.test(
+    text
+  );
 }
 
 function inferRole(text: string) {
@@ -507,6 +514,57 @@ export function buildWhatsAppFallbackReply(
   latestAssistantReply?: string | null
 ) {
   const replyHistory = [state.lastSuggestedReply, ...recentReplies];
+  const isLinkedLeadThread = Boolean(leadContext?.leadId);
+
+  if (!isLinkedLeadThread) {
+    if (isLightweightGreeting(incomingText || "")) {
+      return pickFreshReply(
+        [
+          "Hey. Good to hear from you. What are you looking to get sorted right now?",
+          "Hey. Glad you messaged. What do you want help with right now?",
+        ],
+        replyHistory
+      );
+    }
+
+    if (isGeneralCapabilityQuestion(incomingText || "")) {
+      return pickFreshReply(
+        [
+          "I can keep the conversation moving, answer questions, follow up, and help with next steps without making it feel robotic. What are you trying to sort out right now?",
+          "I can handle the chat, answer questions, keep track of context, and help move things forward. What do you need help with right now?",
+        ],
+        replyHistory
+      );
+    }
+
+    if (isLightweightAffirmation(incomingText || "")) {
+      return pickFreshReply(
+        [
+          "Good. Tell me what you want to get done and I'll keep it simple.",
+          "Alright. What do you want help with first?",
+        ],
+        replyHistory
+      );
+    }
+
+    if (isLightweightAcknowledgement(incomingText || "")) {
+      return pickFreshReply(
+        [
+          "Alright. Tell me what you want to do next and I'll keep it clear.",
+          "Okay. What do you want help with from here?",
+        ],
+        replyHistory
+      );
+    }
+
+    return pickFreshReply(
+      [
+        "Tell me the context and what you want help with, and I'll keep the thread clear from there.",
+        "Give me the situation in one line and I'll take it from there.",
+      ],
+      replyHistory
+    );
+  }
 
   if (isLightweightGreeting(incomingText || "")) {
     if (state.painConfirmed && state.decisionMakerConfirmed) {
@@ -740,6 +798,23 @@ export function buildWhatsAppSystemPrompt({
     .map((message) => `${message.authorLabel}: ${message.body}`)
     .join("\n");
 
+  if (!leadContext?.leadId && !conversation.linkedLeadId) {
+    return [
+      "You are a human-sounding WhatsApp assistant handling a manual contact thread.",
+      "Do not act like a clinic auditor, growth consultant, or lead-scoring bot unless the contact explicitly goes there.",
+      "Do not mention leakages, booking gaps, handoffs, revenue loss, or operational diagnosis unless the contact brings that topic up.",
+      "Your job is to understand who the person is, what they want, and keep the conversation natural and easy to follow.",
+      "Sound calm, direct, and human.",
+      "Never say you are an AI.",
+      "Keep replies short and clear.",
+      "Ask one grounded question at a time.",
+      "If the contact asks what you do, answer plainly and stay on their topic.",
+      "If the thread is vague, ask for the context instead of inventing a sales angle.",
+      `Contact: ${conversation.contactName}`,
+      `Recent transcript:\n${transcript || "No prior transcript"}`,
+    ].join("\n");
+  }
+
   return [
     "You are a premium WhatsApp sales closer for clinics and medspas.",
     "You sound calm, credible, commercially mature, and human.",
@@ -808,6 +883,8 @@ export function deriveNextWhatsAppAgentState({
   currentState: WhatsAppAgentState;
 }) {
   const classification = classifyInboundLeadMessage(incomingText);
+  const isUnlinkedConversation =
+    !conversation.linkedLeadId && !conversation.leadContext?.leadId;
   const shouldResetNextStep =
     classification.isGreeting &&
     !classification.requestedNextStep &&
@@ -816,10 +893,24 @@ export function deriveNextWhatsAppAgentState({
     !classification.roleHint &&
     !classification.handoffRequested &&
     !classification.optOut;
+  const shouldFreshStartUnlinkedThread =
+    isUnlinkedConversation &&
+    (classification.isGreeting || isGeneralCapabilityQuestion(incomingText)) &&
+    !classification.requestedNextStep &&
+    !classification.handoffRequested &&
+    !classification.optOut;
+  const stateSeed: WhatsAppAgentState = shouldFreshStartUnlinkedThread
+    ? {
+        ...DEFAULT_WHATSAPP_AGENT_STATE,
+        lastSuggestedReply: currentState.lastSuggestedReply,
+      }
+    : currentState;
   const contextualPainPoints =
-    currentState.painPoints.length > 0 ||
+    isUnlinkedConversation
+      ? []
+      : stateSeed.painPoints.length > 0 ||
     !(
-      currentState.painConfirmed ||
+      stateSeed.painConfirmed ||
       classification.requestedNextStep === "details" ||
       /\b(yes|yeah|yup|ok|okay|sure|show|share|tell me|go on|exactly|correct|true|sometimes)\b/i.test(
         incomingText
@@ -837,39 +928,39 @@ export function deriveNextWhatsAppAgentState({
       : null);
 
   const nextState: WhatsAppAgentState = {
-    ...currentState,
+    ...stateSeed,
     leadChannels: [
-      ...currentState.leadChannels,
+      ...stateSeed.leadChannels,
       ...classification.leadChannels,
     ],
     painPoints: [
-      ...currentState.painPoints,
+      ...stateSeed.painPoints,
       ...classification.painPoints,
       ...contextualPainPoints,
     ],
     objectionCategories: [
-      ...currentState.objectionCategories,
+      ...stateSeed.objectionCategories,
       ...classification.objectionCategories,
     ],
     requestedNextStep:
       shouldResetNextStep
         ? null
-        : inferredNextStep ?? currentState.requestedNextStep,
-    lastIntent: incomingText.trim() || currentState.lastIntent,
+        : inferredNextStep ?? stateSeed.requestedNextStep,
+    lastIntent: incomingText.trim() || stateSeed.lastIntent,
     decisionMakerRole:
-      currentState.decisionMakerRole ?? classification.roleHint ?? null,
+      stateSeed.decisionMakerRole ?? classification.roleHint ?? null,
     decisionMakerConfirmed:
-      currentState.decisionMakerConfirmed ||
+      stateSeed.decisionMakerConfirmed ||
       Boolean(
         classification.roleHint &&
           ["founder", "doctor", "manager"].includes(classification.roleHint)
       ),
     painConfirmed:
-      currentState.painConfirmed ||
+      stateSeed.painConfirmed ||
       classification.painPoints.length > 0 ||
       /\b(yes|yeah|true|correct|exactly|sometimes)\b/i.test(incomingText),
     paymentInterest:
-      currentState.paymentInterest || classification.paymentInterest,
+      stateSeed.paymentInterest || classification.paymentInterest,
     optOut: classification.optOut,
     handoffRecommended: false,
     handoffReason: null,
