@@ -69,13 +69,36 @@ function pickFreshReply(
 }
 
 const PAIN_PATTERNS: Record<string, RegExp[]> = {
-  missed_follow_up: [/\bmissed\b/i, /\bdrop ?off\b/i, /\bno follow[- ]?up\b/i],
-  slow_response: [/\bslow\b/i, /\blate\b/i, /\bdelay\b/i, /\bnot replied\b/i],
+  missed_follow_up: [
+    /\bmissed\b/i,
+    /\bdrop ?off\b/i,
+    /\bno follow[- ]?up\b/i,
+    /\bfollow[- ]?up\b/i,
+  ],
+  slow_response: [
+    /\bslow\b/i,
+    /\blate\b/i,
+    /\bdelay\b/i,
+    /\bnot replied\b/i,
+    /\bfirst reply\b/i,
+    /\breply speed\b/i,
+    /\bresponse speed\b/i,
+  ],
   whatsapp_gap: [/\bwhatsapp\b/i, /\bchat\b/i],
   instagram_gap: [/\binstagram\b/i, /\bdm\b/i],
-  booking_gap: [/\bbooking\b/i, /\bappointment\b/i, /\bconsultation\b/i],
+  booking_gap: [
+    /\bbooking\b/i,
+    /\bappointment\b/i,
+    /\bconsultation\b/i,
+    /\bbooking handoff\b/i,
+  ],
   no_show: [/\bno[- ]?show\b/i, /\bdrop after booking\b/i],
-  staff_dependency: [/\bstaff\b/i, /\breception\b/i, /\bfront desk\b/i],
+  staff_dependency: [
+    /\bstaff\b/i,
+    /\breception\b/i,
+    /\bfront desk\b/i,
+    /\bhandoff\b/i,
+  ],
 };
 
 const CHANNEL_PATTERNS: Record<string, RegExp[]> = {
@@ -637,6 +660,19 @@ export function buildWhatsAppFallbackReply(
         "A quick 10-minute look will be cleaner than a long text. Today or tomorrow?",
         "Happy to keep it short. Today or tomorrow works better for a quick call?",
       ],
+      replyHistory
+    );
+  }
+
+  if (state.painConfirmed && state.painPoints.length > 0) {
+    const focusedPain = normalizePainLabel(
+      state.painPoints[state.painPoints.length - 1] ?? state.painPoints[0]
+    );
+
+    return pickFreshReply(
+      buildGenericProofReply(focusedPain).map(
+        (reply) => `${reply} Want me to stay on that lane or move to the next leak?`
+      ),
       replyHistory
     );
   }
