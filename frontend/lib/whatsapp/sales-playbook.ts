@@ -192,7 +192,7 @@ function lastAssistantOfferedNextLeak(reply: string | null | undefined) {
 }
 
 function isGeneralCapabilityQuestion(text: string) {
-  return /\b(what can you do|who are you|what is this|what do you do|how can you help)\b/i.test(
+  return /\b(what can you do|who are you|who are u|who r u|what is this|what do you do|how can you help|what are you|what's your role|whats your role)\b/i.test(
     text
   );
 }
@@ -530,8 +530,8 @@ export function buildWhatsAppFallbackReply(
     if (isGeneralCapabilityQuestion(incomingText || "")) {
       return pickFreshReply(
         [
-          "I can keep the conversation moving, answer questions, follow up, and help with next steps without making it feel robotic. What are you trying to sort out right now?",
-          "I can handle the chat, answer questions, keep track of context, and help move things forward. What do you need help with right now?",
+          "I'm here to handle this chat properly, answer questions, and help move things forward without making it messy. What do you need help with?",
+          "I'm the one handling messages on this number. I can answer questions, keep context straight, and help with follow-up if needed. What do you want to sort out?",
         ],
         replyHistory
       );
