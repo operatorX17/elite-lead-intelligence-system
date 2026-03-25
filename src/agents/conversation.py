@@ -343,6 +343,14 @@ Do not invent certainty.
                 extracted.get("payment_interest") or heuristics.get("payment_interest")
             ),
             "role": extracted.get("role") or heuristics.get("role"),
+            "current_reply_owner": extracted.get("current_reply_owner")
+            or heuristics.get("current_reply_owner"),
+            "decision_maker_confirmed": bool(
+                extracted.get("decision_maker_confirmed")
+                or heuristics.get("decision_maker_confirmed")
+            ),
+            "decision_maker_role": extracted.get("decision_maker_role")
+            or heuristics.get("decision_maker_role"),
             "requested_next_step": extracted.get("requested_next_step")
             or heuristics.get("requested_next_step"),
         }
@@ -497,6 +505,9 @@ Requirements:
 - No markdown
 - No bullet points
 - Do not pitch too early
+- If the latest message contains a direct question, answer that question plainly before you ask anything back
+- Do not slip into internal workflow language or diagnosis framing when a plain answer would do
+- Do not use jargon like leak, leakage, handoff, lane, funnel, own it cleanly, or thread cooling unless the prospect uses those words first
 - Move the conversation one step forward with one question or one clear next step
 """
 

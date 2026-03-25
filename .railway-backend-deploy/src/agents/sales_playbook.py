@@ -94,6 +94,15 @@ ROLE_PATTERNS: Dict[str, Tuple[str, ...]] = {
     "reception": (r"\breception\b", r"\bfront desk\b", r"\bcoordinator\b"),
 }
 
+SELF_OWNERSHIP_PATTERNS: Tuple[str, ...] = (
+    r"\bi handle it(?: myself)?\b",
+    r"\bi manage it(?: myself)?\b",
+    r"\bi oversee it(?: myself)?\b",
+    r"\bjust me\b",
+    r"\bit'?s me\b",
+    r"\bi do\b",
+)
+
 
 def normalize_channel(value: Optional[str]) -> str:
     channel = str(value or "").strip().lower() or "email"
@@ -139,6 +148,18 @@ def infer_next_step_request(message: str) -> Optional[str]:
         return "call"
     if any(token in lowered for token in ("details", "brochure", "send", "info", "explain")):
         return "details"
+    if any(
+        token in lowered
+        for token in (
+            "what would you change first",
+            "what would you fix first",
+            "what should i change first",
+            "what should i fix first",
+            "change first",
+            "fix first",
+        )
+    ):
+        return "details"
     if any(token in lowered for token in ("price", "pricing", "cost")):
         return "pricing"
     if any(token in lowered for token in ("later", "next month", "after one month")):
@@ -150,6 +171,12 @@ def infer_next_step_request(message: str) -> Optional[str]:
 
 def infer_sales_stage(entities: Dict[str, Any]) -> str:
     current = str(entities.get("stage") or "").upper()
+    objection_categories = {
+        str(category or "").strip().lower()
+        for category in (entities.get("objection_categories") or [])
+        if str(category or "").strip()
+    }
+    substantive_objections = objection_categories - {"timing", "brochure", "manager"}
     if current in {"CLOSED_WON", "CLOSED_LOST"}:
         return current
     if entities.get("opt_out"):
@@ -160,7 +187,7 @@ def infer_sales_stage(entities: Dict[str, Any]) -> str:
         return "PAYMENT_PUSHED"
     if entities.get("requested_next_step") == "call":
         return "DEMO_PUSHED"
-    if entities.get("objection_categories"):
+    if substantive_objections:
         return "OBJECTION_ACTIVE"
     if entities.get("pain_confirmed") and entities.get("requested_next_step") == "details":
         return "PROOF_SHARED"
@@ -178,6 +205,15 @@ def classify_sales_signals(message: str) -> Dict[str, Any]:
     objection_categories = _detect_matches(message, OBJECTION_PATTERNS)
     pain_points = _detect_matches(message, PAIN_PATTERNS)
     role = infer_role_from_message(message)
+    current_reply_owner = None
+    decision_maker_confirmed = False
+    decision_maker_role = None
+    lowered = str(message or "").lower()
+    if any(re.search(pattern, lowered) for pattern in SELF_OWNERSHIP_PATTERNS):
+        current_reply_owner = "owner"
+        decision_maker_confirmed = True
+        decision_maker_role = role or "owner"
+        role = role or "owner"
     requested_next_step = infer_next_step_request(message)
     payment_interest = "payment" in objection_categories or requested_next_step == "payment"
     handoff_requested = detect_human_handoff(message)
@@ -186,6 +222,9 @@ def classify_sales_signals(message: str) -> Dict[str, Any]:
         "objection_categories": objection_categories,
         "pain_points": pain_points,
         "role": role,
+        "current_reply_owner": current_reply_owner,
+        "decision_maker_confirmed": decision_maker_confirmed,
+        "decision_maker_role": decision_maker_role,
         "requested_next_step": requested_next_step,
         "payment_interest": payment_interest,
         "handoff_requested": handoff_requested,
@@ -231,17 +270,17 @@ def build_sales_system_prompt(
     next_action = guidance.get("next_best_action") or facts.get("next_best_action") or "continue diagnosing calmly"
 
     stage_guidance = {
-        "NEW": "Acknowledge, stay calm, and ask one short contextual question. Do not pitch.",
-        "ENGAGED": "Validate their point, lightly frame a missed-opportunity angle, and ask one low-friction question.",
-        "PAIN_FOUND": "Deepen the diagnosis. Still no hard pitch. Offer to show what you mean only if they lean in.",
-        "QUALIFIED": "You can move toward a short call, audit review, or proof share, but stay concise and soft.",
-        "PROOF_SHARED": "Use one proof-led observation and ask for the lightest next step.",
-        "OBJECTION_ACTIVE": "Acknowledge, reframe around operational leakage, and move to one concrete next step.",
+        "NEW": "Acknowledge, stay calm, and ask one short contextual question only if needed.",
+        "ENGAGED": "Answer what they asked, keep it practical, and ask one low-friction follow-up only if it helps.",
+        "PAIN_FOUND": "Stay grounded in the problem they already mentioned. Give one useful observation before asking for more.",
+        "QUALIFIED": "Be helpful and specific. Move toward a next step only if it feels earned from the conversation.",
+        "PROOF_SHARED": "Use one concrete observation and only one light next step.",
+        "OBJECTION_ACTIVE": "Handle the concern directly and practically. Do not slip back into generic discovery questions.",
         "DEMO_PUSHED": "Offer a short time-boxed call with forced-choice scheduling.",
         "PAYMENT_PUSHED": "Keep it precise and handoff-ready. Do not invent links or promises.",
         "HUMAN_HANDOFF": "Do not over-handle. Prepare a clean bridge to a human closer.",
         "FOLLOWUP_PENDING": "Use a short contextual follow-up, not a long explanation.",
-    }.get(stage, "Keep moving the conversation one step forward without pressure.")
+    }.get(stage, "Keep moving the conversation one useful step forward without pressure.")
 
     channel_guidance = {
         "whatsapp": "Reply in 1-3 short chat bubbles worth of text. Very natural. No markdown.",
@@ -260,6 +299,8 @@ Voice:
 - Never say you are an AI
 - Never use bullet formatting in the live reply
 - Keep replies short unless the lead explicitly asks for detail
+- Avoid internal jargon like leak, leakage, handoff, lane, funnel, or conversion gap unless the contact already speaks that way
+- Do not sound like an auditor, consultant deck, CRM note, or internal sales playbook
 
 Rules:
 - Do not pitch too early
@@ -268,6 +309,8 @@ Rules:
 - Do not call a branch phone a founder-direct contact unless that is verified
 - If the lead wants to stop, comply immediately and keep the response minimal
 - Use only one meaningful next step per reply
+- If they ask a direct question, answer it first in plain language, then ask at most one short follow-up
+- Prefer concrete language over frameworks or labels
 
 Internal stage: {stage}
 Stage guidance: {stage_guidance}
@@ -286,11 +329,11 @@ Grounded business context:
 - Likely decision maker: {decision_maker}
 
 Your objective hierarchy:
-1. Get engagement
-2. Qualify lightly
-3. Diagnose operational leakage
-4. Build trust with specificity
-5. Move to the strongest next step only when earned
+1. Understand what they actually need right now
+2. Answer clearly and naturally
+3. Qualify only when it genuinely helps
+4. Build trust with specifics from the real context
+5. Move to one next step only when it is earned
 
 Do not rush to a demo just because you can. Earn the next step."""
 
@@ -306,21 +349,21 @@ def build_sales_fallback_response(
         return "Understood. I'll close the loop here and won't continue the follow-up."
     if entities.get("requested_next_step") == "details":
         return (
-            f"The cleanest leak I see is {top_issue}. I'd start there and keep it practical. "
-            "Want the next point too?"
+            f"First thing I'd tighten is {top_issue}. "
+            "If you want, I can break down the exact change I'd make first."
         )
     if entities.get("requested_next_step") == "call":
         return "Makes sense. A quick 10-minute look will be cleaner than a long message. Would this evening or tomorrow afternoon be easier?"
     if not entities.get("pain_confirmed"):
         return (
-            f"I was asking because even a small gap around {top_issue} can quietly lose bookings over time. "
-            "Have you looked at that side closely?"
+            f"I was asking because small delays around {top_issue} can quietly cost bookings over time. "
+            "Have you noticed that happening on your side?"
         )
     if entities.get("objection_categories"):
-        return "Fair point. I'm not suggesting more chaos, just a cleaner way to stop warm enquiries from slipping. Would it help if I keep it to the exact gap I'm seeing?"
+        return "Fair point. I'm not suggesting more chaos, just a cleaner way to keep warm enquiries moving. Would it help if I kept it to the exact point I'd tighten first?"
     if not entities.get("decision_maker_confirmed"):
-        return "Makes sense. Who usually oversees this side for you right now: doctor, manager, or front desk?"
+        return "Makes sense. Is that mostly on you right now, or does someone else help with replies?"
     return (
-        f"I'd start with {top_issue} and the first reply window around it. "
-        "That is usually where the thread cools if nobody owns it cleanly."
+        f"I'd start with {top_issue}. "
+        "That is usually the first thing to tighten before touching anything else."
     )
