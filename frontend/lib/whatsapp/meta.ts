@@ -52,7 +52,12 @@ export async function sendWhatsAppTextMessage({
 }): Promise<SendWhatsAppResult> {
   const config = getWhatsAppConfig();
 
-  if (!config.outboundReady || !config.phoneNumberId || !config.accessToken) {
+  if (
+    config.provider !== "meta" ||
+    !config.outboundReady ||
+    !config.metaPhoneNumberId ||
+    !config.metaAccessToken
+  ) {
     return {
       status: "draft",
       providerMessageId: null,
@@ -62,11 +67,11 @@ export async function sendWhatsAppTextMessage({
   }
 
   const response = await fetch(
-    `https://graph.facebook.com/${config.graphApiVersion}/${config.phoneNumberId}/messages`,
+    `https://graph.facebook.com/${config.metaGraphApiVersion}/${config.metaPhoneNumberId}/messages`,
     {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${config.accessToken}`,
+        Authorization: `Bearer ${config.metaAccessToken}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -112,7 +117,7 @@ export function verifyWhatsAppWebhookSignature({
 }) {
   const config = getWhatsAppConfig();
 
-  if (!config.appSecret) {
+  if (config.provider !== "meta" || !config.metaAppSecret) {
     return true;
   }
 
@@ -120,7 +125,7 @@ export function verifyWhatsAppWebhookSignature({
     return false;
   }
 
-  const expectedSignature = createHmac("sha256", config.appSecret)
+  const expectedSignature = createHmac("sha256", config.metaAppSecret)
     .update(rawBody)
     .digest("hex");
 

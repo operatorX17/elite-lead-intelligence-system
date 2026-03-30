@@ -1,0 +1,22 @@
+name: WhatsApp Campaign Dispatch
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger outbound campaign dispatcher
+        env:
+          DISPATCH_SECRET: ${{ secrets.WHATSAPP_CAMPAIGN_DISPATCH_SECRET }}
+        run: |
+          if [ -z "$DISPATCH_SECRET" ]; then
+            echo "Missing WHATSAPP_CAMPAIGN_DISPATCH_SECRET"
+            exit 1
+          fi
+
+          curl --fail --silent --show-error \
+            "https://zrai-lead-os.vercel.app/api/whatsapp/campaigns/dispatch?secret=$DISPATCH_SECRET"

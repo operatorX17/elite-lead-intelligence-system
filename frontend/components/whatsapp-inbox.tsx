@@ -26,6 +26,7 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { SidebarToggle } from "@/components/sidebar-toggle";
+import { WhatsAppCampaignSheet } from "@/components/whatsapp-campaign-sheet";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -604,12 +605,13 @@ export function WhatsAppInbox({
               <div className="truncate text-xs text-slate-500">Memory-aware AI assist with human takeover, built for clinic sales</div>
             </div>
             <div className="ml-auto flex items-center gap-2">
+              <WhatsAppCampaignSheet />
               <Button className="border-white/10 bg-white/5 text-slate-100 hover:bg-white/10" onClick={() => void refreshInbox()} size="sm" variant="outline"><RefreshCcw className={cn("size-4", isRefreshing && "animate-spin")} />Refresh</Button>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Badge className="border border-white/10 bg-white/5 text-slate-300"><Phone className="size-3.5" />{publicConfig.businessNumber ?? "Business number not configured"}</Badge>
-            <Badge className={cn("border", publicConfig.outboundReady ? "border-emerald-300/15 bg-emerald-500/10 text-emerald-100" : "border-amber-300/15 bg-amber-500/10 text-amber-100")}><Webhook className="size-3.5" />{publicConfig.outboundReady ? "Cloud API connected" : "Cloud API not configured"}</Badge>
+            <Badge className={cn("border", publicConfig.outboundReady ? "border-emerald-300/15 bg-emerald-500/10 text-emerald-100" : "border-amber-300/15 bg-amber-500/10 text-amber-100")}><Webhook className="size-3.5" />{publicConfig.outboundReady ? `${publicConfig.providerLabel} connected` : `${publicConfig.providerLabel} not configured`}</Badge>
             {selectedConversation?.backendConversationId ? <Badge className="border border-sky-300/15 bg-sky-500/10 text-sky-100"><BrainCircuit className="size-3.5" />Memory linked</Badge> : null}
             {selectedLeadContext?.companyName ? <Badge className="border border-white/10 bg-white/5 text-slate-300">Linked clinic {selectedLeadContext.companyName}</Badge> : null}
           </div>
@@ -682,7 +684,7 @@ export function WhatsAppInbox({
                 <CardContent className="grid min-h-0 flex-1 gap-4 p-3 lg:grid-cols-[minmax(0,1fr)_340px]">
                   <div className="flex min-h-0 flex-col rounded-3xl border border-white/6 bg-[#0b1019]">
                     <div className="flex items-center justify-between gap-3 border-b border-white/6 px-4 py-3 text-xs text-slate-400">
-                      <span>{isLoadingThread ? "Syncing thread..." : publicConfig.outboundReady ? "Live WhatsApp send is enabled" : "Replies are stored locally until the Cloud API is configured"}</span>
+                      <span>{isLoadingThread ? "Syncing thread..." : publicConfig.outboundReady ? `Live WhatsApp send is enabled via ${publicConfig.providerLabel}` : `Replies are stored locally until ${publicConfig.providerLabel} is configured`}</span>
                       <span>{selectedConversation.status}</span>
                     </div>
                     <ScrollArea className="min-h-0 flex-1 px-4 py-5">

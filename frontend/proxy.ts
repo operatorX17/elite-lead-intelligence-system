@@ -22,6 +22,14 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
+  if (pathname.startsWith("/api/whatsapp/webhook")) {
+    return NextResponse.next();
+  }
+
+  if (pathname.startsWith("/api/whatsapp/campaigns/dispatch")) {
+    return NextResponse.next();
+  }
+
   if (["/login", "/register"].includes(pathname)) {
     return NextResponse.next();
   }

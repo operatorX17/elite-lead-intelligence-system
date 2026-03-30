@@ -9,6 +9,7 @@ import {
   updateWhatsAppMessageStatusByProviderId,
   upsertWhatsAppConversationFromInbound,
 } from "@/lib/db/queries";
+import { markWhatsAppCampaignRecipientReplied } from "@/lib/db/whatsapp-campaigns";
 import { generateWhatsAppReplyPlan } from "@/lib/whatsapp/agent";
 import {
   resolveLeadContextForWhatsAppThread,
@@ -270,6 +271,10 @@ export async function POST(request: Request) {
           providerMessageId: inboundMessage.providerMessageId,
           status: "received",
           createdAt: inboundMessage.receivedAt,
+        });
+        await markWhatsAppCampaignRecipientReplied({
+          contactPhone: inboundMessage.contactPhone,
+          conversationId: conversation.id,
         });
         waitUntil(
           processInboundWhatsAppMessage({
