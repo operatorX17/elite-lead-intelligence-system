@@ -208,6 +208,10 @@ function isGeneralCapabilityQuestion(text: string) {
   );
 }
 
+function isOutboundClinicThread(state: WhatsAppAgentState) {
+  return state.leadChannels.includes("outbound_whatsapp");
+}
+
 function inferRole(text: string) {
   for (const [label, patterns] of Object.entries(ROLE_PATTERNS)) {
     if (patterns.some((pattern) => pattern.test(text))) {
@@ -439,6 +443,10 @@ export function inferThreadPriority(state: WhatsAppAgentState) {
 }
 
 export function inferNextBestMove(state: WhatsAppAgentState) {
+  if (isOutboundClinicThread(state) && !state.painConfirmed) {
+    return "Keep the clinic in outbound SDR mode: diagnose enquiry drop-off, quantify WhatsApp volume, then move to a quick demo.";
+  }
+
   switch (state.stage) {
     case "NEW":
     case "ENGAGED":
@@ -474,6 +482,10 @@ export function summarizeConversationState({
   const summaryParts = [
     `${conversation.contactName} is in ${state.stage.toLowerCase()} stage`,
   ];
+
+  if (isOutboundClinicThread(state) && !conversation.linkedLeadId) {
+    summaryParts.push("outbound clinic SDR thread");
+  }
 
   if (state.painPoints.length > 0) {
     summaryParts.push(`pain: ${state.painPoints.join(", ")}`);
@@ -526,6 +538,98 @@ export function buildWhatsAppFallbackReply(
 ) {
   const replyHistory = [state.lastSuggestedReply, ...recentReplies];
   const isLinkedLeadThread = Boolean(leadContext?.leadId);
+  const isOutboundClinicLeadThread =
+    !isLinkedLeadThread && isOutboundClinicThread(state);
+
+  if (isOutboundClinicLeadThread) {
+    if (state.optOut) {
+      return pickFreshReply(
+        [
+          "Understood. I'll close the thread from here.",
+          "All good. I'll stop the follow-up from here.",
+        ],
+        replyHistory
+      );
+    }
+
+    if (state.handoffRecommended || state.requestedNextStep === "call") {
+      return pickFreshReply(
+        [
+          "Happy to show it properly. Easier to do in 5 minutes than in long text. Would today or tomorrow be better?",
+          "Better to show than explain over text. Want a quick 5-minute walkthrough today or tomorrow?",
+        ],
+        replyHistory
+      );
+    }
+
+    if (isLightweightGreeting(incomingText || "")) {
+      return pickFreshReply(
+        [
+          "Quick one - when someone messages the clinic but doesn't finish booking, do they usually come back later or do they mostly disappear?",
+          "Quick one - on your side, when a WhatsApp enquiry doesn't finish booking, does it usually recover later or just fade out?",
+        ],
+        replyHistory
+      );
+    }
+
+    if (isGeneralCapabilityQuestion(incomingText || "")) {
+      return pickFreshReply(
+        [
+          "I help clinics tighten WhatsApp booking and follow-up. The reason I reached out is that a lot of enquiries cool off before they ever book. Is that happening on your side?",
+          "I work on the WhatsApp side for clinics - reply speed, follow-up, and getting chats to a real booking instead of losing them. Is that a live issue on your side?",
+        ],
+        replyHistory
+      );
+    }
+
+    if (isLightweightAffirmation(incomingText || "")) {
+      return pickFreshReply(
+        [
+          "Roughly how many WhatsApp enquiries do you get in a normal week?",
+          "On a normal week, how many WhatsApp enquiries hit the clinic?",
+        ],
+        replyHistory
+      );
+    }
+
+    if (isLightweightAcknowledgement(incomingText || "")) {
+      return pickFreshReply(
+        [
+          "Alright. If you had to guess, how many WhatsApp chats come in most weeks?",
+          "All good. Roughly how many enquiries come in through WhatsApp in a normal week?",
+        ],
+        replyHistory
+      );
+    }
+
+    if (state.requestedNextStep === "details") {
+      return pickFreshReply(
+        [
+          "Main thing I'd check first is whether the first WhatsApp reply turns into a real next step or just more back-and-forth. If that part is loose, warm intent cools fast.",
+          "First thing I'd look at is what happens after the first enquiry lands. If nobody owns the thread quickly, the booking usually drifts.",
+        ],
+        replyHistory
+      );
+    }
+
+    if (state.painConfirmed && state.painPoints.length > 0) {
+      return pickFreshReply(
+        [
+          "Useful. Is the bigger issue slow first reply, weak follow-up, or patients dropping before a slot is actually confirmed?",
+          "That helps. Is the bigger drag reply speed, follow-up discipline, or chats going quiet before the booking gets locked?",
+        ],
+        replyHistory
+      );
+    }
+
+    return pickFreshReply(
+      [
+        "The main thing I'm trying to understand is whether WhatsApp enquiries are actually turning into booked consults consistently, or whether some cool off before that. What's happening on your side?",
+        "From what I see, most clinics don't lose demand - they lose momentum between the first message and the booked slot. Does that show up on your side too?",
+      ],
+      replyHistory
+    );
+  }
 
   if (!isLinkedLeadThread) {
     if (isLightweightGreeting(incomingText || "")) {
@@ -819,6 +923,35 @@ export function buildWhatsAppSystemPrompt({
     .map((message) => `${message.authorLabel}: ${message.body}`)
     .join("\n");
 
+  if (!conversation.linkedLeadId && isOutboundClinicThread(state)) {
+    return [
+      "You are a human-sounding WhatsApp SDR messaging clinics about missed bookings and enquiry drop-off.",
+      "This thread started from outbound WhatsApp outreach.",
+      "Stay anchored to the outbound angle in the conversation memory.",
+      "Do not sound like support, a generic chatbot, or a clinic auditor.",
+      "Do not mention AI, automation stack, lead scores, or internal system terms unless asked directly.",
+      "Keep replies short, calm, commercially sharp, and human.",
+      "Ask one grounded question at a time.",
+      "Do not jump into a long pitch.",
+      "First diagnose what happens to WhatsApp enquiries that do not finish booking.",
+      "Then quantify weekly volume or the main drop-off point.",
+      "Only move to a quick demo after the clinic confirms there is a real gap.",
+      "If the latest inbound is a greeting, do not lose the outbound frame. Re-open with the same enquiry-drop-off conversation.",
+      "If the clinic asks who you are or what you do, explain it plainly in one or two short lines and stay on the booking problem.",
+      "If the clinic asks for details, give one concrete operational point instead of promising to show it later.",
+      `Current stage: ${state.stage}`,
+      `Priority: ${state.priority}`,
+      `State summary: ${state.summary ?? "none"}`,
+      `Next best move: ${state.nextBestMove ?? "none"}`,
+      `Last suggested reply: ${state.lastSuggestedReply ?? "none"}`,
+      `Pain points: ${state.painPoints.join(", ") || "not yet confirmed"}`,
+      `Objections: ${state.objectionCategories.join(", ") || "none"}`,
+      `Requested next step: ${state.requestedNextStep ?? "unknown"}`,
+      `Contact: ${conversation.contactName}`,
+      `Recent transcript:\n${transcript || "No prior transcript"}`,
+    ].join("\n");
+  }
+
   if (!conversation.linkedLeadId) {
     return [
       "You are a human-sounding WhatsApp assistant handling a manual contact thread.",
@@ -906,6 +1039,9 @@ export function deriveNextWhatsAppAgentState({
   const classification = classifyInboundLeadMessage(incomingText);
   const isUnlinkedConversation =
     !conversation.linkedLeadId && !conversation.leadContext?.leadId;
+  const outboundClinicThread = isUnlinkedConversation
+    ? isOutboundClinicThread(currentState)
+    : false;
   const shouldResetNextStep =
     classification.isGreeting &&
     !classification.requestedNextStep &&
@@ -916,6 +1052,7 @@ export function deriveNextWhatsAppAgentState({
     !classification.optOut;
   const shouldFreshStartUnlinkedThread =
     isUnlinkedConversation &&
+    !outboundClinicThread &&
     (classification.isGreeting || isGeneralCapabilityQuestion(incomingText)) &&
     !classification.requestedNextStep &&
     !classification.handoffRequested &&

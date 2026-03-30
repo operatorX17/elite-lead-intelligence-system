@@ -12,7 +12,10 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import type {
+import {
+  DEFAULT_WHATSAPP_CAMPAIGN_PRESET,
+  WHATSAPP_CAMPAIGN_PRESETS,
+  getWhatsAppCampaignPresetById,
   WhatsAppCampaignRecord,
   WhatsAppCampaignRecipientRecord,
 } from "@/lib/whatsapp/campaigns";
@@ -51,15 +54,21 @@ export function WhatsAppCampaignSheet() {
   const [selectedCampaignId, setSelectedCampaignId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [messageTemplate, setMessageTemplate] = useState(
-    "Hi {{first_name}} - quick one. Is WhatsApp still mostly handled manually at {{company_name}}?"
+    DEFAULT_WHATSAPP_CAMPAIGN_PRESET.firstMessage
   );
   const [contactsText, setContactsText] = useState("");
-  const [templateName, setTemplateName] = useState("curiosity_wave_1");
-  const [messageStyle, setMessageStyle] = useState<"template" | "freeform">("template");
+  const [templateName, setTemplateName] = useState(
+    DEFAULT_WHATSAPP_CAMPAIGN_PRESET.templateName
+  );
+  const [messageStyle, setMessageStyle] = useState<"template" | "freeform">(
+    DEFAULT_WHATSAPP_CAMPAIGN_PRESET.messageStyle
+  );
   const [dailyLimit, setDailyLimit] = useState("20");
   const [waveSize, setWaveSize] = useState("10");
   const [waveGapMinutes, setWaveGapMinutes] = useState("30");
-  const [notes, setNotes] = useState("");
+  const [notes, setNotes] = useState(
+    `Angle: ${DEFAULT_WHATSAPP_CAMPAIGN_PRESET.angle}\nUse: ${DEFAULT_WHATSAPP_CAMPAIGN_PRESET.recommendedFor}\nFollow-up: ${DEFAULT_WHATSAPP_CAMPAIGN_PRESET.suggestedFollowUp}`
+  );
   const [isLoading, setIsLoading] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [runningCampaignId, setRunningCampaignId] = useState<string | null>(null);
@@ -68,6 +77,11 @@ export function WhatsAppCampaignSheet() {
 
   const selectedCampaign =
     campaigns.find((campaign) => campaign.id === selectedCampaignId) ?? null;
+  const selectedPreset =
+    getWhatsAppCampaignPresetById(templateName) ?? DEFAULT_WHATSAPP_CAMPAIGN_PRESET;
+  const selectedCampaignPreset = selectedCampaign
+    ? getWhatsAppCampaignPresetById(selectedCampaign.templateName)
+    : null;
 
   const sortedCampaigns = useMemo(
     () =>
@@ -76,6 +90,28 @@ export function WhatsAppCampaignSheet() {
       ),
     [campaigns]
   );
+  const selectedCampaignAnalytics = useMemo(() => {
+    if (!selectedCampaign) {
+      return null;
+    }
+
+    const contacted =
+      selectedCampaign.counts.sent +
+      selectedCampaign.counts.replied +
+      selectedCampaign.counts.failed;
+    const replyBase = selectedCampaign.counts.sent + selectedCampaign.counts.replied;
+    const replyRate =
+      replyBase > 0
+        ? Math.round((selectedCampaign.counts.replied / replyBase) * 100)
+        : 0;
+
+    return {
+      ready: selectedCampaign.counts.approved,
+      contacted,
+      replied: selectedCampaign.counts.replied,
+      replyRate,
+    };
+  }, [selectedCampaign]);
 
   useEffect(() => {
     if (open) {
@@ -128,7 +164,9 @@ export function WhatsAppCampaignSheet() {
       setSelectedCampaignId(payload.campaign.id);
       setName("");
       setContactsText("");
-      setNotes("");
+      setNotes(
+        `Angle: ${selectedPreset.angle}\nUse: ${selectedPreset.recommendedFor}\nFollow-up: ${selectedPreset.suggestedFollowUp}`
+      );
       toast.success("Campaign drafted");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to create campaign");
@@ -246,6 +284,23 @@ export function WhatsAppCampaignSheet() {
     }
   }
 
+  function applyPreset(presetId: string) {
+    const preset = getWhatsAppCampaignPresetById(presetId);
+    if (!preset) {
+      return;
+    }
+
+    setTemplateName(preset.templateName);
+    setMessageStyle(preset.messageStyle);
+    setMessageTemplate(preset.firstMessage);
+    setNotes(
+      `Angle: ${preset.angle}\nUse: ${preset.recommendedFor}\nFollow-up: ${preset.suggestedFollowUp}`
+    );
+    if (!name.trim()) {
+      setName(preset.label);
+    }
+  }
+
   return (
     <Sheet onOpenChange={setOpen} open={open}>
       <SheetTrigger asChild>
@@ -265,6 +320,39 @@ export function WhatsAppCampaignSheet() {
                 <CardTitle className="text-sm text-white">New campaign</CardTitle>
               </CardHeader>
               <CardContent className="grid gap-3 pt-4">
+                <div className="grid gap-2">
+                  <div className="text-[11px] font-medium uppercase tracking-[0.22em] text-slate-500">
+                    Built-in angles
+                  </div>
+                  <div className="grid gap-2">
+                    {WHATSAPP_CAMPAIGN_PRESETS.map((preset) => (
+                      <button
+                        className={cn(
+                          "rounded-2xl border p-3 text-left transition",
+                          selectedPreset.id === preset.id
+                            ? "border-emerald-400/20 bg-emerald-500/10"
+                            : "border-white/8 bg-white/5 hover:bg-white/8"
+                        )}
+                        key={preset.id}
+                        onClick={() => applyPreset(preset.id)}
+                        type="button"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="font-medium text-sm text-white">{preset.label}</div>
+                          <Badge className="border border-white/10 bg-white/5 text-[10px] text-slate-300">
+                            {preset.recommendedFor}
+                          </Badge>
+                        </div>
+                        <div className="mt-2 text-xs leading-5 text-slate-400">
+                          {preset.description}
+                        </div>
+                        <div className="mt-2 text-[11px] leading-5 text-slate-500">
+                          Follow-up: {preset.suggestedFollowUp}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <Input
                   className="border-white/10 bg-white/5 text-slate-100"
                   onChange={(event) => setName(event.target.value)}
@@ -294,6 +382,17 @@ export function WhatsAppCampaignSheet() {
                   placeholder="Template label"
                   value={templateName}
                 />
+                <div className="rounded-2xl border border-emerald-400/15 bg-emerald-500/10 p-3">
+                  <div className="text-[11px] font-medium uppercase tracking-[0.22em] text-emerald-200/70">
+                    Active angle
+                  </div>
+                  <div className="mt-2 font-medium text-sm text-emerald-50">
+                    {selectedPreset.label}
+                  </div>
+                  <div className="mt-1 text-xs leading-5 text-emerald-100/75">
+                    {selectedPreset.angle}
+                  </div>
+                </div>
                 <Textarea
                   className="min-h-[160px] border-white/10 bg-white/5 text-slate-100"
                   onChange={(event) => setMessageTemplate(event.target.value)}
@@ -424,6 +523,63 @@ export function WhatsAppCampaignSheet() {
                     <span>|</span>
                     <span>{selectedCampaign.counts.replied} replies</span>
                   </div>
+                  {selectedCampaignPreset ? (
+                    <div className="mt-3 rounded-2xl border border-emerald-400/15 bg-emerald-500/10 p-3">
+                      <div className="text-[11px] font-medium uppercase tracking-[0.22em] text-emerald-200/70">
+                        Campaign angle
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <div className="font-medium text-sm text-emerald-50">
+                          {selectedCampaignPreset.label}
+                        </div>
+                        <Badge className="border border-emerald-200/10 bg-emerald-950/30 text-[10px] text-emerald-100">
+                          {selectedCampaignPreset.recommendedFor}
+                        </Badge>
+                      </div>
+                      <div className="mt-2 text-xs leading-5 text-emerald-100/75">
+                        {selectedCampaignPreset.description}
+                      </div>
+                      <div className="mt-2 text-[11px] leading-5 text-emerald-100/65">
+                        Follow-up: {selectedCampaignPreset.suggestedFollowUp}
+                      </div>
+                    </div>
+                  ) : null}
+                  {selectedCampaignAnalytics ? (
+                    <div className="mt-4 grid gap-3 sm:grid-cols-4">
+                      <div className="rounded-2xl border border-white/8 bg-white/5 p-3">
+                        <div className="text-[11px] uppercase tracking-[0.22em] text-slate-500">
+                          Ready
+                        </div>
+                        <div className="mt-2 text-xl font-semibold text-white">
+                          {selectedCampaignAnalytics.ready}
+                        </div>
+                      </div>
+                      <div className="rounded-2xl border border-white/8 bg-white/5 p-3">
+                        <div className="text-[11px] uppercase tracking-[0.22em] text-slate-500">
+                          Contacted
+                        </div>
+                        <div className="mt-2 text-xl font-semibold text-white">
+                          {selectedCampaignAnalytics.contacted}
+                        </div>
+                      </div>
+                      <div className="rounded-2xl border border-white/8 bg-white/5 p-3">
+                        <div className="text-[11px] uppercase tracking-[0.22em] text-slate-500">
+                          Replied
+                        </div>
+                        <div className="mt-2 text-xl font-semibold text-white">
+                          {selectedCampaignAnalytics.replied}
+                        </div>
+                      </div>
+                      <div className="rounded-2xl border border-white/8 bg-white/5 p-3">
+                        <div className="text-[11px] uppercase tracking-[0.22em] text-slate-500">
+                          Reply rate
+                        </div>
+                        <div className="mt-2 text-xl font-semibold text-white">
+                          {selectedCampaignAnalytics.replyRate}%
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="mt-3 flex flex-wrap gap-2">
                     <Button
                       className="bg-emerald-500 text-slate-950 hover:bg-emerald-400"

@@ -10,13 +10,17 @@ import {
   appendWhatsAppMessage,
   createWhatsAppConversation,
   getWhatsAppConversationByPhone,
+  updateWhatsAppConversationAgentState,
   updateWhatsAppConversationLeadLink,
 } from "@/lib/db/queries";
 import {
   resolveLeadContextForWhatsAppThread,
   syncWhatsAppMessageToLeadMemory,
 } from "@/lib/whatsapp/lead-context";
-import { renderCampaignMessageTemplate } from "@/lib/whatsapp/campaigns";
+import {
+  buildOutreachCampaignStatePatch,
+  renderCampaignMessageTemplate,
+} from "@/lib/whatsapp/campaigns";
 import { sendWhatsAppTextMessage } from "@/lib/whatsapp/provider";
 
 function nextDaySameTime(now: Date) {
@@ -122,6 +126,24 @@ export async function runWhatsAppCampaignWave({
         mode: "bot",
         source: "manual",
       }));
+
+    const outboundStatePatch = buildOutreachCampaignStatePatch({
+      presetId: campaign.templateName,
+      companyName:
+        recipient.companyName ?? conversation.leadContext?.companyName ?? null,
+    });
+
+    if (
+      outboundStatePatch &&
+      (!conversation.agentState.summary ||
+        !conversation.agentState.leadChannels.includes("outbound_whatsapp"))
+    ) {
+      conversation =
+        (await updateWhatsAppConversationAgentState({
+          id: conversation.id,
+          patch: outboundStatePatch,
+        })) || conversation;
+    }
 
     if (!conversation.linkedLeadId) {
       try {

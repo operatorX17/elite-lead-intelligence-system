@@ -17,10 +17,16 @@ global.fetch = async () =>
 
 let campaignsDb: typeof import("@/lib/db/whatsapp-campaigns");
 let campaignRunner: typeof import("@/lib/whatsapp/campaign-runner");
+let campaignPresets: typeof import("@/lib/whatsapp/campaigns");
+let salesPlaybook: typeof import("@/lib/whatsapp/sales-playbook");
+let whatsappState: typeof import("@/lib/whatsapp/state");
 
 test.before(async () => {
   campaignsDb = await import("@/lib/db/whatsapp-campaigns");
   campaignRunner = await import("@/lib/whatsapp/campaign-runner");
+  campaignPresets = await import("@/lib/whatsapp/campaigns");
+  salesPlaybook = await import("@/lib/whatsapp/sales-playbook");
+  whatsappState = await import("@/lib/whatsapp/state");
 });
 
 test("campaign wave sends approved recipients and marks replies", async () => {
@@ -92,6 +98,71 @@ test("campaign wave sends approved recipients and marks replies", async () => {
     )?.status,
     "replied"
   );
+});
+
+test("outbound preset keeps unlinked clinic replies in SDR mode", () => {
+  const outboundPatch = campaignPresets.buildOutreachCampaignStatePatch({
+    presetId: "curiosity_wave_1",
+    companyName: "iSkin",
+  });
+
+  assert.ok(outboundPatch);
+  assert.equal(
+    outboundPatch?.leadChannels?.includes("outbound_whatsapp"),
+    true
+  );
+
+  const seededState = whatsappState.createWhatsAppAgentState(outboundPatch ?? {});
+  const greetingReply = salesPlaybook.buildWhatsAppFallbackReply(
+    seededState,
+    [],
+    null,
+    "hi",
+    null
+  );
+
+  assert.match(greetingReply, /Quick one/i);
+  assert.match(greetingReply, /booking|enquiry/i);
+
+  const conversation = {
+    id: "conv_test",
+    linkedLeadId: null,
+    leadContext: null,
+    contactName: "Clinic Owner",
+    contactPhone: "+919900000000",
+    mode: "bot",
+  } as any;
+
+  const systemPrompt = salesPlaybook.buildWhatsAppSystemPrompt({
+    conversation,
+    state: seededState,
+    messages: [],
+    leadContext: null,
+  });
+
+  assert.match(systemPrompt, /outbound WhatsApp outreach/i);
+
+  const derived = salesPlaybook.deriveNextWhatsAppAgentState({
+    conversation,
+    messages: [],
+    incomingText: "hi",
+    currentState: seededState,
+  });
+
+  assert.equal(
+    derived.nextState.leadChannels.includes("outbound_whatsapp"),
+    true
+  );
+
+  const followUpReply = salesPlaybook.buildWhatsAppFallbackReply(
+    derived.nextState,
+    [],
+    null,
+    "yes",
+    greetingReply
+  );
+
+  assert.match(followUpReply, /WhatsApp enquiries|normal week|most weeks/i);
 });
 
 test.after(() => {
