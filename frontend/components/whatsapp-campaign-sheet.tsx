@@ -12,10 +12,12 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import type { WhatsAppCampaignAnalytics } from "@/lib/whatsapp/campaign-analytics";
 import {
   DEFAULT_WHATSAPP_CAMPAIGN_PRESET,
   WHATSAPP_CAMPAIGN_PRESETS,
   getWhatsAppCampaignPresetById,
+  stringifyCampaignTemplateVariables,
   WhatsAppCampaignRecord,
   WhatsAppCampaignRecipientRecord,
 } from "@/lib/whatsapp/campaigns";
@@ -63,6 +65,9 @@ export function WhatsAppCampaignSheet() {
   const [messageStyle, setMessageStyle] = useState<"template" | "freeform">(
     DEFAULT_WHATSAPP_CAMPAIGN_PRESET.messageStyle
   );
+  const [providerTemplateId, setProviderTemplateId] = useState("");
+  const [providerTemplateVariablesText, setProviderTemplateVariablesText] =
+    useState('{\n  "1": "{{company_name}}"\n}');
   const [dailyLimit, setDailyLimit] = useState("20");
   const [waveSize, setWaveSize] = useState("10");
   const [waveGapMinutes, setWaveGapMinutes] = useState("30");
@@ -74,6 +79,7 @@ export function WhatsAppCampaignSheet() {
   const [runningCampaignId, setRunningCampaignId] = useState<string | null>(null);
   const [approvingCampaignId, setApprovingCampaignId] = useState<string | null>(null);
   const [savingRecipientId, setSavingRecipientId] = useState<string | null>(null);
+  const [analytics, setAnalytics] = useState<WhatsAppCampaignAnalytics | null>(null);
 
   const selectedCampaign =
     campaigns.find((campaign) => campaign.id === selectedCampaignId) ?? null;
@@ -115,7 +121,7 @@ export function WhatsAppCampaignSheet() {
 
   useEffect(() => {
     if (open) {
-      void loadCampaigns();
+      void loadWorkspaceData();
     }
   }, [open]);
 
@@ -139,6 +145,21 @@ export function WhatsAppCampaignSheet() {
     }
   }
 
+  async function loadAnalytics() {
+    try {
+      const payload = await apiRequest<{ analytics: WhatsAppCampaignAnalytics }>(
+        "/api/whatsapp/campaigns/analytics"
+      );
+      setAnalytics(payload.analytics);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to load campaign analytics");
+    }
+  }
+
+  async function loadWorkspaceData() {
+    await Promise.all([loadCampaigns(), loadAnalytics()]);
+  }
+
   async function handleCreateCampaign() {
     setIsCreating(true);
     try {
@@ -151,6 +172,8 @@ export function WhatsAppCampaignSheet() {
             name,
             messageStyle,
             templateName,
+            providerTemplateId,
+            providerTemplateVariablesText,
             messageTemplate,
             contactsText,
             dailyLimit,
@@ -164,9 +187,12 @@ export function WhatsAppCampaignSheet() {
       setSelectedCampaignId(payload.campaign.id);
       setName("");
       setContactsText("");
+      setProviderTemplateId("");
+      setProviderTemplateVariablesText('{\n  "1": "{{company_name}}"\n}');
       setNotes(
         `Angle: ${selectedPreset.angle}\nUse: ${selectedPreset.recommendedFor}\nFollow-up: ${selectedPreset.suggestedFollowUp}`
       );
+      await loadAnalytics();
       toast.success("Campaign drafted");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to create campaign");
@@ -191,6 +217,7 @@ export function WhatsAppCampaignSheet() {
           campaign.id === campaignId ? payload.campaign : campaign
         )
       );
+      await loadAnalytics();
       toast.success("Approved all draft messages");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to approve campaign");
@@ -211,6 +238,7 @@ export function WhatsAppCampaignSheet() {
           campaign.id === campaignId ? payload.campaign : campaign
         )
       );
+      await loadAnalytics();
       toast.success(
         payload.sentCount > 0
           ? `Sent ${payload.sentCount} messages in the next wave`
@@ -238,6 +266,7 @@ export function WhatsAppCampaignSheet() {
           campaign.id === campaignId ? payload.campaign : campaign
         )
       );
+      await loadAnalytics();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to update campaign");
     }
@@ -276,6 +305,7 @@ export function WhatsAppCampaignSheet() {
         )
       );
       await loadCampaigns();
+      await loadAnalytics();
       toast.success("Recipient updated");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to update recipient");
@@ -293,6 +323,8 @@ export function WhatsAppCampaignSheet() {
     setTemplateName(preset.templateName);
     setMessageStyle(preset.messageStyle);
     setMessageTemplate(preset.firstMessage);
+    setProviderTemplateId("");
+    setProviderTemplateVariablesText('{\n  "1": "{{company_name}}"\n}');
     setNotes(
       `Angle: ${preset.angle}\nUse: ${preset.recommendedFor}\nFollow-up: ${preset.suggestedFollowUp}`
     );
@@ -399,6 +431,28 @@ export function WhatsAppCampaignSheet() {
                   placeholder="First message. Supports {{first_name}}, {{company_name}}, {{top_issue}}, {{city}}"
                   value={messageTemplate}
                 />
+                {messageStyle === "template" ? (
+                  <div className="grid gap-2 rounded-2xl border border-white/8 bg-white/[0.03] p-3">
+                    <div className="text-[11px] font-medium uppercase tracking-[0.22em] text-slate-500">
+                      Twilio template delivery
+                    </div>
+                    <Input
+                      className="border-white/10 bg-white/5 text-slate-100"
+                      onChange={(event) => setProviderTemplateId(event.target.value)}
+                      placeholder="Twilio ContentSid / HX..."
+                      value={providerTemplateId}
+                    />
+                    <Textarea
+                      className="min-h-[92px] border-white/10 bg-white/5 text-slate-100"
+                      onChange={(event) => setProviderTemplateVariablesText(event.target.value)}
+                      placeholder='{"1":"{{company_name}}","2":"{{first_name}}"}'
+                      value={providerTemplateVariablesText}
+                    />
+                    <div className="text-[11px] leading-5 text-slate-500">
+                      If ContentSid is set, Twilio will send the approved template and fill these variables per recipient. The message body above stays as your operator preview and fallback copy.
+                    </div>
+                  </div>
+                ) : null}
                 <Textarea
                   className="min-h-[160px] border-white/10 bg-white/5 text-slate-100"
                   onChange={(event) => setContactsText(event.target.value)}
@@ -441,13 +495,105 @@ export function WhatsAppCampaignSheet() {
               </CardContent>
             </Card>
 
+            <Card className="border-white/8 bg-[#111722] text-slate-100">
+              <CardHeader className="border-b border-white/6">
+                <CardTitle className="text-sm text-white">Operator bar</CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-4 pt-4">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-2xl border border-white/8 bg-white/5 p-3">
+                    <div className="text-[11px] uppercase tracking-[0.22em] text-slate-500">
+                      Active campaigns
+                    </div>
+                    <div className="mt-2 text-xl font-semibold text-white">
+                      {analytics?.overview.activeCampaigns ?? 0}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      {analytics?.overview.campaigns ?? 0} total campaigns
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-white/8 bg-white/5 p-3">
+                    <div className="text-[11px] uppercase tracking-[0.22em] text-slate-500">
+                      Ready to send
+                    </div>
+                    <div className="mt-2 text-xl font-semibold text-white">
+                      {analytics?.overview.readyRecipients ?? 0}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      approved recipients
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-white/8 bg-white/5 p-3">
+                    <div className="text-[11px] uppercase tracking-[0.22em] text-slate-500">
+                      Reply rate
+                    </div>
+                    <div className="mt-2 text-xl font-semibold text-white">
+                      {analytics?.overview.replyRate ?? 0}%
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      {analytics?.overview.repliedRecipients ?? 0} replied /{" "}
+                      {analytics?.overview.contactedRecipients ?? 0} contacted
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-white/8 bg-white/5 p-3">
+                    <div className="text-[11px] uppercase tracking-[0.22em] text-slate-500">
+                      Hot threads
+                    </div>
+                    <div className="mt-2 text-xl font-semibold text-white">
+                      {analytics?.overview.hotThreads ?? 0}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      {analytics?.overview.demoReadyThreads ?? 0} demo-ready
+                    </div>
+                  </div>
+                </div>
+                {analytics?.hotThreads?.length ? (
+                  <div className="grid gap-2">
+                    <div className="text-[11px] font-medium uppercase tracking-[0.22em] text-slate-500">
+                      Closest to demo
+                    </div>
+                    {analytics.hotThreads.slice(0, 4).map((thread) => (
+                      <div
+                        className="rounded-2xl border border-white/8 bg-white/5 p-3"
+                        key={thread.conversationId}
+                      >
+                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="font-medium text-sm text-white">
+                            {thread.companyName ?? thread.contactName}
+                          </div>
+                          <Badge className="border border-white/10 bg-white/5 text-[10px] text-slate-300">
+                            {thread.stage}
+                          </Badge>
+                          <Badge className={cn("border text-[10px]", statusTone(thread.priority))}>
+                            {thread.priority}
+                          </Badge>
+                        </div>
+                        <div className="mt-2 text-xs leading-5 text-slate-400">
+                          {thread.summary ?? thread.contactPhone}
+                        </div>
+                        {thread.nextBestMove ? (
+                          <div className="mt-1 text-[11px] leading-5 text-slate-500">
+                            Next: {thread.nextBestMove}
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-white/10 p-4 text-sm text-slate-500">
+                    No hot reply threads yet. Once clinics engage, the operator bar will surface the threads closest to demo and founder handoff.
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
             <Card className="min-h-0 border-white/8 bg-[#111722] text-slate-100">
               <CardHeader className="border-b border-white/6">
                 <div className="flex items-center justify-between gap-3">
                   <CardTitle className="text-sm text-white">Campaigns</CardTitle>
                   <Button
                     className="border-white/10 bg-white/5 text-slate-100 hover:bg-white/10"
-                    onClick={() => void loadCampaigns()}
+                    onClick={() => void loadWorkspaceData()}
                     size="sm"
                     variant="outline"
                   >
@@ -513,6 +659,11 @@ export function WhatsAppCampaignSheet() {
                     <Badge className="border border-white/10 bg-white/5 text-slate-300">
                       {selectedCampaign.messageStyle}
                     </Badge>
+                    {selectedCampaign.providerTemplateId ? (
+                      <Badge className="border border-violet-300/15 bg-violet-500/10 text-violet-100">
+                        Twilio template
+                      </Badge>
+                    ) : null}
                   </div>
                   <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-400">
                     <span>{selectedCampaign.dailyLimit}/day</span>
@@ -627,6 +778,23 @@ export function WhatsAppCampaignSheet() {
                   <div className="mt-4 rounded-2xl border border-white/8 bg-white/5 p-3 text-sm leading-6 text-slate-200">
                     {selectedCampaign.messageTemplate}
                   </div>
+                  {selectedCampaign.providerTemplateId ? (
+                    <div className="mt-3 rounded-2xl border border-violet-300/15 bg-violet-500/10 p-3">
+                      <div className="text-[11px] font-medium uppercase tracking-[0.22em] text-violet-200/70">
+                        Provider template
+                      </div>
+                      <div className="mt-2 font-mono text-xs text-violet-50">
+                        {selectedCampaign.providerTemplateId}
+                      </div>
+                      {selectedCampaign.providerTemplateVariables ? (
+                        <pre className="mt-3 overflow-x-auto rounded-xl bg-[#0b1019] p-3 text-[11px] leading-5 text-violet-100/80">
+                          {stringifyCampaignTemplateVariables(
+                            selectedCampaign.providerTemplateVariables
+                          )}
+                        </pre>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </CardHeader>
                 <CardContent className="min-h-0 p-0">
                   <ScrollArea className="h-[calc(100dvh-14rem)]">

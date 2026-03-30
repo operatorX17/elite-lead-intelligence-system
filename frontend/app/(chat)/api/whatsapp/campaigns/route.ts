@@ -7,6 +7,7 @@ import {
 import { getWhatsAppConversationByPhone } from "@/lib/db/queries";
 import {
   parseCampaignContactsInput,
+  parseCampaignTemplateVariablesInput,
   renderCampaignMessageTemplate,
 } from "@/lib/whatsapp/campaigns";
 
@@ -14,6 +15,8 @@ const createCampaignSchema = z.object({
   name: z.string().trim().min(1, "Campaign name is required"),
   messageStyle: z.enum(["template", "freeform"]).default("template"),
   templateName: z.string().trim().optional(),
+  providerTemplateId: z.string().trim().optional(),
+  providerTemplateVariablesText: z.string().trim().optional(),
   messageTemplate: z.string().trim().min(1, "First message is required"),
   contactsText: z.string().trim().min(1, "At least one contact is required"),
   dailyLimit: z.coerce.number().int().min(1).max(500).default(20),
@@ -81,6 +84,10 @@ export async function POST(request: Request) {
     name: payload.data.name,
     messageStyle: payload.data.messageStyle,
     templateName: payload.data.templateName,
+    providerTemplateId: payload.data.providerTemplateId,
+    providerTemplateVariables: parseCampaignTemplateVariablesInput(
+      payload.data.providerTemplateVariablesText
+    ),
     messageTemplate: payload.data.messageTemplate,
     createdByLabel:
       session.user.email ?? session.user.name ?? "Human operator",

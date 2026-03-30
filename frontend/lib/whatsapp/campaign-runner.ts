@@ -20,6 +20,7 @@ import {
 import {
   buildOutreachCampaignStatePatch,
   renderCampaignMessageTemplate,
+  renderCampaignTemplateVariables,
 } from "@/lib/whatsapp/campaigns";
 import { sendWhatsAppTextMessage } from "@/lib/whatsapp/provider";
 
@@ -174,10 +175,25 @@ export async function runWhatsAppCampaignWave({
       decisionMakerName: conversation.leadContext?.decisionMakerName ?? null,
       city: conversation.leadContext?.geo ?? null,
     }).trim();
+    const contentVariables = renderCampaignTemplateVariables({
+      templateVariables: campaign.providerTemplateVariables,
+      contactName: recipient.contactName,
+      contactPhone: recipient.contactPhone,
+      companyName:
+        recipient.companyName ?? conversation.leadContext?.companyName ?? null,
+      topIssue: conversation.leadContext?.topIssue ?? null,
+      decisionMakerName: conversation.leadContext?.decisionMakerName ?? null,
+      city: conversation.leadContext?.geo ?? null,
+    });
 
     const delivery = await sendWhatsAppTextMessage({
       to: recipient.contactPhone,
       body: outgoingBody,
+      contentSid:
+        campaign.messageStyle === "template"
+          ? campaign.providerTemplateId
+          : null,
+      contentVariables,
     });
 
     await appendWhatsAppMessage({

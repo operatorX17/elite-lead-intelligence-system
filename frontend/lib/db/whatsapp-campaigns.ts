@@ -6,6 +6,7 @@ import {
   type WhatsAppCampaignRecipientStatus,
   type WhatsAppCampaignRecord,
   type WhatsAppCampaignStatus,
+  type WhatsAppCampaignTemplateVariables,
   renderCampaignMessageTemplate,
   summarizeCampaignCounts,
 } from "@/lib/whatsapp/campaigns";
@@ -71,6 +72,8 @@ async function ensureCampaignTables() {
         "status" varchar(24) NOT NULL,
         "messageStyle" varchar(24) NOT NULL,
         "templateName" text,
+        "providerTemplateId" text,
+        "providerTemplateVariables" jsonb,
         "messageTemplate" text NOT NULL,
         "createdByLabel" text NOT NULL,
         "dailyLimit" integer NOT NULL DEFAULT 20,
@@ -112,6 +115,14 @@ async function ensureCampaignTables() {
       ON "WhatsAppCampaignRecipient" ("contactPhone");
     `);
 
+    await client.unsafe(`
+      ALTER TABLE "WhatsAppCampaign"
+      ADD COLUMN IF NOT EXISTS "providerTemplateId" text;
+
+      ALTER TABLE "WhatsAppCampaign"
+      ADD COLUMN IF NOT EXISTS "providerTemplateVariables" jsonb;
+    `);
+
     globalCampaignStore.__zraiWhatsAppCampaignTablesReady = true;
   } catch (_error) {
     enableRuntimeMemoryDb();
@@ -125,6 +136,9 @@ function hydrateCampaign(record: any): Omit<WhatsAppCampaignRecord, "recipients"
     status: record.status as WhatsAppCampaignStatus,
     messageStyle: record.messageStyle as WhatsAppCampaignMessageStyle,
     templateName: record.templateName ?? null,
+    providerTemplateId: record.providerTemplateId ?? null,
+    providerTemplateVariables:
+      (record.providerTemplateVariables as WhatsAppCampaignTemplateVariables | null) ?? null,
     messageTemplate: String(record.messageTemplate),
     createdByLabel: String(record.createdByLabel),
     dailyLimit: Number(record.dailyLimit ?? 20),
@@ -227,6 +241,8 @@ export async function createWhatsAppCampaign({
   name,
   messageStyle,
   templateName,
+  providerTemplateId,
+  providerTemplateVariables,
   messageTemplate,
   createdByLabel,
   dailyLimit,
@@ -238,6 +254,8 @@ export async function createWhatsAppCampaign({
   name: string;
   messageStyle: WhatsAppCampaignMessageStyle;
   templateName?: string | null;
+  providerTemplateId?: string | null;
+  providerTemplateVariables?: WhatsAppCampaignTemplateVariables | null;
   messageTemplate: string;
   createdByLabel: string;
   dailyLimit: number;
@@ -260,6 +278,11 @@ export async function createWhatsAppCampaign({
     status: "draft" as WhatsAppCampaignStatus,
     messageStyle,
     templateName: templateName?.trim() || null,
+    providerTemplateId: providerTemplateId?.trim() || null,
+    providerTemplateVariables:
+      providerTemplateVariables && Object.keys(providerTemplateVariables).length > 0
+        ? providerTemplateVariables
+        : null,
     messageTemplate: messageTemplate.trim(),
     createdByLabel: createdByLabel.trim(),
     dailyLimit,
@@ -336,9 +359,9 @@ export async function createWhatsAppCampaign({
     await client.begin(async (tx) => {
       await tx`
         INSERT INTO "WhatsAppCampaign"
-          ("id", "createdAt", "updatedAt", "name", "status", "messageStyle", "templateName", "messageTemplate", "createdByLabel", "dailyLimit", "waveSize", "waveGapMinutes", "nextWaveAt", "lastWaveAt", "notes")
+          ("id", "createdAt", "updatedAt", "name", "status", "messageStyle", "templateName", "providerTemplateId", "providerTemplateVariables", "messageTemplate", "createdByLabel", "dailyLimit", "waveSize", "waveGapMinutes", "nextWaveAt", "lastWaveAt", "notes")
         VALUES
-          (${campaignBase.id}::uuid, ${now}, ${now}, ${campaignBase.name}, ${campaignBase.status}, ${campaignBase.messageStyle}, ${campaignBase.templateName}, ${campaignBase.messageTemplate}, ${campaignBase.createdByLabel}, ${campaignBase.dailyLimit}, ${campaignBase.waveSize}, ${campaignBase.waveGapMinutes}, ${null}, ${null}, ${campaignBase.notes})
+          (${campaignBase.id}::uuid, ${now}, ${now}, ${campaignBase.name}, ${campaignBase.status}, ${campaignBase.messageStyle}, ${campaignBase.templateName}, ${campaignBase.providerTemplateId}, ${campaignBase.providerTemplateVariables ? JSON.stringify(campaignBase.providerTemplateVariables) : null}::jsonb, ${campaignBase.messageTemplate}, ${campaignBase.createdByLabel}, ${campaignBase.dailyLimit}, ${campaignBase.waveSize}, ${campaignBase.waveGapMinutes}, ${null}, ${null}, ${campaignBase.notes})
       `;
 
       for (const recipient of recipientRecords) {
@@ -358,6 +381,8 @@ export async function createWhatsAppCampaign({
       name,
       messageStyle,
       templateName,
+      providerTemplateId,
+      providerTemplateVariables,
       messageTemplate,
       createdByLabel,
       dailyLimit,
@@ -380,6 +405,8 @@ export async function updateWhatsAppCampaign({
       | "status"
       | "messageTemplate"
       | "templateName"
+      | "providerTemplateId"
+      | "providerTemplateVariables"
       | "notes"
       | "nextWaveAt"
       | "lastWaveAt"
@@ -420,6 +447,8 @@ export async function updateWhatsAppCampaign({
         "status" = ${nextCampaign.status},
         "messageTemplate" = ${nextCampaign.messageTemplate},
         "templateName" = ${nextCampaign.templateName},
+        "providerTemplateId" = ${nextCampaign.providerTemplateId},
+        "providerTemplateVariables" = ${nextCampaign.providerTemplateVariables ? JSON.stringify(nextCampaign.providerTemplateVariables) : null}::jsonb,
         "notes" = ${nextCampaign.notes},
         "nextWaveAt" = ${toDate(nextCampaign.nextWaveAt)},
         "lastWaveAt" = ${toDate(nextCampaign.lastWaveAt)},

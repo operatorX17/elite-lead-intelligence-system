@@ -23,18 +23,23 @@ function stripWhatsAppPrefix(value: string | null | undefined) {
 export async function sendTwilioWhatsAppTextMessage({
   to,
   body,
+  contentSid,
+  contentVariables,
 }: {
   to: string;
   body: string;
+  contentSid?: string | null;
+  contentVariables?: Record<string, string> | null;
 }): Promise<SendWhatsAppResult> {
   const config = getWhatsAppConfig();
   const sender = config.twilioWhatsAppNumber ?? config.twilioPhoneNumber;
+  const transportReady = Boolean(sender || config.twilioMessagingServiceSid);
 
   if (
     config.provider !== "twilio" ||
     !config.twilioAccountSid ||
     !config.twilioAuthToken ||
-    !sender
+    !transportReady
   ) {
     return {
       status: "draft",
@@ -46,8 +51,19 @@ export async function sendTwilioWhatsAppTextMessage({
 
   const payload = new URLSearchParams();
   payload.set("To", normalizeWhatsAppAddress(to));
-  payload.set("From", normalizeWhatsAppAddress(sender));
-  payload.set("Body", body);
+  if (config.twilioMessagingServiceSid) {
+    payload.set("MessagingServiceSid", config.twilioMessagingServiceSid);
+  } else {
+    payload.set("From", normalizeWhatsAppAddress(sender as string));
+  }
+  if (contentSid) {
+    payload.set("ContentSid", contentSid);
+    if (contentVariables && Object.keys(contentVariables).length > 0) {
+      payload.set("ContentVariables", JSON.stringify(contentVariables));
+    }
+  } else {
+    payload.set("Body", body);
+  }
   if (config.twilioStatusCallbackUrl) {
     payload.set("StatusCallback", config.twilioStatusCallbackUrl);
   }

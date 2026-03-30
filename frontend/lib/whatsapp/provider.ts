@@ -22,6 +22,8 @@ export type {
 export async function sendWhatsAppTextMessage(input: {
   to: string;
   body: string;
+  contentSid?: string | null;
+  contentVariables?: Record<string, string> | null;
 }): Promise<SendWhatsAppResult> {
   const config = getWhatsAppConfig();
 

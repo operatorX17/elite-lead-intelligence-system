@@ -4,11 +4,14 @@ import {
   getWhatsAppCampaignById,
   updateWhatsAppCampaign,
 } from "@/lib/db/whatsapp-campaigns";
+import { parseCampaignTemplateVariablesInput } from "@/lib/whatsapp/campaigns";
 
 const updateCampaignSchema = z.object({
   status: z.enum(["draft", "active", "paused", "completed"]).optional(),
   messageTemplate: z.string().trim().min(1).optional(),
   templateName: z.string().trim().nullable().optional(),
+  providerTemplateId: z.string().trim().nullable().optional(),
+  providerTemplateVariablesText: z.string().trim().nullable().optional(),
   notes: z.string().trim().nullable().optional(),
   dailyLimit: z.coerce.number().int().min(1).max(500).optional(),
   waveSize: z.coerce.number().int().min(1).max(100).optional(),
@@ -49,9 +52,16 @@ export async function PATCH(
   }
 
   const { id } = await context.params;
+  const { providerTemplateVariablesText, ...restPatch } = payload.data;
   const campaign = await updateWhatsAppCampaign({
     id,
-    patch: payload.data,
+    patch: {
+      ...restPatch,
+      providerTemplateVariables:
+        providerTemplateVariablesText === undefined
+          ? undefined
+          : parseCampaignTemplateVariablesInput(providerTemplateVariablesText),
+    },
   });
 
   if (!campaign) {

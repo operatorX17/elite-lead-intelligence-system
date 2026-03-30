@@ -36,6 +36,8 @@ export type WhatsAppCampaignRecipientInput = {
   companyName: string | null;
 };
 
+export type WhatsAppCampaignTemplateVariables = Record<string, string>;
+
 export type WhatsAppCampaignPreset = {
   id: string;
   label: string;
@@ -78,6 +80,8 @@ export type WhatsAppCampaignRecord = {
   status: WhatsAppCampaignStatus;
   messageStyle: WhatsAppCampaignMessageStyle;
   templateName: string | null;
+  providerTemplateId: string | null;
+  providerTemplateVariables: WhatsAppCampaignTemplateVariables | null;
   messageTemplate: string;
   createdByLabel: string;
   dailyLimit: number;
@@ -268,6 +272,40 @@ export function getWhatsAppCampaignPresetById(
   );
 }
 
+export function parseCampaignTemplateVariablesInput(
+  input: string | null | undefined
+): WhatsAppCampaignTemplateVariables | null {
+  const raw = String(input ?? "").trim();
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const normalizedEntries = Object.entries(parsed)
+      .map(([key, value]) => [String(key).trim(), String(value ?? "").trim()] as const)
+      .filter(([key, value]) => Boolean(key) && Boolean(value));
+
+    if (normalizedEntries.length === 0) {
+      return null;
+    }
+
+    return Object.fromEntries(normalizedEntries);
+  } catch {
+    return null;
+  }
+}
+
+export function stringifyCampaignTemplateVariables(
+  value: WhatsAppCampaignTemplateVariables | null | undefined
+) {
+  if (!value || Object.keys(value).length === 0) {
+    return "";
+  }
+
+  return JSON.stringify(value, null, 2);
+}
+
 export function buildOutreachCampaignStatePatch({
   presetId,
   companyName,
@@ -293,6 +331,49 @@ export function buildOutreachCampaignStatePatch({
     requestedNextStep: null,
     updatedAt: new Date().toISOString(),
   };
+}
+
+export function renderCampaignTemplateVariables({
+  templateVariables,
+  contactName,
+  contactPhone,
+  companyName,
+  topIssue,
+  decisionMakerName,
+  city,
+}: {
+  templateVariables: WhatsAppCampaignTemplateVariables | null | undefined;
+  contactName: string;
+  contactPhone?: string | null;
+  companyName?: string | null;
+  topIssue?: string | null;
+  decisionMakerName?: string | null;
+  city?: string | null;
+}) {
+  if (!templateVariables || Object.keys(templateVariables).length === 0) {
+    return null;
+  }
+
+  const entries = Object.entries(templateVariables)
+    .map(([key, value]) => [
+      key,
+      renderCampaignMessageTemplate({
+        template: value,
+        contactName,
+        contactPhone,
+        companyName,
+        topIssue,
+        decisionMakerName,
+        city,
+      }).trim(),
+    ] as const)
+    .filter(([, value]) => Boolean(value));
+
+  if (entries.length === 0) {
+    return null;
+  }
+
+  return Object.fromEntries(entries);
 }
 
 export function renderCampaignMessageTemplate({

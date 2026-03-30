@@ -15,6 +15,7 @@ export type WhatsAppServerConfig = WhatsAppPublicConfig & {
   twilioAuthToken: string | null;
   twilioPhoneNumber: string | null;
   twilioWhatsAppNumber: string | null;
+  twilioMessagingServiceSid: string | null;
   twilioStatusCallbackUrl: string | null;
   metaGraphApiVersion: string;
   metaPhoneNumberId: string | null;
@@ -64,6 +65,9 @@ export function getWhatsAppConfig(): WhatsAppServerConfig {
   const twilioAuthToken = cleanEnvValue(process.env.TWILIO_AUTH_TOKEN);
   const twilioPhoneNumber = cleanEnvValue(process.env.TWILIO_PHONE_NUMBER);
   const twilioWhatsAppNumber = cleanEnvValue(process.env.TWILIO_WHATSAPP_NUMBER);
+  const twilioMessagingServiceSid = cleanEnvValue(
+    process.env.TWILIO_MESSAGING_SERVICE_SID
+  );
 
   const metaPhoneNumberId = cleanEnvValue(process.env.WHATSAPP_PHONE_NUMBER_ID);
   const metaAccessToken = cleanEnvValue(process.env.WHATSAPP_ACCESS_TOKEN);
@@ -73,13 +77,16 @@ export function getWhatsAppConfig(): WhatsAppServerConfig {
   const metaAppSecret = cleanEnvValue(process.env.WHATSAPP_APP_SECRET);
 
   const twilioSender = twilioWhatsAppNumber ?? twilioPhoneNumber ?? null;
+  const twilioTransportReady = Boolean(twilioSender || twilioMessagingServiceSid);
   const businessNumber =
     cleanEnvValue(process.env.WHATSAPP_DISPLAY_NUMBER) ??
     cleanEnvValue(process.env.WHATSAPP_NUMBER) ??
     twilioSender ??
     null;
 
-  const twilioConfigured = Boolean(twilioAccountSid && twilioAuthToken && twilioSender);
+  const twilioConfigured = Boolean(
+    twilioAccountSid && twilioAuthToken && twilioTransportReady
+  );
   const metaConfigured = Boolean(metaPhoneNumberId && metaAccessToken);
 
   const explicitProvider = (cleanEnvValue(process.env.WHATSAPP_PROVIDER) ?? "")
@@ -123,6 +130,7 @@ export function getWhatsAppConfig(): WhatsAppServerConfig {
     twilioAuthToken,
     twilioPhoneNumber,
     twilioWhatsAppNumber,
+    twilioMessagingServiceSid,
     twilioStatusCallbackUrl: publicBaseUrl
       ? `${publicBaseUrl}/api/whatsapp/webhook`
       : null,

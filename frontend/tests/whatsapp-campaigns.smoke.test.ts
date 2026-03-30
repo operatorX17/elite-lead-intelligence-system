@@ -9,11 +9,18 @@ process.env.TWILIO_WHATSAPP_NUMBER = "+15550001111";
 process.env.NEXTAUTH_URL = "https://example.com";
 
 const originalFetch = global.fetch;
-global.fetch = async () =>
-  new Response(JSON.stringify({ sid: "SM_TEST", status: "queued" }), {
+const fetchCalls: Array<{ url: string; init?: RequestInit }> = [];
+global.fetch = async (input, init) => {
+  fetchCalls.push({
+    url: String(input),
+    init,
+  });
+
+  return new Response(JSON.stringify({ sid: "SM_TEST", status: "queued" }), {
     status: 201,
     headers: { "Content-Type": "application/json" },
   });
+};
 
 let campaignsDb: typeof import("@/lib/db/whatsapp-campaigns");
 let campaignRunner: typeof import("@/lib/whatsapp/campaign-runner");
@@ -34,6 +41,11 @@ test("campaign wave sends approved recipients and marks replies", async () => {
     name: "Wave 1",
     messageStyle: "template",
     templateName: "curiosity_wave_1",
+    providerTemplateId: "HX_TEST_TEMPLATE",
+    providerTemplateVariables: {
+      "1": "{{company_name}}",
+      "2": "{{first_name}}",
+    },
     messageTemplate: "Hi {{first_name}} from {{company_name}}",
     createdByLabel: "Operator",
     dailyLimit: 20,
@@ -70,6 +82,14 @@ test("campaign wave sends approved recipients and marks replies", async () => {
   }
 
   assert.equal(runResult.sentCount, 2);
+  const twilioCalls = fetchCalls.filter((call) =>
+    call.url.includes("api.twilio.com")
+  );
+  assert.equal(twilioCalls.length, 2);
+  const firstBody = String(twilioCalls[0]?.init?.body ?? "");
+  assert.match(firstBody, /ContentSid=HX_TEST_TEMPLATE/);
+  assert.match(firstBody, /ContentVariables=/);
+  assert.match(firstBody, /MessagingServiceSid|From=/);
 
   const reloadedCampaign = await campaignsDb.getWhatsAppCampaignById({
     id: campaign.id,
