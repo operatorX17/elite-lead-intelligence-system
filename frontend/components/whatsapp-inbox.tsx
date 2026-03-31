@@ -133,6 +133,16 @@ export function WhatsAppInbox({
   const [assistOpen, setAssistOpen] = useState(false);
   const [newContactName, setNewContactName] = useState("");
   const [newContactPhone, setNewContactPhone] = useState("");
+  const [seedSandboxLead, setSeedSandboxLead] = useState(true);
+  const [sandboxCompanyName, setSandboxCompanyName] = useState("iSkin Bangalore");
+  const [sandboxGeo, setSandboxGeo] = useState("Bangalore");
+  const [sandboxTopIssue, setSandboxTopIssue] = useState(
+    "WhatsApp enquiries dropping before booking confirmation"
+  );
+  const [sandboxDecisionMakerName, setSandboxDecisionMakerName] = useState("");
+  const [sandboxDecisionMakerRole, setSandboxDecisionMakerRole] = useState(
+    "Clinic owner"
+  );
   const [startInHumanMode, setStartInHumanMode] = useState(false);
   const tailRef = useRef<HTMLDivElement | null>(null);
   const deferredQuery = useDeferredValue(query);
@@ -280,8 +290,14 @@ export function WhatsAppInbox({
       return;
     }
     try {
-      const payload = await apiRequest<{ conversation: SerializedConversation }>(
-        "/api/whatsapp/conversations",
+      const endpoint = seedSandboxLead
+        ? "/api/whatsapp/sandbox"
+        : "/api/whatsapp/conversations";
+      const payload = await apiRequest<{
+        conversation: SerializedConversation;
+        messages?: SerializedMessage[];
+      }>(
+        endpoint,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -289,14 +305,33 @@ export function WhatsAppInbox({
             contactName: newContactName,
             contactPhone: newContactPhone,
             startInHumanMode,
+            companyName: sandboxCompanyName || newContactName,
+            geo: sandboxGeo,
+            topIssue: sandboxTopIssue,
+            decisionMakerName: sandboxDecisionMakerName,
+            decisionMakerRole: sandboxDecisionMakerRole,
+            seedStarterThread: true,
           }),
         }
       );
       const nextConversation = hydrateConversation(payload.conversation);
       upsertConversation(nextConversation);
+      const seededMessages = payload.messages ?? [];
+      if (seededMessages.length > 0) {
+        setMessagesByConversation((current) => ({
+          ...current,
+          [nextConversation.id]: seededMessages.map(hydrateMessage),
+        }));
+      }
       setSelectedConversationId(nextConversation.id);
       setNewContactName("");
       setNewContactPhone("");
+      setSeedSandboxLead(true);
+      setSandboxCompanyName("iSkin Bangalore");
+      setSandboxGeo("Bangalore");
+      setSandboxTopIssue("WhatsApp enquiries dropping before booking confirmation");
+      setSandboxDecisionMakerName("");
+      setSandboxDecisionMakerRole("Clinic owner");
       setStartInHumanMode(false);
       setIsCreateOpen(false);
       setThreadsOpen(false);
@@ -402,13 +437,80 @@ export function WhatsAppInbox({
         </div>
         {isCreateOpen ? (
           <div className="grid gap-2 rounded-2xl border border-white/8 bg-white/5 p-3">
+            <div className="flex gap-2">
+              <Button
+                className={cn(
+                  "flex-1 border-white/10",
+                  seedSandboxLead
+                    ? "bg-emerald-500/15 text-emerald-100"
+                    : "bg-white/5 text-slate-300"
+                )}
+                onClick={() => setSeedSandboxLead(true)}
+                type="button"
+                variant="outline"
+              >
+                Seed sandbox lead
+              </Button>
+              <Button
+                className={cn(
+                  "flex-1 border-white/10",
+                  !seedSandboxLead
+                    ? "bg-sky-500/15 text-sky-100"
+                    : "bg-white/5 text-slate-300"
+                )}
+                onClick={() => setSeedSandboxLead(false)}
+                type="button"
+                variant="outline"
+              >
+                Plain thread
+              </Button>
+            </div>
             <Input className="border-white/10 bg-[#0b1019] text-slate-100 placeholder:text-slate-500" onChange={(event) => setNewContactName(event.target.value)} placeholder="Clinic or contact" value={newContactName} />
             <Input className="border-white/10 bg-[#0b1019] text-slate-100 placeholder:text-slate-500" onChange={(event) => setNewContactPhone(event.target.value)} placeholder="WhatsApp number" value={newContactPhone} />
+            {seedSandboxLead ? (
+              <>
+                <Input
+                  className="border-white/10 bg-[#0b1019] text-slate-100 placeholder:text-slate-500"
+                  onChange={(event) => setSandboxCompanyName(event.target.value)}
+                  placeholder="Sandbox clinic name"
+                  value={sandboxCompanyName}
+                />
+                <Input
+                  className="border-white/10 bg-[#0b1019] text-slate-100 placeholder:text-slate-500"
+                  onChange={(event) => setSandboxGeo(event.target.value)}
+                  placeholder="City"
+                  value={sandboxGeo}
+                />
+                <Input
+                  className="border-white/10 bg-[#0b1019] text-slate-100 placeholder:text-slate-500"
+                  onChange={(event) => setSandboxTopIssue(event.target.value)}
+                  placeholder="Top issue"
+                  value={sandboxTopIssue}
+                />
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <Input
+                    className="border-white/10 bg-[#0b1019] text-slate-100 placeholder:text-slate-500"
+                    onChange={(event) => setSandboxDecisionMakerName(event.target.value)}
+                    placeholder="Decision maker name"
+                    value={sandboxDecisionMakerName}
+                  />
+                  <Input
+                    className="border-white/10 bg-[#0b1019] text-slate-100 placeholder:text-slate-500"
+                    onChange={(event) => setSandboxDecisionMakerRole(event.target.value)}
+                    placeholder="Decision maker role"
+                    value={sandboxDecisionMakerRole}
+                  />
+                </div>
+                <div className="rounded-2xl border border-emerald-400/15 bg-emerald-500/10 p-3 text-xs leading-5 text-emerald-100/80">
+                  This creates a realistic sandbox lead linked to the WhatsApp thread, seeds a starter message, and keeps the AI on the sales-agent path without requiring a real backend lead.
+                </div>
+              </>
+            ) : null}
             <Button className={cn("justify-start border-white/10", startInHumanMode ? "bg-amber-500/15 text-amber-100" : "bg-white/5 text-slate-300")} onClick={() => setStartInHumanMode((current) => !current)} type="button" variant="outline">
               {startInHumanMode ? "Starts with human" : "Starts with AI"}
             </Button>
             <Button className="bg-emerald-500 text-slate-950 hover:bg-emerald-400" onClick={() => void handleCreateConversation()}>
-              Create thread
+              {seedSandboxLead ? "Create sandbox lead" : "Create thread"}
             </Button>
           </div>
         ) : null}

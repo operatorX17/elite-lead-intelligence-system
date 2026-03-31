@@ -12,6 +12,7 @@ import {
   syncWhatsAppMessageToLeadMemory,
 } from "@/lib/whatsapp/lead-context";
 import { sendWhatsAppTextMessage } from "@/lib/whatsapp/provider";
+import { isWhatsAppSandboxLead } from "@/lib/whatsapp/sandbox";
 
 const sendMessageSchema = z.object({
   body: z.string().trim().min(1, "Message body is required"),
@@ -119,7 +120,13 @@ export async function POST(
     }
   }
 
-  if (conversation.linkedLeadId) {
+  if (
+    conversation.linkedLeadId &&
+    !isWhatsAppSandboxLead({
+      linkedLeadId: conversation.linkedLeadId,
+      leadContext: conversation.leadContext,
+    })
+  ) {
     try {
       const syncResult = await syncWhatsAppMessageToLeadMemory({
         leadId: conversation.linkedLeadId,

@@ -11,6 +11,7 @@ import {
   requestLeadAwareWhatsAppReply,
   resolveLeadContextForWhatsAppThread,
 } from "@/lib/whatsapp/lead-context";
+import { isWhatsAppSandboxLead } from "@/lib/whatsapp/sandbox";
 
 export async function POST(
   _request: Request,
@@ -71,7 +72,14 @@ export async function POST(
   let nextState = conversation.agentState;
   let backendConversationId = conversation.backendConversationId;
 
-  if (conversation.linkedLeadId && !suggestedReply) {
+  if (
+    conversation.linkedLeadId &&
+    !suggestedReply &&
+    !isWhatsAppSandboxLead({
+      linkedLeadId: conversation.linkedLeadId,
+      leadContext: conversation.leadContext,
+    })
+  ) {
     try {
       const backendReply = await requestLeadAwareWhatsAppReply({
         leadId: conversation.linkedLeadId,

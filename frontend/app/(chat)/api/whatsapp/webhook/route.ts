@@ -22,6 +22,7 @@ import {
   type ParsedInboundWhatsAppMessage,
   verifyWhatsAppWebhookSignature,
 } from "@/lib/whatsapp/provider";
+import { isWhatsAppSandboxLead } from "@/lib/whatsapp/sandbox";
 import { waitUntil } from "@vercel/functions";
 
 const WHATSAPP_REPLY_BUDGET_MS = 8000;
@@ -133,7 +134,13 @@ async function processInboundWhatsAppMessage({
       });
     }
 
-    if (latestConversation.linkedLeadId) {
+    if (
+      latestConversation.linkedLeadId &&
+      !isWhatsAppSandboxLead({
+        linkedLeadId: latestConversation.linkedLeadId,
+        leadContext: latestConversation.leadContext,
+      })
+    ) {
       try {
         const inboundSync = await syncWhatsAppMessageToLeadMemory({
           leadId: latestConversation.linkedLeadId,
