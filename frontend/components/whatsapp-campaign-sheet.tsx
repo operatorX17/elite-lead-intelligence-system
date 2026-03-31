@@ -347,12 +347,12 @@ export function WhatsAppCampaignSheet() {
           Campaigns
         </Button>
       </SheetTrigger>
-      <SheetContent className="w-[96vw] border-white/8 bg-[#0b1019] p-0 text-slate-100 sm:max-w-[1320px]" side="right">
+      <SheetContent className="w-[96vw] overflow-hidden border-white/8 bg-[#0b1019] p-0 text-slate-100 sm:max-w-[1320px]" side="right">
         <SheetHeader className="border-b border-white/6 px-6 py-4">
           <SheetTitle>WhatsApp outbound campaigns</SheetTitle>
         </SheetHeader>
-        <div className="grid h-[calc(100dvh-5rem)] gap-4 p-4 lg:grid-cols-[360px_minmax(0,1fr)]">
-          <div className="grid min-h-0 gap-4">
+        <div className="grid h-[calc(100dvh-5rem)] gap-4 overflow-hidden p-4 lg:grid-cols-[360px_minmax(0,1fr)]">
+          <div className="grid min-h-0 gap-4 overflow-y-auto pr-1">
             <Card className="border-white/8 bg-[#111722] text-slate-100">
               <CardHeader className="border-b border-white/6">
                 <CardTitle className="text-sm text-white">New campaign</CardTitle>
@@ -377,7 +377,7 @@ export function WhatsAppCampaignSheet() {
                       >
                         <div className="flex items-center justify-between gap-3">
                           <div className="font-medium text-sm text-white">{preset.label}</div>
-                          <Badge className="border border-white/10 bg-white/5 text-[10px] text-slate-300">
+                          <Badge className="border border-white/10 bg-white/5 text-[10px] text-slate-300 hover:bg-white/5 hover:text-slate-300">
                             {preset.recommendedFor}
                           </Badge>
                         </div>
@@ -406,10 +406,10 @@ export function WhatsAppCampaignSheet() {
                   {(["template", "freeform"] as const).map((style) => (
                     <Button
                       className={cn(
-                        "flex-1 border-white/10",
+                        "flex-1 border-white/10 hover:text-inherit",
                         messageStyle === style
-                          ? "bg-emerald-500/15 text-emerald-100"
-                          : "bg-white/5 text-slate-300"
+                          ? "bg-emerald-500/15 text-emerald-100 hover:bg-emerald-500/15 hover:text-emerald-100"
+                          : "bg-white/5 text-slate-300 hover:bg-white/10 hover:text-slate-100"
                       )}
                       key={style}
                       onClick={() => setMessageStyle(style)}
@@ -598,10 +598,10 @@ export function WhatsAppCampaignSheet() {
                           <div className="font-medium text-sm text-white">
                             {thread.companyName ?? thread.contactName}
                           </div>
-                          <Badge className="border border-white/10 bg-white/5 text-[10px] text-slate-300">
+                          <Badge className="border border-white/10 bg-white/5 text-[10px] text-slate-300 hover:bg-white/5 hover:text-slate-300">
                             {thread.stage}
                           </Badge>
-                          <Badge className={cn("border text-[10px]", statusTone(thread.priority))}>
+                          <Badge className={cn("border text-[10px] hover:text-inherit", statusTone(thread.priority))}>
                             {thread.priority}
                           </Badge>
                         </div>
@@ -624,7 +624,7 @@ export function WhatsAppCampaignSheet() {
               </CardContent>
             </Card>
 
-            <Card className="min-h-0 border-white/8 bg-[#111722] text-slate-100">
+            <Card className="min-h-0 overflow-hidden border-white/8 bg-[#111722] text-slate-100">
               <CardHeader className="border-b border-white/6">
                 <div className="flex items-center justify-between gap-3">
                   <CardTitle className="text-sm text-white">Campaigns</CardTitle>
@@ -658,7 +658,7 @@ export function WhatsAppCampaignSheet() {
                           <div className="truncate font-medium text-sm text-white">
                             {campaign.name}
                           </div>
-                          <Badge className={cn("border text-[10px]", statusTone(campaign.status))}>
+                          <Badge className={cn("border text-[10px] hover:text-inherit", statusTone(campaign.status))}>
                             {campaign.status}
                           </Badge>
                         </div>
@@ -690,14 +690,14 @@ export function WhatsAppCampaignSheet() {
                 <CardHeader className="border-b border-white/6">
                   <div className="flex flex-wrap items-center gap-2">
                     <CardTitle className="text-base text-white">{selectedCampaign.name}</CardTitle>
-                    <Badge className={cn("border", statusTone(selectedCampaign.status))}>
+                    <Badge className={cn("border hover:text-inherit", statusTone(selectedCampaign.status))}>
                       {selectedCampaign.status}
                     </Badge>
-                    <Badge className="border border-white/10 bg-white/5 text-slate-300">
+                    <Badge className="border border-white/10 bg-white/5 text-slate-300 hover:bg-white/5 hover:text-slate-300">
                       {selectedCampaign.messageStyle}
                     </Badge>
                     {selectedCampaign.providerTemplateId ? (
-                      <Badge className="border border-violet-300/15 bg-violet-500/10 text-violet-100">
+                      <Badge className="border border-violet-300/15 bg-violet-500/10 text-violet-100 hover:bg-violet-500/10 hover:text-violet-100">
                         Twilio template
                       </Badge>
                     ) : null}
@@ -720,7 +720,7 @@ export function WhatsAppCampaignSheet() {
                         <div className="font-medium text-sm text-emerald-50">
                           {selectedCampaignPreset.label}
                         </div>
-                        <Badge className="border border-emerald-200/10 bg-emerald-950/30 text-[10px] text-emerald-100">
+                        <Badge className="border border-emerald-200/10 bg-emerald-950/30 text-[10px] text-emerald-100 hover:bg-emerald-950/30 hover:text-emerald-100">
                           {selectedCampaignPreset.recommendedFor}
                         </Badge>
                       </div>
@@ -833,7 +833,7 @@ export function WhatsAppCampaignSheet() {
                     </div>
                   ) : null}
                 </CardHeader>
-                <CardContent className="min-h-0 p-0">
+                <CardContent className="min-h-0 overflow-hidden p-0">
                   <ScrollArea className="h-[calc(100dvh-14rem)]">
                     <div className="space-y-3 p-4">
                       {selectedCampaign.recipients.map((recipient) => (
@@ -843,12 +843,12 @@ export function WhatsAppCampaignSheet() {
                         >
                           <div className="flex flex-wrap items-center gap-2">
                             <div className="font-medium text-white">{recipient.contactName}</div>
-                            <Badge className={cn("border", statusTone(recipient.status))}>
+                            <Badge className={cn("border hover:text-inherit", statusTone(recipient.status))}>
                               {recipient.status}
                             </Badge>
                             <div className="text-xs text-slate-400">{recipient.contactPhone}</div>
                             {recipient.companyName ? (
-                              <Badge className="border border-white/10 bg-white/5 text-slate-300">
+                              <Badge className="border border-white/10 bg-white/5 text-slate-300 hover:bg-white/5 hover:text-slate-300">
                                 {recipient.companyName}
                               </Badge>
                             ) : null}
