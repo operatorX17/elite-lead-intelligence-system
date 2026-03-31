@@ -1,9 +1,14 @@
 "use client";
 
 import { formatDistanceToNowStrict } from "date-fns";
-import { Check, Pause, Play, RefreshCcw, Rocket, Send, ShieldCheck } from "lucide-react";
+import { Check, ChevronDown, Pause, Play, RefreshCcw, Rocket, Send, ShieldCheck } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -80,6 +85,7 @@ export function WhatsAppCampaignSheet() {
   const [approvingCampaignId, setApprovingCampaignId] = useState<string | null>(null);
   const [savingRecipientId, setSavingRecipientId] = useState<string | null>(null);
   const [analytics, setAnalytics] = useState<WhatsAppCampaignAnalytics | null>(null);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const selectedCampaign =
     campaigns.find((campaign) => campaign.id === selectedCampaignId) ?? null;
@@ -341,7 +347,7 @@ export function WhatsAppCampaignSheet() {
           Campaigns
         </Button>
       </SheetTrigger>
-      <SheetContent className="w-[96vw] border-white/8 bg-[#0b1019] p-0 text-slate-100 sm:max-w-[1280px]" side="right">
+      <SheetContent className="w-[96vw] border-white/8 bg-[#0b1019] p-0 text-slate-100 sm:max-w-[1320px]" side="right">
         <SheetHeader className="border-b border-white/6 px-6 py-4">
           <SheetTitle>WhatsApp outbound campaigns</SheetTitle>
         </SheetHeader>
@@ -354,7 +360,7 @@ export function WhatsAppCampaignSheet() {
               <CardContent className="grid gap-3 pt-4">
                 <div className="grid gap-2">
                   <div className="text-[11px] font-medium uppercase tracking-[0.22em] text-slate-500">
-                    Built-in angles
+                    1. Pick an angle
                   </div>
                   <div className="grid gap-2">
                     {WHATSAPP_CAMPAIGN_PRESETS.map((preset) => (
@@ -385,12 +391,17 @@ export function WhatsAppCampaignSheet() {
                     ))}
                   </div>
                 </div>
-                <Input
-                  className="border-white/10 bg-white/5 text-slate-100"
-                  onChange={(event) => setName(event.target.value)}
-                  placeholder="Campaign name"
-                  value={name}
-                />
+                <div className="grid gap-2">
+                  <div className="text-[11px] font-medium uppercase tracking-[0.22em] text-slate-500">
+                    2. Name and send mode
+                  </div>
+                  <Input
+                    className="border-white/10 bg-white/5 text-slate-100"
+                    onChange={(event) => setName(event.target.value)}
+                    placeholder="Campaign name"
+                    value={name}
+                  />
+                </div>
                 <div className="flex gap-2">
                   {(["template", "freeform"] as const).map((style) => (
                     <Button
@@ -431,60 +442,86 @@ export function WhatsAppCampaignSheet() {
                   placeholder="First message. Supports {{first_name}}, {{company_name}}, {{top_issue}}, {{city}}"
                   value={messageTemplate}
                 />
-                {messageStyle === "template" ? (
-                  <div className="grid gap-2 rounded-2xl border border-white/8 bg-white/[0.03] p-3">
-                    <div className="text-[11px] font-medium uppercase tracking-[0.22em] text-slate-500">
-                      Twilio template delivery
-                    </div>
-                    <Input
-                      className="border-white/10 bg-white/5 text-slate-100"
-                      onChange={(event) => setProviderTemplateId(event.target.value)}
-                      placeholder="Twilio ContentSid / HX..."
-                      value={providerTemplateId}
-                    />
-                    <Textarea
-                      className="min-h-[92px] border-white/10 bg-white/5 text-slate-100"
-                      onChange={(event) => setProviderTemplateVariablesText(event.target.value)}
-                      placeholder='{"1":"{{company_name}}","2":"{{first_name}}"}'
-                      value={providerTemplateVariablesText}
-                    />
-                    <div className="text-[11px] leading-5 text-slate-500">
-                      If ContentSid is set, Twilio will send the approved template and fill these variables per recipient. The message body above stays as your operator preview and fallback copy.
-                    </div>
+                <div className="grid gap-2">
+                  <div className="text-[11px] font-medium uppercase tracking-[0.22em] text-slate-500">
+                    3. Contacts
                   </div>
-                ) : null}
-                <Textarea
-                  className="min-h-[160px] border-white/10 bg-white/5 text-slate-100"
-                  onChange={(event) => setContactsText(event.target.value)}
-                  placeholder={"Contacts: one per line\nName | Phone | Company\nClinic owner | +9198xxxxxx | iSkin"}
-                  value={contactsText}
-                />
-                <div className="grid gap-2 sm:grid-cols-3">
-                  <Input
-                    className="border-white/10 bg-white/5 text-slate-100"
-                    onChange={(event) => setDailyLimit(event.target.value)}
-                    placeholder="Daily limit"
-                    value={dailyLimit}
-                  />
-                  <Input
-                    className="border-white/10 bg-white/5 text-slate-100"
-                    onChange={(event) => setWaveSize(event.target.value)}
-                    placeholder="Wave size"
-                    value={waveSize}
-                  />
-                  <Input
-                    className="border-white/10 bg-white/5 text-slate-100"
-                    onChange={(event) => setWaveGapMinutes(event.target.value)}
-                    placeholder="Gap (minutes)"
-                    value={waveGapMinutes}
+                  <Textarea
+                    className="min-h-[132px] border-white/10 bg-white/5 text-slate-100"
+                    onChange={(event) => setContactsText(event.target.value)}
+                    placeholder={"Contacts: one per line\nName | Phone | Company\nClinic owner | +9198xxxxxx | iSkin"}
+                    value={contactsText}
                   />
                 </div>
-                <Textarea
-                  className="min-h-[72px] border-white/10 bg-white/5 text-slate-100"
-                  onChange={(event) => setNotes(event.target.value)}
-                  placeholder="Internal notes"
-                  value={notes}
-                />
+                <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-3">
+                  <div className="text-[11px] font-medium uppercase tracking-[0.22em] text-slate-500">
+                    4. Send settings
+                  </div>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                    <Input
+                      className="border-white/10 bg-white/5 text-slate-100"
+                      onChange={(event) => setDailyLimit(event.target.value)}
+                      placeholder="Daily limit"
+                      value={dailyLimit}
+                    />
+                    <Input
+                      className="border-white/10 bg-white/5 text-slate-100"
+                      onChange={(event) => setWaveSize(event.target.value)}
+                      placeholder="Wave size"
+                      value={waveSize}
+                    />
+                    <Input
+                      className="border-white/10 bg-white/5 text-slate-100"
+                      onChange={(event) => setWaveGapMinutes(event.target.value)}
+                      placeholder="Gap (minutes)"
+                      value={waveGapMinutes}
+                    />
+                  </div>
+                </div>
+                <Collapsible onOpenChange={setAdvancedOpen} open={advancedOpen}>
+                  <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-3">
+                    <CollapsibleTrigger asChild>
+                      <Button
+                        className="w-full justify-between border-white/10 bg-white/5 text-slate-100 hover:bg-white/10"
+                        type="button"
+                        variant="outline"
+                      >
+                        <span>Advanced template + operator settings</span>
+                        <ChevronDown className={cn("size-4 transition-transform", advancedOpen && "rotate-180")} />
+                      </Button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="grid gap-3 pt-3">
+                      {messageStyle === "template" ? (
+                        <div className="grid gap-2 rounded-2xl border border-white/8 bg-white/[0.03] p-3">
+                          <div className="text-[11px] font-medium uppercase tracking-[0.22em] text-slate-500">
+                            Twilio template delivery
+                          </div>
+                          <Input
+                            className="border-white/10 bg-white/5 text-slate-100"
+                            onChange={(event) => setProviderTemplateId(event.target.value)}
+                            placeholder="Twilio ContentSid / HX..."
+                            value={providerTemplateId}
+                          />
+                          <Textarea
+                            className="min-h-[92px] border-white/10 bg-white/5 text-slate-100"
+                            onChange={(event) => setProviderTemplateVariablesText(event.target.value)}
+                            placeholder='{"1":"{{company_name}}","2":"{{first_name}}"}'
+                            value={providerTemplateVariablesText}
+                          />
+                          <div className="text-[11px] leading-5 text-slate-500">
+                            If ContentSid is set, Twilio will send the approved template and fill these variables per recipient. The message body above stays as your operator preview and fallback copy.
+                          </div>
+                        </div>
+                      ) : null}
+                      <Textarea
+                        className="min-h-[72px] border-white/10 bg-white/5 text-slate-100"
+                        onChange={(event) => setNotes(event.target.value)}
+                        placeholder="Internal notes"
+                        value={notes}
+                      />
+                    </CollapsibleContent>
+                  </div>
+                </Collapsible>
                 <Button
                   className="bg-emerald-500 text-slate-950 hover:bg-emerald-400"
                   disabled={isCreating}

@@ -746,7 +746,7 @@ export function WhatsAppInbox({
                     <div className="ml-auto flex flex-wrap items-center gap-2">
                       <Sheet onOpenChange={setAssistOpen} open={assistOpen}>
                         <SheetTrigger asChild>
-                          <Button className="border-white/10 bg-white/5 text-slate-100 hover:bg-white/10 lg:hidden" size="sm" variant="outline"><BrainCircuit className="size-4" />AI</Button>
+                          <Button className="border-white/10 bg-white/5 text-slate-100 hover:bg-white/10" size="sm" variant="outline"><BrainCircuit className="size-4" />AI assist</Button>
                         </SheetTrigger>
                         <SheetContent className="w-[92vw] border-white/8 bg-[#0b1019] p-4 text-slate-100" side="right">
                           <SheetHeader className="pb-4"><SheetTitle>AI assist</SheetTitle></SheetHeader>
@@ -783,8 +783,8 @@ export function WhatsAppInbox({
                     </div>
                   ) : null}
                 </CardHeader>
-                <CardContent className="grid min-h-0 flex-1 gap-4 p-3 lg:grid-cols-[minmax(0,1fr)_340px]">
-                  <div className="flex min-h-0 flex-col rounded-3xl border border-white/6 bg-[#0b1019]">
+                <CardContent className="min-h-0 flex-1 p-3">
+                  <div className="flex h-full min-h-0 flex-col rounded-3xl border border-white/6 bg-[#0b1019]">
                     <div className="flex items-center justify-between gap-3 border-b border-white/6 px-4 py-3 text-xs text-slate-400">
                       <span>{isLoadingThread ? "Syncing thread..." : publicConfig.outboundReady ? `Live WhatsApp send is enabled via ${publicConfig.providerLabel}` : `Replies are stored locally until ${publicConfig.providerLabel} is configured`}</span>
                       <span>{selectedConversation.status}</span>
@@ -809,7 +809,6 @@ export function WhatsAppInbox({
                       </div>
                     </div>
                   </div>
-                  <div className="hidden min-h-0 lg:block"><ScrollArea className="h-full pr-1">{assistCard}</ScrollArea></div>
                 </CardContent>
               </>
             ) : (
