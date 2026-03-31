@@ -5,12 +5,14 @@ import {
   updateWhatsAppConversationAgentState,
   updateWhatsAppConversationLeadLink,
   updateWhatsAppConversationMode,
+  updateWhatsAppConversationOpsState,
   updateWhatsAppConversationStatus,
   updateWhatsAppMessageStatusByProviderId,
   upsertWhatsAppConversationFromInbound,
 } from "@/lib/db/queries";
 import { markWhatsAppCampaignRecipientReplied } from "@/lib/db/whatsapp-campaigns";
 import { generateWhatsAppReplyPlan } from "@/lib/whatsapp/agent";
+import { deriveWhatsAppOpsStatePatch } from "@/lib/whatsapp/sales-playbook";
 import {
   resolveLeadContextForWhatsAppThread,
   syncWhatsAppMessageToLeadMemory,
@@ -23,6 +25,7 @@ import {
   verifyWhatsAppWebhookSignature,
 } from "@/lib/whatsapp/provider";
 import { isWhatsAppSandboxLead } from "@/lib/whatsapp/sandbox";
+import { normalizeWhatsAppOpsState } from "@/lib/whatsapp/state";
 import { waitUntil } from "@vercel/functions";
 
 const WHATSAPP_REPLY_BUDGET_MS = 8000;
@@ -91,6 +94,17 @@ async function processInboundWhatsAppMessage({
     const conversationWithState = await updateWhatsAppConversationAgentState({
       id: latestConversation.id,
       patch: replyPlan.nextState,
+    });
+
+    await updateWhatsAppConversationOpsState({
+      id: latestConversation.id,
+      patch: deriveWhatsAppOpsStatePatch({
+        currentOpsState: normalizeWhatsAppOpsState(latestConversation.opsState),
+        nextState: replyPlan.nextState,
+        leadContext:
+          conversationWithState?.leadContext ?? latestConversation.leadContext,
+        shouldRespondWithinMinutes: replyPlan.shouldSwitchToHuman,
+      }),
     });
 
     if (replyPlan.nextState.optOut) {

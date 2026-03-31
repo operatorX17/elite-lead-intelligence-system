@@ -1,6 +1,9 @@
 import type { WhatsAppConversation } from "@/lib/db/schema";
 import type { WhatsAppCampaignRecord } from "@/lib/whatsapp/campaigns";
-import { normalizeWhatsAppAgentState } from "@/lib/whatsapp/state";
+import {
+  normalizeWhatsAppAgentState,
+  normalizeWhatsAppOpsState,
+} from "@/lib/whatsapp/state";
 
 export type WhatsAppCampaignAnalytics = {
   overview: {
@@ -13,6 +16,10 @@ export type WhatsAppCampaignAnalytics = {
     replyRate: number;
     demoReadyThreads: number;
     hotThreads: number;
+    qualifiedThreads: number;
+    demoBookedThreads: number;
+    pilotWonThreads: number;
+    liveSenders: number;
   };
   hotThreads: Array<{
     conversationId: string;
@@ -89,6 +96,7 @@ export function computeWhatsAppCampaignAnalytics({
     .map((conversation) => ({
       conversation,
       state: normalizeWhatsAppAgentState(conversation.agentState),
+      opsState: normalizeWhatsAppOpsState(conversation.opsState),
     }))
     .filter(
       ({ state }) =>
@@ -105,6 +113,28 @@ export function computeWhatsAppCampaignAnalytics({
     ({ state }) =>
       isDemoReadyStage(state.stage) || state.requestedNextStep === "call"
   ).length;
+  const qualifiedThreads = conversations.filter((conversation) => {
+    const opsState = normalizeWhatsAppOpsState(conversation.opsState);
+    return ["qualified", "demo_booked", "demo_done", "pilot_won", "onboarding", "live"].includes(
+      opsState.commercialStatus
+    );
+  }).length;
+  const demoBookedThreads = conversations.filter((conversation) => {
+    const opsState = normalizeWhatsAppOpsState(conversation.opsState);
+    return ["demo_booked", "demo_done", "pilot_won", "onboarding", "live"].includes(
+      opsState.commercialStatus
+    );
+  }).length;
+  const pilotWonThreads = conversations.filter((conversation) => {
+    const opsState = normalizeWhatsAppOpsState(conversation.opsState);
+    return ["pilot_won", "onboarding", "live"].includes(
+      opsState.commercialStatus
+    );
+  }).length;
+  const liveSenders = conversations.filter((conversation) => {
+    const opsState = normalizeWhatsAppOpsState(conversation.opsState);
+    return opsState.senderStatus === "live";
+  }).length;
 
   return {
     overview: {
@@ -117,6 +147,10 @@ export function computeWhatsAppCampaignAnalytics({
       replyRate,
       demoReadyThreads,
       hotThreads: hotThreads.length,
+      qualifiedThreads,
+      demoBookedThreads,
+      pilotWonThreads,
+      liveSenders,
     },
     hotThreads: hotThreads.slice(0, 8).map(({ conversation, state }) => ({
       conversationId: conversation.id,

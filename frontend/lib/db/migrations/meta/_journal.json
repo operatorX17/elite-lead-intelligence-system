@@ -57,6 +57,34 @@
       "when": 1757362773211,
       "tag": "0007_flowery_ben_parker",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1774178065646,
+      "tag": "0008_past_sunspot",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1774291537240,
+      "tag": "0009_sloppy_brood",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1774294740405,
+      "tag": "0010_daffy_demogoblin",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1774959600000,
+      "tag": "0011_tidy_pilot_motion",
+      "breakpoints": true
     }
   ]
 }

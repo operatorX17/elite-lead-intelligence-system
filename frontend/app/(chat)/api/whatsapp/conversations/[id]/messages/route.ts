@@ -6,6 +6,7 @@ import {
   getWhatsAppMessagesByConversationId,
   updateWhatsAppConversationAgentState,
   updateWhatsAppConversationLeadLink,
+  updateWhatsAppConversationOpsState,
 } from "@/lib/db/queries";
 import {
   resolveLeadContextForWhatsAppThread,
@@ -97,6 +98,14 @@ export async function POST(
       lastSuggestedReply: null,
       nextBestMove: "Wait for the reply, then continue the diagnosis.",
       updatedAt: new Date().toISOString(),
+    },
+  });
+
+  await updateWhatsAppConversationOpsState({
+    id: conversation.id,
+    patch: {
+      owner: session.user.email ?? session.user.name ?? null,
+      nextActionAt: new Date(Date.now() + 24 * 60 * 60_000).toISOString(),
     },
   });
 

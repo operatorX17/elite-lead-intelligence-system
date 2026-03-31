@@ -56,6 +56,16 @@ export async function POST(request: Request) {
     assignedOperatorLabel: payload.data.startInHumanMode
       ? session.user.email ?? session.user.name ?? "Human operator"
       : null,
+    opsState: {
+      commercialStatus: "contacted",
+      senderStatus: "not_started",
+      owner: session.user.email ?? session.user.name ?? null,
+      nextActionAt: payload.data.startInHumanMode
+        ? new Date().toISOString()
+        : null,
+      niche: "Derm & Aesthetic",
+      contactChannel: "whatsapp",
+    },
   });
 
   try {

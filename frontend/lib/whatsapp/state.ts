@@ -20,6 +20,58 @@ export const WHATSAPP_THREAD_PRIORITIES = ["low", "medium", "high"] as const;
 export type WhatsAppThreadPriority =
   (typeof WHATSAPP_THREAD_PRIORITIES)[number];
 
+export const WHATSAPP_COMMERCIAL_STATUSES = [
+  "contacted",
+  "replied",
+  "qualified",
+  "demo_booked",
+  "demo_done",
+  "pilot_won",
+  "onboarding",
+  "live",
+] as const;
+
+export type WhatsAppCommercialStatus =
+  (typeof WHATSAPP_COMMERCIAL_STATUSES)[number];
+
+export const WHATSAPP_SENDER_STATUSES = [
+  "not_started",
+  "docs_requested",
+  "twilio_ready",
+  "whatsapp_ready",
+  "webhook_ready",
+  "live",
+] as const;
+
+export type WhatsAppSenderStatus = (typeof WHATSAPP_SENDER_STATUSES)[number];
+
+export type WhatsAppOnboardingChecklist = {
+  hoursCollected: boolean;
+  servicesCollected: boolean;
+  faqCollected: boolean;
+  escalationOwnerCollected: boolean;
+  routingChecklistAssigned: boolean;
+};
+
+export type WhatsAppOpsState = {
+  commercialStatus: WhatsAppCommercialStatus;
+  senderStatus: WhatsAppSenderStatus;
+  owner: string | null;
+  nextActionAt: string | null;
+  niche: string | null;
+  city: string | null;
+  contactChannel: string | null;
+  senderOnboardingPossible: boolean | null;
+  onboardingChecklist: WhatsAppOnboardingChecklist;
+};
+
+export type WhatsAppOpsStatePatch = Omit<
+  Partial<WhatsAppOpsState>,
+  "onboardingChecklist"
+> & {
+  onboardingChecklist?: Partial<WhatsAppOnboardingChecklist>;
+};
+
 export type WhatsAppLeadContactPoint = {
   name?: string | null;
   role?: string | null;
@@ -118,6 +170,27 @@ export const DEFAULT_WHATSAPP_AGENT_STATE: WhatsAppAgentState = {
   updatedAt: null,
 };
 
+export const DEFAULT_WHATSAPP_ONBOARDING_CHECKLIST: WhatsAppOnboardingChecklist =
+  {
+    hoursCollected: false,
+    servicesCollected: false,
+    faqCollected: false,
+    escalationOwnerCollected: false,
+    routingChecklistAssigned: false,
+  };
+
+export const DEFAULT_WHATSAPP_OPS_STATE: WhatsAppOpsState = {
+  commercialStatus: "contacted",
+  senderStatus: "not_started",
+  owner: null,
+  nextActionAt: null,
+  niche: null,
+  city: null,
+  contactChannel: "whatsapp",
+  senderOnboardingPossible: null,
+  onboardingChecklist: DEFAULT_WHATSAPP_ONBOARDING_CHECKLIST,
+};
+
 function dedupeStrings(values: string[] | undefined | null) {
   return Array.from(
     new Set(
@@ -165,6 +238,52 @@ function normalizeText(value: string | null | undefined) {
   return normalized ? normalized : null;
 }
 
+function normalizeCommercialStatus(
+  value: string | null | undefined
+): WhatsAppCommercialStatus {
+  if (
+    value &&
+    WHATSAPP_COMMERCIAL_STATUSES.includes(value as WhatsAppCommercialStatus)
+  ) {
+    return value as WhatsAppCommercialStatus;
+  }
+
+  return DEFAULT_WHATSAPP_OPS_STATE.commercialStatus;
+}
+
+function normalizeSenderStatus(
+  value: string | null | undefined
+): WhatsAppSenderStatus {
+  if (
+    value &&
+    WHATSAPP_SENDER_STATUSES.includes(value as WhatsAppSenderStatus)
+  ) {
+    return value as WhatsAppSenderStatus;
+  }
+
+  return DEFAULT_WHATSAPP_OPS_STATE.senderStatus;
+}
+
+function normalizeNullableBoolean(value: boolean | null | undefined) {
+  if (value === true || value === false) {
+    return value;
+  }
+
+  return null;
+}
+
+function normalizeOnboardingChecklist(
+  value?: Partial<WhatsAppOnboardingChecklist> | null
+): WhatsAppOnboardingChecklist {
+  return {
+    hoursCollected: Boolean(value?.hoursCollected),
+    servicesCollected: Boolean(value?.servicesCollected),
+    faqCollected: Boolean(value?.faqCollected),
+    escalationOwnerCollected: Boolean(value?.escalationOwnerCollected),
+    routingChecklistAssigned: Boolean(value?.routingChecklistAssigned),
+  };
+}
+
 export function normalizeWhatsAppAgentState(
   value?: Partial<WhatsAppAgentState> | null
 ): WhatsAppAgentState {
@@ -191,12 +310,45 @@ export function normalizeWhatsAppAgentState(
   };
 }
 
+export function normalizeWhatsAppOpsState(
+  value?: Partial<WhatsAppOpsState> | null
+): WhatsAppOpsState {
+  return {
+    commercialStatus: normalizeCommercialStatus(value?.commercialStatus),
+    senderStatus: normalizeSenderStatus(value?.senderStatus),
+    owner: normalizeText(value?.owner),
+    nextActionAt: normalizeText(value?.nextActionAt),
+    niche: normalizeText(value?.niche),
+    city: normalizeText(value?.city),
+    contactChannel:
+      normalizeText(value?.contactChannel) ??
+      DEFAULT_WHATSAPP_OPS_STATE.contactChannel,
+    senderOnboardingPossible: normalizeNullableBoolean(
+      value?.senderOnboardingPossible
+    ),
+    onboardingChecklist: normalizeOnboardingChecklist(
+      value?.onboardingChecklist
+    ),
+  };
+}
+
 export function createWhatsAppAgentState(
   overrides?: Partial<WhatsAppAgentState>
 ) {
   return normalizeWhatsAppAgentState({
     ...DEFAULT_WHATSAPP_AGENT_STATE,
     ...overrides,
+  });
+}
+
+export function createWhatsAppOpsState(overrides?: WhatsAppOpsStatePatch) {
+  return normalizeWhatsAppOpsState({
+    ...DEFAULT_WHATSAPP_OPS_STATE,
+    ...overrides,
+    onboardingChecklist: {
+      ...DEFAULT_WHATSAPP_ONBOARDING_CHECKLIST,
+      ...(overrides?.onboardingChecklist ?? {}),
+    },
   });
 }
 
@@ -215,5 +367,21 @@ export function mergeWhatsAppAgentState(
       ...currentState.objectionCategories,
       ...(patch.objectionCategories ?? []),
     ],
+  });
+}
+
+export function mergeWhatsAppOpsState(
+  current: Partial<WhatsAppOpsState> | null | undefined,
+  patch: WhatsAppOpsStatePatch
+) {
+  const currentState = normalizeWhatsAppOpsState(current);
+
+  return normalizeWhatsAppOpsState({
+    ...currentState,
+    ...patch,
+    onboardingChecklist: {
+      ...currentState.onboardingChecklist,
+      ...(patch.onboardingChecklist ?? {}),
+    },
   });
 }

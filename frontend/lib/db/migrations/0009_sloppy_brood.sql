@@ -1,0 +1,1 @@
+ALTER TABLE "WhatsAppConversation" ADD COLUMN "agentState" jsonb DEFAULT '{}'::jsonb NOT NULL;

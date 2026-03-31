@@ -1,6 +1,7 @@
 import type {
   WhatsAppAgentState,
   WhatsAppLinkedLeadContext,
+  WhatsAppOpsState,
 } from "@/lib/whatsapp/state";
 
 function normalizePhoneDigits(value: string) {
@@ -107,6 +108,32 @@ export function buildWhatsAppSandboxAgentState({
     paymentInterest: false,
     optOut: false,
     updatedAt: new Date().toISOString(),
+  };
+}
+
+export function buildWhatsAppSandboxOpsState({
+  geo,
+  owner,
+}: {
+  geo?: string | null;
+  owner?: string | null;
+}): Partial<WhatsAppOpsState> {
+  return {
+    commercialStatus: "qualified",
+    senderStatus: "docs_requested",
+    owner: String(owner ?? "").trim() || null,
+    nextActionAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+    niche: "Derm & Aesthetic",
+    city: String(geo ?? "").trim() || "Bangalore",
+    contactChannel: "whatsapp",
+    senderOnboardingPossible: true,
+    onboardingChecklist: {
+      hoursCollected: false,
+      servicesCollected: false,
+      faqCollected: false,
+      escalationOwnerCollected: false,
+      routingChecklistAssigned: false,
+    },
   };
 }
 

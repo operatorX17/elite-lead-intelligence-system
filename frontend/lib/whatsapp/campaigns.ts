@@ -1,4 +1,7 @@
-import type { WhatsAppAgentState } from "@/lib/whatsapp/state";
+import type {
+  WhatsAppAgentState,
+  WhatsAppOpsState,
+} from "@/lib/whatsapp/state";
 
 export const WHATSAPP_CAMPAIGN_STATUSES = [
   "draft",
@@ -52,6 +55,18 @@ export type WhatsAppCampaignPreset = {
   nextBestMove: string;
   summary: string;
 };
+
+export const FOUNDER_LED_PILOT_MOTION = {
+  niche: "Derm & Aesthetic",
+  pitch:
+    "We recover WhatsApp enquiries that drop before booking for Derm and Aesthetic clinics.",
+  demoCta:
+    "It’s easier to show than explain — takes 3 minutes. Want a quick walkthrough?",
+  paidPilot:
+    "Paid pilot: ₹50k–₹75k, credited 100% toward setup if they continue.",
+  rollout:
+    "After pilot: ₹1.5L setup + ₹30k/month baseline. No free trial. If the agreed booking KPI misses in the first 30 days after go-live, we keep working free until it hits.",
+} as const;
 
 export type WhatsAppCampaignRecipientRecord = {
   id: string;
@@ -123,25 +138,6 @@ export const WHATSAPP_CAMPAIGN_PRESETS: WhatsAppCampaignPreset[] = [
       "If they reply, quantify weekly WhatsApp enquiries, confirm drop-off, then move to a quick demo.",
     summary:
       "Outbound clinic SDR opener focused on WhatsApp enquiries disappearing before the booking is completed.",
-  },
-  {
-    id: "call_only_booking_gap",
-    label: "Call-only booking gap",
-    angle: "patients pushed back to calling",
-    recommendedFor: "clinics still forcing calls to book",
-    description:
-      "Highlights friction when patients must call instead of booking smoothly on WhatsApp.",
-    templateName: "call_only_booking_gap",
-    messageStyle: "template",
-    firstMessage:
-      "Quick one - is booking at {{company_name}} still mostly handled by phone call once someone enquires, or can patients actually get all the way to a confirmed slot on WhatsApp?",
-    suggestedFollowUp:
-      "When staff are busy, do some of those chats cool off before the call happens?",
-    painPoints: ["booking_gap", "staff_dependency", "whatsapp_gap"],
-    nextBestMove:
-      "If they engage, stay on booking friction, staff handoff, and how many chats stall before a slot is confirmed.",
-    summary:
-      "Outbound clinic SDR opener focused on call-only booking friction and drop-off before appointment confirmation.",
   },
   {
     id: "follow_up_recovery",
@@ -330,6 +326,31 @@ export function buildOutreachCampaignStatePatch({
     lastIntent: "outbound_whatsapp",
     requestedNextStep: null,
     updatedAt: new Date().toISOString(),
+  };
+}
+
+export function buildOutreachCampaignOpsPatch({
+  owner,
+  companyName,
+  city,
+  contactChannel,
+}: {
+  owner?: string | null;
+  companyName?: string | null;
+  city?: string | null;
+  contactChannel?: string | null;
+}): Partial<WhatsAppOpsState> {
+  const now = Date.now();
+
+  return {
+    commercialStatus: "contacted",
+    senderStatus: "not_started",
+    owner: String(owner ?? "").trim() || null,
+    nextActionAt: new Date(now + 24 * 60 * 60_000).toISOString(),
+    niche: FOUNDER_LED_PILOT_MOTION.niche,
+    city: String(city ?? "").trim() || null,
+    contactChannel: String(contactChannel ?? "").trim() || "whatsapp",
+    senderOnboardingPossible: null,
   };
 }
 

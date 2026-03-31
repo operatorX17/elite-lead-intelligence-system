@@ -1,15 +1,23 @@
-import type { InferSelectModel } from "drizzle-orm";
+import { sql, type InferSelectModel } from "drizzle-orm";
 import {
   boolean,
   foreignKey,
+  integer,
   json,
+  jsonb,
   pgTable,
   primaryKey,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
   varchar,
 } from "drizzle-orm/pg-core";
+import type {
+  WhatsAppAgentState,
+  WhatsAppLinkedLeadContext,
+  WhatsAppOpsState,
+} from "@/lib/whatsapp/state";
 
 export const user = pgTable("User", {
   id: uuid("id").primaryKey().notNull().defaultRandom(),
@@ -23,6 +31,7 @@ export const chat = pgTable("Chat", {
   id: uuid("id").primaryKey().notNull().defaultRandom(),
   createdAt: timestamp("createdAt").notNull(),
   title: text("title").notNull(),
+  lastContext: jsonb("lastContext"),
   userId: uuid("userId")
     .notNull()
     .references(() => user.id),
@@ -182,3 +191,78 @@ export const stream = pgTable(
 );
 
 export type Stream = InferSelectModel<typeof stream>;
+
+export const whatsappConversation = pgTable(
+  "WhatsAppConversation",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    createdAt: timestamp("createdAt").notNull(),
+    updatedAt: timestamp("updatedAt").notNull(),
+    contactName: text("contactName").notNull(),
+    contactPhone: varchar("contactPhone", { length: 32 }).notNull(),
+    mode: varchar("mode", { enum: ["bot", "human"] })
+      .notNull()
+      .default("bot"),
+    status: varchar("status", { enum: ["open", "attention", "closed"] })
+      .notNull()
+      .default("open"),
+    unreadCount: integer("unreadCount").notNull().default(0),
+    lastMessagePreview: text("lastMessagePreview").notNull().default(""),
+    lastMessageAt: timestamp("lastMessageAt").notNull(),
+    source: varchar("source", { enum: ["manual", "webhook"] })
+      .notNull()
+      .default("manual"),
+    assignedOperatorLabel: text("assignedOperatorLabel"),
+    linkedLeadId: text("linkedLeadId"),
+    backendConversationId: text("backendConversationId"),
+    leadContext: jsonb("leadContext").$type<WhatsAppLinkedLeadContext>(),
+    opsState: jsonb("opsState")
+      .$type<WhatsAppOpsState>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    agentState: jsonb("agentState")
+      .$type<WhatsAppAgentState>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+  },
+  (table) => ({
+    contactPhoneIdx: uniqueIndex("whatsapp_contact_phone_idx").on(
+      table.contactPhone
+    ),
+  })
+);
+
+export type WhatsAppConversation = InferSelectModel<typeof whatsappConversation>;
+
+export const whatsappMessage = pgTable("WhatsAppMessage", {
+  id: uuid("id").primaryKey().notNull().defaultRandom(),
+  conversationId: uuid("conversationId")
+    .notNull()
+    .references(() => whatsappConversation.id),
+  direction: varchar("direction", { enum: ["incoming", "outgoing"] }).notNull(),
+  authorType: varchar("authorType", {
+    enum: ["contact", "bot", "human", "system"],
+  })
+    .notNull()
+    .default("contact"),
+  authorLabel: text("authorLabel").notNull(),
+  body: text("body").notNull(),
+  providerMessageId: text("providerMessageId"),
+  status: varchar("status", {
+    enum: [
+      "received",
+      "queued",
+      "sent",
+      "delivered",
+      "read",
+      "failed",
+      "draft",
+    ],
+  })
+    .notNull()
+    .default("draft"),
+  errorText: text("errorText"),
+  createdAt: timestamp("createdAt").notNull(),
+});
+
+export type WhatsAppMessage = InferSelectModel<typeof whatsappMessage>;

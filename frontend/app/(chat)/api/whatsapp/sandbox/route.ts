@@ -7,10 +7,12 @@ import {
   getWhatsAppMessagesByConversationId,
   updateWhatsAppConversationAgentState,
   updateWhatsAppConversationLeadLink,
+  updateWhatsAppConversationOpsState,
 } from "@/lib/db/queries";
 import {
   buildWhatsAppSandboxAgentState,
   buildWhatsAppSandboxLeadContext,
+  buildWhatsAppSandboxOpsState,
 } from "@/lib/whatsapp/sandbox";
 
 const createSandboxSchema = z.object({
@@ -56,6 +58,10 @@ export async function POST(request: Request) {
       contactPhone,
       mode: "bot",
       source: "manual",
+      opsState: buildWhatsAppSandboxOpsState({
+        geo,
+        owner: session.user.email ?? session.user.name ?? null,
+      }),
     }));
 
   const leadContext = buildWhatsAppSandboxLeadContext({
@@ -73,6 +79,15 @@ export async function POST(request: Request) {
       linkedLeadId: leadContext.leadId,
       backendConversationId: null,
       leadContext,
+    })) || conversation;
+
+  conversation =
+    (await updateWhatsAppConversationOpsState({
+      id: conversation.id,
+      patch: buildWhatsAppSandboxOpsState({
+        geo,
+        owner: session.user.email ?? session.user.name ?? null,
+      }),
     })) || conversation;
 
   conversation =

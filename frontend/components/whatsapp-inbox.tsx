@@ -36,6 +36,13 @@ import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Sheet,
   SheetContent,
   SheetHeader,
@@ -49,7 +56,14 @@ import type {
   WhatsAppMessage,
 } from "@/lib/db/schema";
 import type { WhatsAppPublicConfig } from "@/lib/whatsapp/config";
-import { normalizeWhatsAppAgentState } from "@/lib/whatsapp/state";
+import {
+  WHATSAPP_COMMERCIAL_STATUSES,
+  WHATSAPP_SENDER_STATUSES,
+  type WhatsAppOpsState,
+  type WhatsAppOpsStatePatch,
+  normalizeWhatsAppAgentState,
+  normalizeWhatsAppOpsState,
+} from "@/lib/whatsapp/state";
 
 type SerializedConversation = Omit<
   WhatsAppConversation,
@@ -66,6 +80,7 @@ function hydrateConversation(input: SerializedConversation): WhatsAppConversatio
     createdAt: new Date(input.createdAt),
     updatedAt: new Date(input.updatedAt),
     lastMessageAt: new Date(input.lastMessageAt),
+    opsState: normalizeWhatsAppOpsState(input.opsState),
     agentState: normalizeWhatsAppAgentState(input.agentState),
   };
 }
@@ -76,6 +91,23 @@ function hydrateMessage(input: SerializedMessage): WhatsAppMessage {
 
 function formatThreadTime(date: Date) {
   return isToday(date) ? format(date, "p") : format(date, "MMM d");
+}
+
+function humanizeStatusLabel(value: string) {
+  return value.replace(/_/g, " ");
+}
+
+function formatDateTimeLocalValue(value: string | null | undefined) {
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return format(date, "yyyy-MM-dd'T'HH:mm");
 }
 
 function apiTone(priority: string) {
@@ -154,6 +186,7 @@ export function WhatsAppInbox({
     : [];
   const selectedState = normalizeWhatsAppAgentState(selectedConversation?.agentState);
   const selectedLeadContext = selectedConversation?.leadContext ?? null;
+  const selectedOpsState = normalizeWhatsAppOpsState(selectedConversation?.opsState);
   const selectedSummary =
     selectedState.summary ||
     (selectedLeadContext
@@ -405,6 +438,26 @@ export function WhatsAppInbox({
     }
   }
 
+  async function handleUpdateOps(patch: WhatsAppOpsStatePatch) {
+    if (!selectedConversation) return;
+
+    try {
+      const payload = await apiRequest<{ conversation: SerializedConversation }>(
+        `/api/whatsapp/conversations/${selectedConversation.id}/ops`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(patch),
+        }
+      );
+      upsertConversation(hydrateConversation(payload.conversation));
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to update thread ops"
+      );
+    }
+  }
+
   const threadList = (
     <Card className="min-h-0 border-white/8 bg-[#111722] text-slate-100">
       <CardHeader className="gap-3 border-b border-white/6">
@@ -517,10 +570,11 @@ export function WhatsAppInbox({
       </CardHeader>
       <CardContent className="min-h-0 px-0 pb-0">
         <ScrollArea className="h-[calc(100dvh-22rem)]">
-          <div className="space-y-2 px-3 pb-3">
-            {filteredConversations.map((conversation) => {
-              const state = normalizeWhatsAppAgentState(conversation.agentState);
-              return (
+            <div className="space-y-2 px-3 pb-3">
+              {filteredConversations.map((conversation) => {
+                const state = normalizeWhatsAppAgentState(conversation.agentState);
+                const opsState = normalizeWhatsAppOpsState(conversation.opsState);
+                return (
                 <button className={cn("w-full rounded-2xl border px-3 py-3 text-left transition", selectedConversationId === conversation.id ? "border-emerald-400/20 bg-emerald-500/10" : "border-white/6 bg-white/4 hover:bg-white/8")} key={conversation.id} onClick={() => { startTransition(() => { setSelectedConversationId(conversation.id); setThreadsOpen(false); }); }} type="button">
                   <div className="flex items-start gap-3">
                     <Avatar className="size-11 border border-white/10">
@@ -532,10 +586,11 @@ export function WhatsAppInbox({
                         <Badge className={cn("border text-[10px]", apiTone(state.priority))}>{state.priority}</Badge>
                         {conversation.unreadCount > 0 ? <Badge className="ml-auto bg-emerald-500 text-slate-950">{conversation.unreadCount}</Badge> : null}
                       </div>
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        <Badge className="border border-white/10 bg-white/5 text-[10px] text-slate-300">{state.stage.toLowerCase().replace(/_/g, " ")}</Badge>
-                        <Badge className="border border-white/10 bg-white/5 text-[10px] text-slate-300">{conversation.mode === "bot" ? "AI active" : "Human active"}</Badge>
-                      </div>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <Badge className="border border-white/10 bg-white/5 text-[10px] text-slate-300">{state.stage.toLowerCase().replace(/_/g, " ")}</Badge>
+                          <Badge className="border border-white/10 bg-white/5 text-[10px] text-slate-300">{conversation.mode === "bot" ? "AI active" : "Human active"}</Badge>
+                          <Badge className="border border-white/10 bg-white/5 text-[10px] text-slate-300">{humanizeStatusLabel(opsState.commercialStatus)}</Badge>
+                        </div>
                       <div className="mt-2 truncate text-xs text-slate-400">{state.summary || conversation.lastMessagePreview || conversation.contactPhone}</div>
                       <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500">
                         <span>{conversation.contactPhone}</span>
@@ -561,9 +616,195 @@ export function WhatsAppInbox({
           <CardTitle className="text-sm text-white">AI assist</CardTitle>
         </div>
         <div className="text-xs text-slate-400">Stage-aware sales memory and reply guidance for this thread</div>
-      </CardHeader>
-      <CardContent className="space-y-4 pt-4">
-        <div className="grid gap-3 sm:grid-cols-2">
+        </CardHeader>
+        <CardContent className="space-y-4 pt-4">
+          <div className="rounded-2xl border border-white/8 bg-white/5 p-3">
+            <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">
+              Pilot ops
+            </div>
+            <div className="mt-3 grid gap-3">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="grid gap-2">
+                  <div className="text-xs text-slate-400">Commercial status</div>
+                  <Select
+                    onValueChange={(value) =>
+                      void handleUpdateOps({
+                        commercialStatus:
+                          value as WhatsAppOpsState["commercialStatus"],
+                      })
+                    }
+                    value={selectedOpsState.commercialStatus}
+                  >
+                    <SelectTrigger className="border-white/10 bg-[#0b1019] text-slate-100">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="border-white/10 bg-[#111722] text-slate-100">
+                      {WHATSAPP_COMMERCIAL_STATUSES.map((status) => (
+                        <SelectItem
+                          className="focus:bg-white/10 focus:text-slate-100"
+                          key={status}
+                          value={status}
+                        >
+                          {humanizeStatusLabel(status)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-2">
+                  <div className="text-xs text-slate-400">Sender status</div>
+                  <Select
+                    onValueChange={(value) =>
+                      void handleUpdateOps({
+                        senderStatus: value as WhatsAppOpsState["senderStatus"],
+                      })
+                    }
+                    value={selectedOpsState.senderStatus}
+                  >
+                    <SelectTrigger className="border-white/10 bg-[#0b1019] text-slate-100">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="border-white/10 bg-[#111722] text-slate-100">
+                      {WHATSAPP_SENDER_STATUSES.map((status) => (
+                        <SelectItem
+                          className="focus:bg-white/10 focus:text-slate-100"
+                          key={status}
+                          value={status}
+                        >
+                          {humanizeStatusLabel(status)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="grid gap-2">
+                  <div className="text-xs text-slate-400">Owner</div>
+                  <Input
+                    className="border-white/10 bg-[#0b1019] text-slate-100"
+                    defaultValue={selectedOpsState.owner ?? ""}
+                    key={`${selectedConversation.id}-owner-${selectedOpsState.owner ?? ""}`}
+                    onBlur={(event) => {
+                      const nextValue = event.target.value.trim() || null;
+                      if (nextValue !== (selectedOpsState.owner ?? null)) {
+                        void handleUpdateOps({ owner: nextValue });
+                      }
+                    }}
+                    placeholder="Founder / operator"
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <div className="text-xs text-slate-400">Next action</div>
+                  <Input
+                    className="border-white/10 bg-[#0b1019] text-slate-100"
+                    defaultValue={formatDateTimeLocalValue(selectedOpsState.nextActionAt)}
+                    key={`${selectedConversation.id}-next-${selectedOpsState.nextActionAt ?? ""}`}
+                    onBlur={(event) => {
+                      const nextValue = event.target.value
+                        ? new Date(event.target.value).toISOString()
+                        : null;
+                      if (nextValue !== (selectedOpsState.nextActionAt ?? null)) {
+                        void handleUpdateOps({ nextActionAt: nextValue });
+                      }
+                    }}
+                    type="datetime-local"
+                  />
+                </div>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="grid gap-2">
+                  <div className="text-xs text-slate-400">Niche</div>
+                  <Input
+                    className="border-white/10 bg-[#0b1019] text-slate-100"
+                    defaultValue={selectedOpsState.niche ?? ""}
+                    key={`${selectedConversation.id}-niche-${selectedOpsState.niche ?? ""}`}
+                    onBlur={(event) => {
+                      const nextValue = event.target.value.trim() || null;
+                      if (nextValue !== (selectedOpsState.niche ?? null)) {
+                        void handleUpdateOps({ niche: nextValue });
+                      }
+                    }}
+                    placeholder="Derm & Aesthetic"
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <div className="text-xs text-slate-400">Sender onboarding possible</div>
+                  <Select
+                    onValueChange={(value) =>
+                      void handleUpdateOps({
+                        senderOnboardingPossible:
+                          value === "yes" ? true : value === "no" ? false : null,
+                      })
+                    }
+                    value={
+                      selectedOpsState.senderOnboardingPossible === true
+                        ? "yes"
+                        : selectedOpsState.senderOnboardingPossible === false
+                          ? "no"
+                          : "unknown"
+                    }
+                  >
+                    <SelectTrigger className="border-white/10 bg-[#0b1019] text-slate-100">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="border-white/10 bg-[#111722] text-slate-100">
+                      <SelectItem className="focus:bg-white/10 focus:text-slate-100" value="unknown">
+                        unknown
+                      </SelectItem>
+                      <SelectItem className="focus:bg-white/10 focus:text-slate-100" value="yes">
+                        yes
+                      </SelectItem>
+                      <SelectItem className="focus:bg-white/10 focus:text-slate-100" value="no">
+                        no
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="grid gap-2">
+                <div className="text-xs text-slate-400">
+                  Onboarding checklist
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {[
+                    ["hoursCollected", "Clinic hours collected"],
+                    ["servicesCollected", "Services collected"],
+                    ["faqCollected", "FAQ collected"],
+                    ["escalationOwnerCollected", "Escalation owner collected"],
+                    ["routingChecklistAssigned", "Sender + webhook + routing assigned"],
+                  ].map(([key, label]) => (
+                    <label
+                      className="flex items-center gap-2 rounded-2xl border border-white/8 bg-[#0b1019] px-3 py-2 text-sm text-slate-200"
+                      key={key}
+                    >
+                      <input
+                        checked={
+                          selectedOpsState.onboardingChecklist[
+                            key as keyof WhatsAppOpsState["onboardingChecklist"]
+                          ]
+                        }
+                        className="size-4 accent-emerald-500"
+                        onChange={(event) =>
+                          void handleUpdateOps({
+                            onboardingChecklist: {
+                              [key]: event.target.checked,
+                            } as Partial<WhatsAppOpsState["onboardingChecklist"]>,
+                          })
+                        }
+                        type="checkbox"
+                      />
+                      <span>{label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div className="rounded-2xl border border-dashed border-white/10 p-3 text-xs leading-5 text-slate-400">
+                Clean pilot rule: a thread is only truly ready for `pilot won` when the clinic says yes, sender onboarding is in motion, and the onboarding checklist is being filled.
+              </div>
+            </div>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
           <div className="rounded-2xl border border-white/8 bg-white/5 p-3"><div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Stage</div><div className="mt-2 text-sm text-white">{selectedState.stage.toLowerCase().replace(/_/g, " ")}</div></div>
           <div className="rounded-2xl border border-white/8 bg-white/5 p-3"><div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Priority</div><div className="mt-2 text-sm text-white">{selectedState.priority}</div></div>
         </div>
@@ -573,7 +814,35 @@ export function WhatsAppInbox({
         </div>
         <div className="rounded-2xl border border-white/8 bg-white/5 p-3 text-sm leading-6 text-slate-200">{selectedSummary}</div>
         <div className="rounded-2xl border border-white/8 bg-white/5 p-3"><div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Next best move</div><div className="mt-2 text-sm leading-6 text-slate-200">{selectedState.nextBestMove || "Keep the next reply short, calm, and diagnostic."}</div></div>
-        {selectedLeadContext ? (
+                    <div className="grid gap-3 md:grid-cols-4">
+                      <div className="rounded-2xl border border-white/8 bg-[#0d1420] p-3">
+                        <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Owner</div>
+                        <div className="mt-2 text-sm text-white">{selectedOpsState.owner || "Unassigned"}</div>
+                      </div>
+                      <div className="rounded-2xl border border-white/8 bg-[#0d1420] p-3">
+                        <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Next action</div>
+                        <div className="mt-2 text-sm text-white">
+                          {selectedOpsState.nextActionAt
+                            ? formatDistanceToNowStrict(
+                                new Date(selectedOpsState.nextActionAt)
+                              )
+                            : "Not scheduled"}
+                        </div>
+                      </div>
+                      <div className="rounded-2xl border border-white/8 bg-[#0d1420] p-3">
+                        <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Niche</div>
+                        <div className="mt-2 text-sm text-white">
+                          {selectedOpsState.niche || "Not set"}
+                        </div>
+                      </div>
+                      <div className="rounded-2xl border border-white/8 bg-[#0d1420] p-3">
+                        <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Contact path</div>
+                        <div className="mt-2 text-sm text-white">
+                          {selectedOpsState.contactChannel || "whatsapp"}
+                        </div>
+                      </div>
+                    </div>
+                    {selectedLeadContext ? (
           <div className="rounded-2xl border border-white/8 bg-white/5 p-3">
             <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Linked clinic</div>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
@@ -757,12 +1026,14 @@ export function WhatsAppInbox({
                       <Button className="border-white/10 bg-white/5 text-slate-100 hover:bg-white/10" onClick={() => void handleToggleMode()} variant="outline">{selectedConversation.mode === "bot" ? "Take over" : "Return to AI"}</Button>
                     </div>
                   </div>
-                  <div className="grid gap-3 md:grid-cols-4">
-                    <div className="rounded-2xl border border-white/8 bg-white/5 p-3"><div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Stage</div><div className="mt-2 text-sm text-white">{selectedState.stage.toLowerCase().replace(/_/g, " ")}</div></div>
-                    <div className="rounded-2xl border border-white/8 bg-white/5 p-3"><div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Confidence</div><div className="mt-2 text-sm text-white">{Math.round(selectedState.confidence * 100)}%</div></div>
-                    <div className="rounded-2xl border border-white/8 bg-white/5 p-3"><div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Priority</div><div className="mt-2 text-sm text-white">{selectedState.priority}</div></div>
-                    <div className="rounded-2xl border border-white/8 bg-white/5 p-3"><div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Updated</div><div className="mt-2 text-sm text-white">{formatDistanceToNowStrict(selectedConversation.updatedAt)} ago</div></div>
-                  </div>
+                    <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+                      <div className="rounded-2xl border border-white/8 bg-white/5 p-3"><div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Stage</div><div className="mt-2 text-sm text-white">{selectedState.stage.toLowerCase().replace(/_/g, " ")}</div></div>
+                      <div className="rounded-2xl border border-white/8 bg-white/5 p-3"><div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Commercial</div><div className="mt-2 text-sm text-white">{humanizeStatusLabel(selectedOpsState.commercialStatus)}</div></div>
+                      <div className="rounded-2xl border border-white/8 bg-white/5 p-3"><div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Sender</div><div className="mt-2 text-sm text-white">{humanizeStatusLabel(selectedOpsState.senderStatus)}</div></div>
+                      <div className="rounded-2xl border border-white/8 bg-white/5 p-3"><div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Confidence</div><div className="mt-2 text-sm text-white">{Math.round(selectedState.confidence * 100)}%</div></div>
+                      <div className="rounded-2xl border border-white/8 bg-white/5 p-3"><div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Priority</div><div className="mt-2 text-sm text-white">{selectedState.priority}</div></div>
+                      <div className="rounded-2xl border border-white/8 bg-white/5 p-3"><div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Updated</div><div className="mt-2 text-sm text-white">{formatDistanceToNowStrict(selectedConversation.updatedAt)} ago</div></div>
+                    </div>
                   {selectedLeadContext ? (
                     <div className="grid gap-3 md:grid-cols-3">
                       <div className="rounded-2xl border border-white/8 bg-[#0d1420] p-3">

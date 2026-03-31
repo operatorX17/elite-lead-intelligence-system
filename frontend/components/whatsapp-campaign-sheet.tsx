@@ -20,6 +20,7 @@ import { cn } from "@/lib/utils";
 import type { WhatsAppCampaignAnalytics } from "@/lib/whatsapp/campaign-analytics";
 import {
   DEFAULT_WHATSAPP_CAMPAIGN_PRESET,
+  FOUNDER_LED_PILOT_MOTION,
   WHATSAPP_CAMPAIGN_PRESETS,
   getWhatsAppCampaignPresetById,
   stringifyCampaignTemplateVariables,
@@ -73,11 +74,11 @@ export function WhatsAppCampaignSheet() {
   const [providerTemplateId, setProviderTemplateId] = useState("");
   const [providerTemplateVariablesText, setProviderTemplateVariablesText] =
     useState('{\n  "1": "{{company_name}}"\n}');
-  const [dailyLimit, setDailyLimit] = useState("20");
+  const [dailyLimit, setDailyLimit] = useState("30");
   const [waveSize, setWaveSize] = useState("10");
   const [waveGapMinutes, setWaveGapMinutes] = useState("30");
   const [notes, setNotes] = useState(
-    `Angle: ${DEFAULT_WHATSAPP_CAMPAIGN_PRESET.angle}\nUse: ${DEFAULT_WHATSAPP_CAMPAIGN_PRESET.recommendedFor}\nFollow-up: ${DEFAULT_WHATSAPP_CAMPAIGN_PRESET.suggestedFollowUp}`
+    `Motion: ${FOUNDER_LED_PILOT_MOTION.niche}\nPitch: ${FOUNDER_LED_PILOT_MOTION.pitch}\nOffer: ${FOUNDER_LED_PILOT_MOTION.paidPilot}\nFollow-up: ${DEFAULT_WHATSAPP_CAMPAIGN_PRESET.suggestedFollowUp}`
   );
   const [isLoading, setIsLoading] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
@@ -196,7 +197,7 @@ export function WhatsAppCampaignSheet() {
       setProviderTemplateId("");
       setProviderTemplateVariablesText('{\n  "1": "{{company_name}}"\n}');
       setNotes(
-        `Angle: ${selectedPreset.angle}\nUse: ${selectedPreset.recommendedFor}\nFollow-up: ${selectedPreset.suggestedFollowUp}`
+        `Motion: ${FOUNDER_LED_PILOT_MOTION.niche}\nPitch: ${FOUNDER_LED_PILOT_MOTION.pitch}\nOffer: ${FOUNDER_LED_PILOT_MOTION.paidPilot}\nFollow-up: ${selectedPreset.suggestedFollowUp}`
       );
       await loadAnalytics();
       toast.success("Campaign drafted");
@@ -332,7 +333,7 @@ export function WhatsAppCampaignSheet() {
     setProviderTemplateId("");
     setProviderTemplateVariablesText('{\n  "1": "{{company_name}}"\n}');
     setNotes(
-      `Angle: ${preset.angle}\nUse: ${preset.recommendedFor}\nFollow-up: ${preset.suggestedFollowUp}`
+      `Motion: ${FOUNDER_LED_PILOT_MOTION.niche}\nPitch: ${FOUNDER_LED_PILOT_MOTION.pitch}\nOffer: ${FOUNDER_LED_PILOT_MOTION.paidPilot}\nFollow-up: ${preset.suggestedFollowUp}`
     );
     if (!name.trim()) {
       setName(preset.label);
@@ -358,6 +359,23 @@ export function WhatsAppCampaignSheet() {
                 <CardTitle className="text-sm text-white">New campaign</CardTitle>
               </CardHeader>
               <CardContent className="grid gap-3 pt-4">
+                <div className="rounded-2xl border border-emerald-400/15 bg-emerald-500/10 p-3">
+                  <div className="text-[11px] font-medium uppercase tracking-[0.22em] text-emerald-200/70">
+                    14-day pilot motion
+                  </div>
+                  <div className="mt-2 text-sm font-medium text-emerald-50">
+                    {FOUNDER_LED_PILOT_MOTION.pitch}
+                  </div>
+                  <div className="mt-2 text-xs leading-5 text-emerald-100/75">
+                    {FOUNDER_LED_PILOT_MOTION.paidPilot}
+                  </div>
+                  <div className="mt-1 text-xs leading-5 text-emerald-100/70">
+                    {FOUNDER_LED_PILOT_MOTION.rollout}
+                  </div>
+                  <div className="mt-1 text-[11px] leading-5 text-emerald-100/65">
+                    Demo CTA: {FOUNDER_LED_PILOT_MOTION.demoCta}
+                  </div>
+                </div>
                 <div className="grid gap-2">
                   <div className="text-[11px] font-medium uppercase tracking-[0.22em] text-slate-500">
                     1. Pick an angle
@@ -478,6 +496,9 @@ export function WhatsAppCampaignSheet() {
                     />
                   </div>
                 </div>
+                <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-3 text-xs leading-5 text-slate-400">
+                  Keep this motion narrow: Derm+Aesthetic only, paid pilot only, and these three angles first. `dentist_contacts` stays a secondary warm-list test, not the main wedge.
+                </div>
                 <Collapsible onOpenChange={setAdvancedOpen} open={advancedOpen}>
                   <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-3">
                     <CollapsibleTrigger asChild>
@@ -581,6 +602,50 @@ export function WhatsAppCampaignSheet() {
                     </div>
                     <div className="mt-1 text-xs text-slate-500">
                       {analytics?.overview.demoReadyThreads ?? 0} demo-ready
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-white/8 bg-white/5 p-3">
+                    <div className="text-[11px] uppercase tracking-[0.22em] text-slate-500">
+                      Qualified
+                    </div>
+                    <div className="mt-2 text-xl font-semibold text-white">
+                      {analytics?.overview.qualifiedThreads ?? 0}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      pain confirmed and worth moving
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-white/8 bg-white/5 p-3">
+                    <div className="text-[11px] uppercase tracking-[0.22em] text-slate-500">
+                      Demo booked
+                    </div>
+                    <div className="mt-2 text-xl font-semibold text-white">
+                      {analytics?.overview.demoBookedThreads ?? 0}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      founder-led demos in motion
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-white/8 bg-white/5 p-3">
+                    <div className="text-[11px] uppercase tracking-[0.22em] text-slate-500">
+                      Pilot won
+                    </div>
+                    <div className="mt-2 text-xl font-semibold text-white">
+                      {analytics?.overview.pilotWonThreads ?? 0}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      paid pilots closed
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-white/8 bg-white/5 p-3">
+                    <div className="text-[11px] uppercase tracking-[0.22em] text-slate-500">
+                      Live senders
+                    </div>
+                    <div className="mt-2 text-xl font-semibold text-white">
+                      {analytics?.overview.liveSenders ?? 0}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      clinic-owned senders live
                     </div>
                   </div>
                 </div>

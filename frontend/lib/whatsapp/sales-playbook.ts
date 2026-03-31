@@ -1,6 +1,7 @@
 import type { WhatsAppConversation, WhatsAppMessage } from "@/lib/db/schema";
 import {
   DEFAULT_WHATSAPP_AGENT_STATE,
+  type WhatsAppOpsState,
   type WhatsAppAgentState,
   type WhatsAppLinkedLeadContext,
 } from "@/lib/whatsapp/state";
@@ -23,6 +24,18 @@ const HUMAN_HANDOFF_PATTERNS = [
   /\bspeak to someone\b/i,
   /\blive demo\b/i,
   /\bwalkthrough\b/i,
+  /\bdemo\b/i,
+  /\bhow does it work\b/i,
+  /\brun on our number\b/i,
+  /\bour number\b/i,
+  /\bproposal\b/i,
+  /\bsend details\b/i,
+  /\bsend info\b/i,
+  /\blegal\b/i,
+  /\bcompliance\b/i,
+  /\bwebhook\b/i,
+  /\btwilio\b/i,
+  /\bwhatsapp business\b/i,
 ];
 
 const OBJECTION_PATTERNS: Record<string, RegExp[]> = {
@@ -136,8 +149,11 @@ function inferRequestedNextStep(text: string) {
   if (/\b(call|speak|talk|demo|walkthrough)\b/i.test(text)) {
     return "call";
   }
+  if (/\b(proposal|quote|pricing sheet)\b/i.test(text)) {
+    return "proposal";
+  }
   if (
-    /\b(details|brochure|send|info|explain|show me|show that|share it|share them|tell me more|go on|prove it)\b/i.test(
+    /\b(details|brochure|send|info|explain|show me|show that|share it|share them|tell me more|go on|prove it|how does it work|how it works)\b/i.test(
       text
     )
   ) {
@@ -154,6 +170,38 @@ function inferRequestedNextStep(text: string) {
   }
 
   return null;
+}
+
+function rankCommercialStatus(value: WhatsAppOpsState["commercialStatus"]) {
+  switch (value) {
+    case "contacted":
+      return 1;
+    case "replied":
+      return 2;
+    case "qualified":
+      return 3;
+    case "demo_booked":
+      return 4;
+    case "demo_done":
+      return 5;
+    case "pilot_won":
+      return 6;
+    case "onboarding":
+      return 7;
+    case "live":
+      return 8;
+    default:
+      return 0;
+  }
+}
+
+function escalateCommercialStatus(
+  current: WhatsAppOpsState["commercialStatus"],
+  target: WhatsAppOpsState["commercialStatus"]
+) {
+  return rankCommercialStatus(target) > rankCommercialStatus(current)
+    ? target
+    : current;
 }
 
 function isLightweightGreeting(text: string) {
@@ -377,7 +425,7 @@ export function classifyInboundLeadMessage(text: string) {
     escalateToHuman:
       handoffRequested ||
       objectionCategories.some((label) =>
-        ["price", "safety", "integration"].includes(label)
+        ["price", "safety", "integration", "brochure"].includes(label)
       ),
     isGreeting: isLightweightGreeting(normalized),
     isAcknowledgement: isLightweightAcknowledgement(normalized),
@@ -444,7 +492,7 @@ export function inferThreadPriority(state: WhatsAppAgentState) {
 
 export function inferNextBestMove(state: WhatsAppAgentState) {
   if (isOutboundClinicThread(state) && !state.painConfirmed) {
-    return "Keep the clinic in outbound SDR mode: diagnose enquiry drop-off, quantify WhatsApp volume, then move to a quick demo.";
+    return "Keep the clinic in founder-led SDR mode: diagnose enquiry drop-off, quantify WhatsApp volume, then move to a 3-minute demo.";
   }
 
   switch (state.stage) {
@@ -454,15 +502,15 @@ export function inferNextBestMove(state: WhatsAppAgentState) {
     case "PAIN_FOUND":
       return "Validate the gap and offer to show the exact leak.";
     case "QUALIFIED":
-      return "Move toward a short call or audit review.";
+      return "Move toward a founder-led 3-minute demo and confirm the paid pilot fit.";
     case "PROOF_SHARED":
       return "Use one proof-led observation and ask for the lightest next step.";
     case "OBJECTION_ACTIVE":
       return "Acknowledge the concern, reframe around leakage, and keep the ask small.";
     case "DEMO_PUSHED":
-      return "Offer a short call with two concrete time options.";
+      return "Lock the 3-minute demo and keep the founder ready to take over.";
     case "PAYMENT_PUSHED":
-      return "Prepare a careful human handoff for pricing or pilot details.";
+      return "Prepare the founder handoff for pricing, paid pilot terms, or clinic-owned sender onboarding.";
     case "HUMAN_HANDOFF":
       return "Hand the thread to a human closer with a clean summary.";
     case "CLOSED_LOST":
@@ -511,22 +559,68 @@ export function buildHandoffReason(state: WhatsAppAgentState) {
     return "Lead opted out";
   }
   if (state.paymentInterest) {
-    return "Payment or pilot discussion is active";
+    return "Pricing or paid pilot discussion is active";
   }
   if (state.objectionCategories.includes("safety")) {
     return "Healthcare safety or compliance concern needs careful handling";
   }
   if (state.objectionCategories.includes("integration")) {
-    return "Integration question needs a specific human answer";
+    return "Clinic-number onboarding or integration question needs a specific human answer";
   }
   if (state.objectionCategories.includes("price")) {
     return "Pricing discussion should move to a human closer";
   }
+  if (state.requestedNextStep === "proposal") {
+    return "Proposal request should move to the founder or closer";
+  }
+  if (state.requestedNextStep === "details") {
+    return "Operational details request needs a founder-led answer";
+  }
   if (state.requestedNextStep === "call") {
-    return "Lead is asking for a live discussion";
+    return "Lead is asking for a demo or live discussion";
   }
 
   return null;
+}
+
+export function deriveWhatsAppOpsStatePatch({
+  currentOpsState,
+  nextState,
+  leadContext,
+  shouldRespondWithinMinutes = false,
+}: {
+  currentOpsState: WhatsAppOpsState;
+  nextState: WhatsAppAgentState;
+  leadContext?: WhatsAppLinkedLeadContext | null;
+  shouldRespondWithinMinutes?: boolean;
+}): Partial<WhatsAppOpsState> {
+  let commercialStatus = currentOpsState.commercialStatus;
+
+  if (rankCommercialStatus(commercialStatus) < rankCommercialStatus("replied")) {
+    commercialStatus = "replied";
+  }
+
+  if (
+    nextState.painConfirmed &&
+    (nextState.decisionMakerConfirmed ||
+      Boolean(nextState.requestedNextStep) ||
+      nextState.handoffRecommended)
+  ) {
+    commercialStatus = escalateCommercialStatus(commercialStatus, "qualified");
+  }
+
+  return {
+    commercialStatus,
+    city: currentOpsState.city ?? leadContext?.geo ?? null,
+    contactChannel:
+      currentOpsState.contactChannel ??
+      leadContext?.bestContactChannel ??
+      leadContext?.recommendedChannel ??
+      "whatsapp",
+    nextActionAt: shouldRespondWithinMinutes
+      ? new Date(Date.now() + 15 * 60_000).toISOString()
+      : currentOpsState.nextActionAt,
+  };
 }
 
 export function buildWhatsAppFallbackReply(
@@ -555,8 +649,8 @@ export function buildWhatsAppFallbackReply(
     if (state.handoffRecommended || state.requestedNextStep === "call") {
       return pickFreshReply(
         [
-          "Happy to show it properly. Easier to do in 5 minutes than in long text. Would today or tomorrow be better?",
-          "Better to show than explain over text. Want a quick 5-minute walkthrough today or tomorrow?",
+          "It’s easier to show than explain — takes 3 minutes. Want a quick walkthrough?",
+          "Better to show this properly than drag it over text. Want a quick 3-minute walkthrough?",
         ],
         replyHistory
       );
@@ -925,7 +1019,7 @@ export function buildWhatsAppSystemPrompt({
 
   if (!conversation.linkedLeadId && isOutboundClinicThread(state)) {
     return [
-      "You are a human-sounding WhatsApp SDR messaging clinics about missed bookings and enquiry drop-off.",
+      "You are a human-sounding founder-side WhatsApp SDR messaging Derm and Aesthetic clinics about missed bookings and enquiry drop-off.",
       "This thread started from outbound WhatsApp outreach.",
       "Stay anchored to the outbound angle in the conversation memory.",
       "Do not sound like support, a generic chatbot, or a clinic auditor.",
@@ -936,6 +1030,7 @@ export function buildWhatsAppSystemPrompt({
       "First diagnose what happens to WhatsApp enquiries that do not finish booking.",
       "Then quantify weekly volume or the main drop-off point.",
       "Only move to a quick demo after the clinic confirms there is a real gap.",
+      "If the clinic asks for pricing, proposal, details, compliance, or whether this can run on their number, prepare a clean founder handoff.",
       "If the latest inbound is a greeting, do not lose the outbound frame. Re-open with the same enquiry-drop-off conversation.",
       "If the clinic asks who you are or what you do, explain it plainly in one or two short lines and stay on the booking problem.",
       "If the clinic asks for details, give one concrete operational point instead of promising to show it later.",

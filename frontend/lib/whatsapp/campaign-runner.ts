@@ -12,12 +12,14 @@ import {
   getWhatsAppConversationByPhone,
   updateWhatsAppConversationAgentState,
   updateWhatsAppConversationLeadLink,
+  updateWhatsAppConversationOpsState,
 } from "@/lib/db/queries";
 import {
   resolveLeadContextForWhatsAppThread,
   syncWhatsAppMessageToLeadMemory,
 } from "@/lib/whatsapp/lead-context";
 import {
+  buildOutreachCampaignOpsPatch,
   buildOutreachCampaignStatePatch,
   renderCampaignMessageTemplate,
   renderCampaignTemplateVariables,
@@ -126,6 +128,10 @@ export async function runWhatsAppCampaignWave({
         contactPhone: recipient.contactPhone,
         mode: "bot",
         source: "manual",
+        opsState: buildOutreachCampaignOpsPatch({
+          owner: operatorLabel,
+          companyName: recipient.companyName,
+        }),
       }));
 
     const outboundStatePatch = buildOutreachCampaignStatePatch({
@@ -145,6 +151,21 @@ export async function runWhatsAppCampaignWave({
           patch: outboundStatePatch,
         })) || conversation;
     }
+
+    conversation =
+      (await updateWhatsAppConversationOpsState({
+        id: conversation.id,
+        patch: buildOutreachCampaignOpsPatch({
+          owner: operatorLabel,
+          companyName:
+            recipient.companyName ?? conversation.leadContext?.companyName ?? null,
+          city: conversation.leadContext?.geo ?? null,
+          contactChannel:
+            conversation.leadContext?.bestContactChannel ??
+            conversation.leadContext?.recommendedChannel ??
+            "whatsapp",
+        }),
+      })) || conversation;
 
     if (!conversation.linkedLeadId) {
       try {
