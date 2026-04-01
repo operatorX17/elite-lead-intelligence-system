@@ -30,6 +30,21 @@ import { waitUntil } from "@vercel/functions";
 
 const WHATSAPP_REPLY_BUDGET_MS = 8000;
 
+function createWebhookAckResponse() {
+  const config = getWhatsAppConfig();
+
+  if (config.provider === "twilio") {
+    return new Response("<Response />", {
+      status: 200,
+      headers: {
+        "Content-Type": "text/xml; charset=utf-8",
+      },
+    });
+  }
+
+  return Response.json({ received: true });
+}
+
 function splitOutgoingWhatsAppReply(reply: string) {
   return reply
     .split(/\n{2,}/)
@@ -316,9 +331,9 @@ export async function POST(request: Request) {
       }
     }
 
-    return Response.json({ received: true });
+    return createWebhookAckResponse();
   } catch (error) {
     console.error("[whatsapp:webhook] Unexpected webhook failure", error);
-    return Response.json({ received: true });
+    return createWebhookAckResponse();
   }
 }
