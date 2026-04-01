@@ -200,6 +200,9 @@ export const whatsappConversation = pgTable(
     updatedAt: timestamp("updatedAt").notNull(),
     contactName: text("contactName").notNull(),
     contactPhone: varchar("contactPhone", { length: 32 }).notNull(),
+    businessPhone: varchar("businessPhone", { length: 32 })
+      .notNull()
+      .default(""),
     mode: varchar("mode", { enum: ["bot", "human"] })
       .notNull()
       .default("bot"),
@@ -226,8 +229,9 @@ export const whatsappConversation = pgTable(
       .default(sql`'{}'::jsonb`),
   },
   (table) => ({
-    contactPhoneIdx: uniqueIndex("whatsapp_contact_phone_idx").on(
-      table.contactPhone
+    contactRouteIdx: uniqueIndex("whatsapp_contact_route_idx").on(
+      table.contactPhone,
+      table.businessPhone
     ),
   })
 );

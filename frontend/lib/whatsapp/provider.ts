@@ -22,6 +22,7 @@ export type {
 export async function sendWhatsAppTextMessage(input: {
   to: string;
   body: string;
+  from?: string | null;
   contentSid?: string | null;
   contentVariables?: Record<string, string> | null;
 }): Promise<SendWhatsAppResult> {

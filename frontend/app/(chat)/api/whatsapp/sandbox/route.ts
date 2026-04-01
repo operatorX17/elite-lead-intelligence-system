@@ -14,6 +14,7 @@ import {
   buildWhatsAppSandboxLeadContext,
   buildWhatsAppSandboxOpsState,
 } from "@/lib/whatsapp/sandbox";
+import { getWhatsAppDefaultSender } from "@/lib/whatsapp/config";
 
 const createSandboxSchema = z.object({
   contactName: z.string().trim().min(1, "Contact name is required"),
@@ -51,11 +52,13 @@ export async function POST(request: Request) {
     seedStarterThread,
   } = payload.data;
 
+  const businessPhone = getWhatsAppDefaultSender();
   let conversation =
-    (await getWhatsAppConversationByPhone({ contactPhone })) ||
+    (await getWhatsAppConversationByPhone({ contactPhone, businessPhone })) ||
     (await createWhatsAppConversation({
       contactName,
       contactPhone,
+      businessPhone,
       mode: "bot",
       source: "manual",
       opsState: buildWhatsAppSandboxOpsState({

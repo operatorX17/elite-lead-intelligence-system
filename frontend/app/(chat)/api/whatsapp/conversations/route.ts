@@ -5,7 +5,10 @@ import {
   listWhatsAppConversations,
   updateWhatsAppConversationLeadLink,
 } from "@/lib/db/queries";
-import { getWhatsAppPublicConfig } from "@/lib/whatsapp/config";
+import {
+  getWhatsAppDefaultSender,
+  getWhatsAppPublicConfig,
+} from "@/lib/whatsapp/config";
 import { resolveLeadContextForWhatsAppThread } from "@/lib/whatsapp/lead-context";
 
 const createConversationSchema = z.object({
@@ -51,6 +54,7 @@ export async function POST(request: Request) {
   let conversation = await createWhatsAppConversation({
     contactName: payload.data.contactName,
     contactPhone: payload.data.contactPhone,
+    businessPhone: getWhatsAppDefaultSender(),
     mode: payload.data.startInHumanMode ? "human" : "bot",
     source: "manual",
     assignedOperatorLabel: payload.data.startInHumanMode

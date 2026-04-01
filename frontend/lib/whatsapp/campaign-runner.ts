@@ -24,6 +24,7 @@ import {
   renderCampaignMessageTemplate,
   renderCampaignTemplateVariables,
 } from "@/lib/whatsapp/campaigns";
+import { getWhatsAppDefaultSender } from "@/lib/whatsapp/config";
 import { sendWhatsAppTextMessage } from "@/lib/whatsapp/provider";
 
 function nextDaySameTime(now: Date) {
@@ -117,15 +118,18 @@ export async function runWhatsAppCampaignWave({
     status: "sent" | "failed";
     error: string | null;
   }> = [];
+  const businessPhone = getWhatsAppDefaultSender();
 
   for (const recipient of sendBatch) {
     let conversation =
       (await getWhatsAppConversationByPhone({
         contactPhone: recipient.contactPhone,
+        businessPhone,
       })) ||
       (await createWhatsAppConversation({
         contactName: recipient.contactName,
         contactPhone: recipient.contactPhone,
+        businessPhone,
         mode: "bot",
         source: "manual",
         opsState: buildOutreachCampaignOpsPatch({
@@ -209,6 +213,7 @@ export async function runWhatsAppCampaignWave({
 
     const delivery = await sendWhatsAppTextMessage({
       to: recipient.contactPhone,
+      from: conversation.businessPhone || businessPhone,
       body: outgoingBody,
       contentSid:
         campaign.messageStyle === "template"

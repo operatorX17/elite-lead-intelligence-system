@@ -23,16 +23,21 @@ function stripWhatsAppPrefix(value: string | null | undefined) {
 export async function sendTwilioWhatsAppTextMessage({
   to,
   body,
+  from,
   contentSid,
   contentVariables,
 }: {
   to: string;
   body: string;
+  from?: string | null;
   contentSid?: string | null;
   contentVariables?: Record<string, string> | null;
 }): Promise<SendWhatsAppResult> {
   const config = getWhatsAppConfig();
-  const sender = config.twilioWhatsAppNumber ?? config.twilioPhoneNumber;
+  const sender =
+    from?.trim() ||
+    config.twilioWhatsAppNumber ||
+    config.twilioPhoneNumber;
   const transportReady = Boolean(sender || config.twilioMessagingServiceSid);
 
   if (
@@ -51,7 +56,7 @@ export async function sendTwilioWhatsAppTextMessage({
 
   const payload = new URLSearchParams();
   payload.set("To", normalizeWhatsAppAddress(to));
-  if (config.twilioMessagingServiceSid) {
+  if (!from?.trim() && config.twilioMessagingServiceSid) {
     payload.set("MessagingServiceSid", config.twilioMessagingServiceSid);
   } else {
     payload.set("From", normalizeWhatsAppAddress(sender as string));
@@ -181,6 +186,7 @@ export function parseTwilioWebhookPayload(rawBody: string): {
 
   const messageSid = params.get("MessageSid");
   const from = stripWhatsAppPrefix(params.get("From"));
+  const to = stripWhatsAppPrefix(params.get("To"));
   const body = (params.get("Body") ?? "").trim();
   const profileName = params.get("ProfileName")?.trim() || from || "Lead";
   const rawStatus = params.get("MessageStatus") ?? params.get("SmsStatus");
@@ -201,6 +207,7 @@ export function parseTwilioWebhookPayload(rawBody: string): {
   if (hasInboundMessage) {
     messages.push({
       contactPhone: from,
+      businessPhone: to || null,
       contactName: profileName,
       body: body || "[media]",
       providerMessageId: messageSid,

@@ -593,7 +593,12 @@ export function WhatsAppInbox({
                         </div>
                       <div className="mt-2 truncate text-xs text-slate-400">{state.summary || conversation.lastMessagePreview || conversation.contactPhone}</div>
                       <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500">
-                        <span>{conversation.contactPhone}</span>
+                        <span>
+                          {conversation.contactPhone}
+                          {conversation.businessPhone
+                            ? ` -> ${conversation.businessPhone}`
+                            : ""}
+                        </span>
                         <span>{formatThreadTime(conversation.lastMessageAt)}</span>
                       </div>
                     </div>
@@ -1002,7 +1007,12 @@ export function WhatsAppInbox({
                     </Avatar>
                     <div className="min-w-0">
                       <div className="truncate font-semibold text-base text-white">{selectedConversation.contactName}</div>
-                      <div className="truncate text-sm text-slate-400">{selectedConversation.contactPhone}</div>
+                      <div className="truncate text-sm text-slate-400">
+                        {selectedConversation.contactPhone}
+                        {selectedConversation.businessPhone
+                          ? ` -> ${selectedConversation.businessPhone}`
+                          : ""}
+                      </div>
                       {selectedLeadContext ? (
                         <div className="mt-1 truncate text-xs text-slate-500">
                           Linked to {selectedLeadContext.companyName}

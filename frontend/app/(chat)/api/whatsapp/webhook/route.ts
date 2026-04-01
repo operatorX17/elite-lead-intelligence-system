@@ -133,6 +133,7 @@ async function processInboundWhatsAppMessage({
     for (const body of outgoingParts) {
       const delivery = await sendWhatsAppTextMessage({
         to: latestConversation.contactPhone,
+        from: latestConversation.businessPhone || null,
         body,
       });
 
@@ -279,6 +280,7 @@ export async function POST(request: Request) {
         const conversation = await upsertWhatsAppConversationFromInbound({
           contactName: inboundMessage.contactName,
           contactPhone: inboundMessage.contactPhone,
+          businessPhone: inboundMessage.businessPhone,
           body: inboundMessage.body,
           receivedAt: inboundMessage.receivedAt,
         });
@@ -295,6 +297,7 @@ export async function POST(request: Request) {
         });
         await markWhatsAppCampaignRecipientReplied({
           contactPhone: inboundMessage.contactPhone,
+          businessPhone: inboundMessage.businessPhone,
           conversationId: conversation.id,
         });
         waitUntil(

@@ -127,6 +127,10 @@ function getConversationPreview(body: string) {
   return body.trim().replace(/\s+/g, " ").slice(0, 140);
 }
 
+function normalizeWhatsAppRoutePhone(value: string | null | undefined) {
+  return String(value ?? "").trim();
+}
+
 function normalizeWhatsAppConversationRecord(
   conversation: WhatsAppConversation
 ): WhatsAppConversation {
@@ -1098,12 +1102,19 @@ export async function getWhatsAppConversationById({ id }: { id: string }) {
 
 export async function getWhatsAppConversationByPhone({
   contactPhone,
+  businessPhone = "",
 }: {
   contactPhone: string;
+  businessPhone?: string | null;
 }) {
+  const normalizedBusinessPhone = normalizeWhatsAppRoutePhone(businessPhone);
+
   if (isMemoryDbEnabled()) {
     const conversation = Array.from(memoryWhatsAppConversations.values()).find(
-      (currentConversation) => currentConversation.contactPhone === contactPhone
+      (currentConversation) =>
+        currentConversation.contactPhone === contactPhone &&
+        normalizeWhatsAppRoutePhone(currentConversation.businessPhone) ===
+          normalizedBusinessPhone
     );
 
     return conversation ? normalizeWhatsAppConversationRecord(conversation) : null;
@@ -1113,7 +1124,12 @@ export async function getWhatsAppConversationByPhone({
     const [selectedConversation] = await db
       .select()
       .from(whatsappConversation)
-      .where(eq(whatsappConversation.contactPhone, contactPhone))
+      .where(
+        and(
+          eq(whatsappConversation.contactPhone, contactPhone),
+          eq(whatsappConversation.businessPhone, normalizedBusinessPhone)
+        )
+      )
       .limit(1);
 
     return selectedConversation
@@ -1121,13 +1137,17 @@ export async function getWhatsAppConversationByPhone({
       : null;
   } catch (_error) {
     enableRuntimeMemoryDb();
-    return getWhatsAppConversationByPhone({ contactPhone });
+    return getWhatsAppConversationByPhone({
+      contactPhone,
+      businessPhone: normalizedBusinessPhone,
+    });
   }
 }
 
 export async function createWhatsAppConversation({
   contactName,
   contactPhone,
+  businessPhone = "",
   mode = "bot",
   source = "manual",
   assignedOperatorLabel = null,
@@ -1136,6 +1156,7 @@ export async function createWhatsAppConversation({
 }: {
   contactName: string;
   contactPhone: string;
+  businessPhone?: string | null;
   mode?: WhatsAppMode;
   source?: WhatsAppConversation["source"];
   assignedOperatorLabel?: string | null;
@@ -1149,6 +1170,7 @@ export async function createWhatsAppConversation({
     updatedAt: now,
     contactName,
     contactPhone,
+    businessPhone: normalizeWhatsAppRoutePhone(businessPhone),
     mode,
     status: mode === "human" ? "attention" : "open",
     unreadCount: 0,
@@ -1188,6 +1210,7 @@ export async function createWhatsAppConversation({
     return createWhatsAppConversation({
       contactName,
       contactPhone,
+      businessPhone,
       mode,
       source,
       assignedOperatorLabel,
@@ -1670,16 +1693,20 @@ export async function updateWhatsAppMessageStatusByProviderId({
 export async function upsertWhatsAppConversationFromInbound({
   contactName,
   contactPhone,
+  businessPhone = "",
   body,
   receivedAt = new Date(),
 }: {
   contactName: string;
   contactPhone: string;
+  businessPhone?: string | null;
   body: string;
   receivedAt?: Date;
 }) {
+  const normalizedBusinessPhone = normalizeWhatsAppRoutePhone(businessPhone);
   const existingConversation = await getWhatsAppConversationByPhone({
     contactPhone,
+    businessPhone: normalizedBusinessPhone,
   });
 
   if (existingConversation) {
@@ -1688,6 +1715,7 @@ export async function upsertWhatsAppConversationFromInbound({
       contactName: contactName || existingConversation.contactName,
       updatedAt: receivedAt,
       source: "webhook" as const,
+      businessPhone: normalizedBusinessPhone,
       agentState: mergeWhatsAppAgentState(existingConversation.agentState, {
         updatedAt: receivedAt.toISOString(),
       }),
@@ -1705,6 +1733,7 @@ export async function upsertWhatsAppConversationFromInbound({
           contactName: nextConversation.contactName,
           updatedAt: nextConversation.updatedAt,
           source: nextConversation.source,
+          businessPhone: normalizedBusinessPhone,
           agentState: nextConversation.agentState,
         })
         .where(eq(whatsappConversation.id, existingConversation.id))
@@ -1716,6 +1745,7 @@ export async function upsertWhatsAppConversationFromInbound({
       return upsertWhatsAppConversationFromInbound({
         contactName,
         contactPhone,
+        businessPhone: normalizedBusinessPhone,
         body,
         receivedAt,
       });
@@ -1725,6 +1755,7 @@ export async function upsertWhatsAppConversationFromInbound({
   return createWhatsAppConversation({
     contactName: contactName || contactPhone,
     contactPhone,
+    businessPhone: normalizedBusinessPhone,
     mode: "bot",
     source: "webhook",
   });

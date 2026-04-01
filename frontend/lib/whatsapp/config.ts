@@ -164,3 +164,11 @@ export function getWhatsAppPublicConfig(): WhatsAppPublicConfig {
     metaConfigured,
   };
 }
+
+export function getWhatsAppDefaultSender(config = getWhatsAppConfig()) {
+  if (config.provider === "twilio") {
+    return config.twilioWhatsAppNumber ?? config.twilioPhoneNumber ?? null;
+  }
+
+  return config.businessNumber ?? null;
+}

@@ -76,6 +76,7 @@ export async function POST(
 
   const delivery = await sendWhatsAppTextMessage({
     to: conversation.contactPhone,
+    from: conversation.businessPhone || null,
     body: payload.data.body,
   });
 

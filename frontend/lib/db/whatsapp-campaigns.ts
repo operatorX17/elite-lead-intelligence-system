@@ -643,27 +643,35 @@ export async function countWhatsAppCampaignRecipientsSentToday({
 
 export async function markWhatsAppCampaignRecipientReplied({
   contactPhone,
+  businessPhone: _businessPhone,
   conversationId,
 }: {
   contactPhone: string;
+  businessPhone?: string | null;
   conversationId?: string | null;
 }) {
   const campaigns = await listWhatsAppCampaigns();
-  const targetRecipient = campaigns
-    .flatMap((campaign) => campaign.recipients)
-    .filter(
-      (recipient) =>
-        recipient.contactPhone === contactPhone &&
-        (recipient.status === "sent" || recipient.status === "approved")
-    )
-    .sort((a, b) => {
-      const aTime = new Date(a.sentAt || a.updatedAt).getTime();
-      const bTime = new Date(b.sentAt || b.updatedAt).getTime();
-      return bTime - aTime;
-    })
-    .find(
-      (recipient) => recipient.contactPhone === contactPhone
-    );
+  const allRecipients = campaigns.flatMap((campaign) => campaign.recipients);
+  const targetRecipient =
+    (conversationId
+      ? allRecipients.find(
+          (recipient) =>
+            recipient.conversationId === conversationId &&
+            (recipient.status === "sent" || recipient.status === "approved")
+        )
+      : null) ??
+    allRecipients
+      .filter(
+        (recipient) =>
+          recipient.contactPhone === contactPhone &&
+          (recipient.status === "sent" || recipient.status === "approved")
+      )
+      .sort((a, b) => {
+        const aTime = new Date(a.sentAt || a.updatedAt).getTime();
+        const bTime = new Date(b.sentAt || b.updatedAt).getTime();
+        return bTime - aTime;
+      })
+      .find((recipient) => recipient.contactPhone === contactPhone);
 
   if (!targetRecipient) {
     return null;

@@ -10,6 +10,7 @@ export type SendWhatsAppResult = {
 
 export type ParsedInboundWhatsAppMessage = {
   contactPhone: string;
+  businessPhone: string | null;
   contactName: string;
   body: string;
   providerMessageId: string | null;
@@ -22,6 +23,10 @@ export type ParsedWhatsAppStatusUpdate = {
 };
 
 type WhatsAppChangeValue = {
+  metadata?: {
+    display_phone_number?: string;
+    phone_number_id?: string;
+  };
   contacts?: Array<{
     profile?: {
       name?: string;
@@ -46,9 +51,11 @@ type WhatsAppChangeValue = {
 export async function sendWhatsAppTextMessage({
   to,
   body,
+  from: _from,
 }: {
   to: string;
   body: string;
+  from?: string | null;
 }): Promise<SendWhatsAppResult> {
   const config = getWhatsAppConfig();
 
@@ -181,6 +188,10 @@ export function parseWhatsAppWebhookPayload(payload: unknown): {
 
         messages.push({
           contactPhone: inboundMessage.from,
+          businessPhone:
+            value.metadata?.display_phone_number?.trim() ||
+            value.metadata?.phone_number_id?.trim() ||
+            null,
           contactName,
           body,
           providerMessageId: inboundMessage.id ?? null,
