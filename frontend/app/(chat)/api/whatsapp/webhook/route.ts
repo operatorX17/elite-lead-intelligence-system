@@ -18,6 +18,7 @@ import {
   syncWhatsAppMessageToLeadMemory,
 } from "@/lib/whatsapp/lead-context";
 import { getWhatsAppConfig } from "@/lib/whatsapp/config";
+import { guardWhatsAppOutboundMessage } from "@/lib/whatsapp/policy";
 import {
   parseWhatsAppWebhookPayload,
   sendWhatsAppTextMessage,
@@ -146,6 +147,21 @@ async function processInboundWhatsAppMessage({
       splitReplyParts.length > 0 ? splitReplyParts : [replyPlan.replyText];
 
     for (const body of outgoingParts) {
+      const policyDecision = await guardWhatsAppOutboundMessage({
+        conversationId: latestConversation.id,
+        body,
+        messageStyle: "freeform",
+      });
+
+      if (!policyDecision.allowed) {
+        console.warn("[whatsapp:webhook] Outbound reply blocked", {
+          conversationId: latestConversation.id,
+          reason: policyDecision.reason,
+          detail: policyDecision.detail,
+        });
+        break;
+      }
+
       const delivery = await sendWhatsAppTextMessage({
         to: latestConversation.contactPhone,
         from: latestConversation.businessPhone || null,

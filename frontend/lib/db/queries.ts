@@ -1542,6 +1542,173 @@ export async function getWhatsAppMessagesByConversationId({
   }
 }
 
+export async function getLatestIncomingWhatsAppMessageAt({
+  conversationId,
+}: {
+  conversationId: string;
+}) {
+  if (isMemoryDbEnabled()) {
+    const latestMessage = Array.from(memoryWhatsAppMessages.values())
+      .filter(
+        (currentMessage) =>
+          currentMessage.conversationId === conversationId &&
+          currentMessage.direction === "incoming"
+      )
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .at(0);
+
+    return latestMessage?.createdAt ?? null;
+  }
+
+  try {
+    const [latestMessage] = await db
+      .select({ createdAt: whatsappMessage.createdAt })
+      .from(whatsappMessage)
+      .where(
+        and(
+          eq(whatsappMessage.conversationId, conversationId),
+          eq(whatsappMessage.direction, "incoming")
+        )
+      )
+      .orderBy(desc(whatsappMessage.createdAt))
+      .limit(1);
+
+    return latestMessage?.createdAt ?? null;
+  } catch (_error) {
+    enableRuntimeMemoryDb();
+    return getLatestIncomingWhatsAppMessageAt({ conversationId });
+  }
+}
+
+export async function countRecentOutgoingWhatsAppMessagesForContact({
+  contactPhone,
+  since,
+}: {
+  contactPhone: string;
+  since: Date;
+}) {
+  if (isMemoryDbEnabled()) {
+    const matchingConversationIds = new Set(
+      Array.from(memoryWhatsAppConversations.values())
+        .filter((currentConversation) => currentConversation.contactPhone === contactPhone)
+        .map((currentConversation) => currentConversation.id)
+    );
+
+    return Array.from(memoryWhatsAppMessages.values()).filter(
+      (currentMessage) =>
+        currentMessage.direction === "outgoing" &&
+        currentMessage.createdAt >= since &&
+        matchingConversationIds.has(currentMessage.conversationId)
+    ).length;
+  }
+
+  try {
+    const [result] = await db
+      .select({ total: count() })
+      .from(whatsappMessage)
+      .innerJoin(
+        whatsappConversation,
+        eq(whatsappMessage.conversationId, whatsappConversation.id)
+      )
+      .where(
+        and(
+          eq(whatsappConversation.contactPhone, contactPhone),
+          eq(whatsappMessage.direction, "outgoing"),
+          gte(whatsappMessage.createdAt, since)
+        )
+      );
+
+    return Number(result?.total ?? 0);
+  } catch (_error) {
+    enableRuntimeMemoryDb();
+    return countRecentOutgoingWhatsAppMessagesForContact({
+      contactPhone,
+      since,
+    });
+  }
+}
+
+export async function countRecentOutgoingWhatsAppMessagesGlobal({
+  since,
+}: {
+  since: Date;
+}) {
+  if (isMemoryDbEnabled()) {
+    return Array.from(memoryWhatsAppMessages.values()).filter(
+      (currentMessage) =>
+        currentMessage.direction === "outgoing" &&
+        currentMessage.createdAt >= since
+    ).length;
+  }
+
+  try {
+    const [result] = await db
+      .select({ total: count() })
+      .from(whatsappMessage)
+      .where(
+        and(
+          eq(whatsappMessage.direction, "outgoing"),
+          gte(whatsappMessage.createdAt, since)
+        )
+      );
+
+    return Number(result?.total ?? 0);
+  } catch (_error) {
+    enableRuntimeMemoryDb();
+    return countRecentOutgoingWhatsAppMessagesGlobal({ since });
+  }
+}
+
+export async function findRecentDuplicateOutgoingWhatsAppMessage({
+  conversationId,
+  body,
+  since,
+}: {
+  conversationId: string;
+  body: string;
+  since: Date;
+}) {
+  if (isMemoryDbEnabled()) {
+    const matchingMessage = Array.from(memoryWhatsAppMessages.values())
+      .filter(
+        (currentMessage) =>
+          currentMessage.conversationId === conversationId &&
+          currentMessage.direction === "outgoing" &&
+          currentMessage.body === body &&
+          currentMessage.createdAt >= since
+      )
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .at(0);
+
+    return matchingMessage ?? null;
+  }
+
+  try {
+    const [matchingMessage] = await db
+      .select()
+      .from(whatsappMessage)
+      .where(
+        and(
+          eq(whatsappMessage.conversationId, conversationId),
+          eq(whatsappMessage.direction, "outgoing"),
+          eq(whatsappMessage.body, body),
+          gte(whatsappMessage.createdAt, since)
+        )
+      )
+      .orderBy(desc(whatsappMessage.createdAt))
+      .limit(1);
+
+    return matchingMessage ?? null;
+  } catch (_error) {
+    enableRuntimeMemoryDb();
+    return findRecentDuplicateOutgoingWhatsAppMessage({
+      conversationId,
+      body,
+      since,
+    });
+  }
+}
+
 export async function appendWhatsAppMessage({
   conversationId,
   direction,

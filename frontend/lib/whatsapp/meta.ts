@@ -52,10 +52,14 @@ export async function sendWhatsAppTextMessage({
   to,
   body,
   from: _from,
+  contentSid,
+  contentVariables,
 }: {
   to: string;
   body: string;
   from?: string | null;
+  contentSid?: string | null;
+  contentVariables?: Record<string, string> | null;
 }): Promise<SendWhatsAppResult> {
   const config = getWhatsAppConfig();
 
@@ -73,6 +77,45 @@ export async function sendWhatsAppTextMessage({
     };
   }
 
+  const sortedTemplateVariables = Object.entries(contentVariables ?? {})
+    .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey, undefined, { numeric: true }))
+    .map(([, value]) => ({
+      type: "text",
+      text: String(value),
+    }));
+
+  const requestBody = contentSid
+    ? {
+        messaging_product: "whatsapp",
+        to,
+        type: "template",
+        template: {
+          name: contentSid,
+          language: {
+            code: "en_US",
+          },
+          ...(sortedTemplateVariables.length > 0
+            ? {
+                components: [
+                  {
+                    type: "body",
+                    parameters: sortedTemplateVariables,
+                  },
+                ],
+              }
+            : {}),
+        },
+      }
+    : {
+        messaging_product: "whatsapp",
+        to,
+        type: "text",
+        text: {
+          body,
+          preview_url: false,
+        },
+      };
+
   const response = await fetch(
     `https://graph.facebook.com/${config.metaGraphApiVersion}/${config.metaPhoneNumberId}/messages`,
     {
@@ -81,15 +124,7 @@ export async function sendWhatsAppTextMessage({
         Authorization: `Bearer ${config.metaAccessToken}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        messaging_product: "whatsapp",
-        to,
-        type: "text",
-        text: {
-          body,
-          preview_url: false,
-        },
-      }),
+      body: JSON.stringify(requestBody),
     }
   );
 

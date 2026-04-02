@@ -12,6 +12,7 @@ import {
   resolveLeadContextForWhatsAppThread,
   syncWhatsAppMessageToLeadMemory,
 } from "@/lib/whatsapp/lead-context";
+import { guardWhatsAppOutboundMessage } from "@/lib/whatsapp/policy";
 import { sendWhatsAppTextMessage } from "@/lib/whatsapp/provider";
 import { isWhatsAppSandboxLead } from "@/lib/whatsapp/sandbox";
 
@@ -71,6 +72,22 @@ export async function POST(
         error: payload.error.flatten(),
       },
       { status: 400 }
+    );
+  }
+
+  const policyDecision = await guardWhatsAppOutboundMessage({
+    conversationId: conversation.id,
+    body: payload.data.body,
+    messageStyle: "freeform",
+  });
+
+  if (!policyDecision.allowed) {
+    return Response.json(
+      {
+        error: policyDecision.detail,
+        reason: policyDecision.reason,
+      },
+      { status: policyDecision.status }
     );
   }
 

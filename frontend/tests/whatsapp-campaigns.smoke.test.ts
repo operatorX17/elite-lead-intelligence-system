@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import Module from "node:module";
 import test from "node:test";
 
 process.env.ZRAI_IN_MEMORY_DB = "true";
@@ -7,6 +8,12 @@ process.env.TWILIO_ACCOUNT_SID = "AC_TEST";
 process.env.TWILIO_AUTH_TOKEN = "secret";
 process.env.TWILIO_WHATSAPP_NUMBER = "+15550001111";
 process.env.NEXTAUTH_URL = "https://example.com";
+
+const require = Module.createRequire(import.meta.url);
+const serverOnlyPath = require.resolve("server-only");
+require.cache[serverOnlyPath] = {
+  exports: {},
+} as NodeJS.Module;
 
 const originalFetch = global.fetch;
 const fetchCalls: Array<{ url: string; init?: RequestInit }> = [];

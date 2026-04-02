@@ -25,6 +25,7 @@ import {
   renderCampaignTemplateVariables,
 } from "@/lib/whatsapp/campaigns";
 import { getWhatsAppDefaultSender } from "@/lib/whatsapp/config";
+import { guardWhatsAppOutboundMessage } from "@/lib/whatsapp/policy";
 import { sendWhatsAppTextMessage } from "@/lib/whatsapp/provider";
 
 function nextDaySameTime(now: Date) {
@@ -210,6 +211,34 @@ export async function runWhatsAppCampaignWave({
       decisionMakerName: conversation.leadContext?.decisionMakerName ?? null,
       city: conversation.leadContext?.geo ?? null,
     });
+
+    const policyDecision = await guardWhatsAppOutboundMessage({
+      conversationId: conversation.id,
+      body: outgoingBody,
+      messageStyle:
+        campaign.messageStyle === "template" ? "template" : "freeform",
+    });
+
+    if (!policyDecision.allowed) {
+      await updateWhatsAppCampaignRecipient({
+        campaignId,
+        recipientId: recipient.id,
+        patch: {
+          conversationId: conversation.id,
+          linkedLeadId: conversation.linkedLeadId,
+          messageBody: outgoingBody,
+          status: "failed",
+          errorText: policyDecision.detail,
+        },
+      });
+
+      results.push({
+        recipientId: recipient.id,
+        status: "failed",
+        error: policyDecision.detail,
+      });
+      continue;
+    }
 
     const delivery = await sendWhatsAppTextMessage({
       to: recipient.contactPhone,
