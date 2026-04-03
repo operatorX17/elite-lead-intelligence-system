@@ -1,7 +1,12 @@
 import "server-only";
 
+import type {
+  WhatsAppConversation,
+  WhatsAppMessage,
+} from "@/lib/db/schema";
 import {
   normalizeWhatsAppAgentState,
+  normalizeWhatsAppOpsState,
   type WhatsAppAgentState,
   type WhatsAppLeadBranchPhone,
   type WhatsAppLeadContactPoint,
@@ -39,6 +44,17 @@ type ZRAIConversationResponse = {
     entities?: Record<string, any>;
   };
   response?: string | { message?: string | null };
+  ai_response?: string | null;
+  needs_escalation?: boolean;
+  escalation_reason?: string | null;
+};
+
+type ZRAIProspectConversationResponse = {
+  success: boolean;
+  conversation?: {
+    conversation_id?: string | null;
+    entities?: Record<string, any>;
+  };
   ai_response?: string | null;
   needs_escalation?: boolean;
   escalation_reason?: string | null;
@@ -411,6 +427,100 @@ export async function requestLeadAwareWhatsAppReply({
         lead_id: leadId,
         message: incomingText,
         channel: "whatsapp",
+      }),
+    },
+    userId
+  );
+}
+
+function toBackendTranscriptRole(message: WhatsAppMessage) {
+  if (message.direction === "incoming") {
+    return "prospect";
+  }
+
+  return "ai";
+}
+
+export async function requestProspectAwareWhatsAppReply({
+  conversation,
+  messages,
+  incomingText,
+  currentState,
+  userId,
+  abortSignal,
+}: {
+  conversation: Pick<
+    WhatsAppConversation,
+    | "contactName"
+    | "contactPhone"
+    | "businessPhone"
+    | "leadContext"
+    | "opsState"
+    | "agentState"
+  >;
+  messages: WhatsAppMessage[];
+  incomingText: string;
+  currentState: Partial<WhatsAppAgentState> | null | undefined;
+  userId?: string | null;
+  abortSignal?: AbortSignal | null;
+}) {
+  const normalizedState = normalizeWhatsAppAgentState(currentState);
+  const normalizedOpsState = normalizeWhatsAppOpsState(conversation.opsState);
+  const transcript = messages.slice(-6).map((message) => ({
+    role: toBackendTranscriptRole(message),
+    message: message.body,
+  }));
+
+  return backendJson<ZRAIProspectConversationResponse>(
+    "/api/v1/conversation/prospect",
+    {
+      method: "POST",
+      signal: abortSignal ?? undefined,
+      body: JSON.stringify({
+        message: incomingText,
+        channel: "whatsapp",
+        contact_name: conversation.contactName || null,
+        contact_phone: conversation.contactPhone || null,
+        business_phone: conversation.businessPhone || null,
+        transcript,
+        entities: {
+          stage: normalizedState.stage,
+          lead_channels: normalizedState.leadChannels,
+          pain_points: normalizedState.painPoints,
+          objection_categories: normalizedState.objectionCategories,
+          requested_next_step: normalizedState.requestedNextStep,
+          last_intent: normalizedState.lastIntent,
+          handoff_requested: normalizedState.handoffRecommended,
+          decision_maker_role: normalizedState.decisionMakerRole,
+          decision_maker_confirmed: normalizedState.decisionMakerConfirmed,
+          pain_confirmed: normalizedState.painConfirmed,
+          payment_interest: normalizedState.paymentInterest,
+          opt_out: normalizedState.optOut,
+          confidence: normalizedState.confidence,
+        },
+        lead_context: conversation.leadContext
+          ? {
+              company_name: conversation.leadContext.companyName,
+              top_issue: conversation.leadContext.topIssue,
+              next_best_action: conversation.leadContext.nextBestAction,
+              decision_maker_name: conversation.leadContext.decisionMakerName,
+              decision_maker_role: conversation.leadContext.decisionMakerRole,
+              recommended_channel: conversation.leadContext.recommendedChannel,
+              final_score: conversation.leadContext.finalScore,
+              preview_match_score: conversation.leadContext.previewMatchScore,
+              geo: conversation.leadContext.geo,
+            }
+          : null,
+        ops_state: {
+          niche: normalizedOpsState.niche,
+          city: normalizedOpsState.city,
+          owner: normalizedOpsState.owner,
+          commercial_status: normalizedOpsState.commercialStatus,
+          sender_status: normalizedOpsState.senderStatus,
+          contact_channel: normalizedOpsState.contactChannel,
+          sender_onboarding_possible:
+            normalizedOpsState.senderOnboardingPossible,
+        },
       }),
     },
     userId

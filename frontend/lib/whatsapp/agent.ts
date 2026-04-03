@@ -14,6 +14,7 @@ import {
 import {
   buildLeadAwareAgentStatePatch,
   requestLeadAwareWhatsAppReply,
+  requestProspectAwareWhatsAppReply,
 } from "@/lib/whatsapp/lead-context";
 import {
   normalizeWhatsAppAgentState,
@@ -23,7 +24,8 @@ import {
 
 const WHATSAPP_FAST_MODEL =
   process.env.WHATSAPP_FAST_MODEL?.trim() || "openai/gpt-4o";
-const WHATSAPP_BACKEND_REPLY_TIMEOUT_MS = 6000;
+const WHATSAPP_BACKEND_REPLY_TIMEOUT_MS = 3500;
+const WHATSAPP_PROSPECT_BACKEND_REPLY_TIMEOUT_MS = 2200;
 
 function normalizeBotReply(reply: string) {
   return reply
@@ -91,13 +93,18 @@ function isTemplateLikeReply(reply: string) {
 }
 
 function extractBackendReplyText(
-  response: Awaited<ReturnType<typeof requestLeadAwareWhatsAppReply>>
+  response:
+    | Awaited<ReturnType<typeof requestLeadAwareWhatsAppReply>>
+    | Awaited<ReturnType<typeof requestProspectAwareWhatsAppReply>>
 ) {
-  if (typeof response.response === "string") {
-    return response.response.trim();
+  const leadAwareResponse =
+    "response" in response ? response.response : undefined;
+
+  if (typeof leadAwareResponse === "string") {
+    return leadAwareResponse.trim();
   }
 
-  const responseMessage = response.response?.message?.trim();
+  const responseMessage = leadAwareResponse?.message?.trim();
   if (responseMessage) {
     return responseMessage;
   }
@@ -161,6 +168,24 @@ function buildReplyPrompt({
     .join("\n");
 }
 
+function isClinicSalesConversation(
+  conversation: WhatsAppConversation,
+  state: WhatsAppAgentState
+) {
+  if (conversation.linkedLeadId) {
+    return true;
+  }
+
+  return state.leadChannels.some((channel) =>
+    [
+      "sales_whatsapp",
+      "clinic_sales",
+      "outbound_whatsapp",
+      "inbound_whatsapp",
+    ].includes(channel)
+  );
+}
+
 export type WhatsAppReplyPlan = {
   classification: ReturnType<typeof classifyInboundLeadMessage>;
   nextState: WhatsAppAgentState;
@@ -191,10 +216,15 @@ export async function generateWhatsAppReplyPlan({
     incomingText,
     currentState,
   });
+  const clinicSalesConversation = isClinicSalesConversation(
+    conversation,
+    currentState
+  );
   const shouldBypassHeavyGeneration =
     (classification.isGreeting ||
       classification.isAcknowledgement ||
       classification.isAffirmation) &&
+    !clinicSalesConversation &&
     !classification.requestedNextStep &&
     !classification.handoffRequested &&
     !classification.optOut;
@@ -204,19 +234,30 @@ export async function generateWhatsAppReplyPlan({
   let replyText: string | null = null;
   let effectiveNextState = nextState;
 
-  if (!shouldBypassHeavyGeneration && conversation.linkedLeadId) {
+  if (!shouldBypassHeavyGeneration && clinicSalesConversation) {
     const backendAbortController = new AbortController();
+    const backendTimeoutMs = conversation.linkedLeadId
+      ? WHATSAPP_BACKEND_REPLY_TIMEOUT_MS
+      : WHATSAPP_PROSPECT_BACKEND_REPLY_TIMEOUT_MS;
     const backendTimeout = setTimeout(
       () => backendAbortController.abort(),
-      WHATSAPP_BACKEND_REPLY_TIMEOUT_MS
+      backendTimeoutMs
     );
 
     try {
-      const backendResponse = await requestLeadAwareWhatsAppReply({
-        leadId: conversation.linkedLeadId,
-        incomingText,
-        abortSignal: backendAbortController.signal,
-      });
+      const backendResponse = conversation.linkedLeadId
+        ? await requestLeadAwareWhatsAppReply({
+            leadId: conversation.linkedLeadId,
+            incomingText,
+            abortSignal: backendAbortController.signal,
+          })
+        : await requestProspectAwareWhatsAppReply({
+            conversation,
+            messages,
+            incomingText,
+            currentState,
+            abortSignal: backendAbortController.signal,
+          });
 
       const backendReply = normalizeBotReply(
         extractBackendReplyText(backendResponse) || ""

@@ -23,8 +23,19 @@ from fastapi import FastAPI, HTTPException, Header, Depends, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from src.db.models import Lead, LeadLifecycleState
+from src.db.models import (
+    Conversation,
+    ConversationMessage,
+    Lead,
+    LeadLifecycleState,
+)
 from src.agents.contact_intelligence import build_contact_intelligence
+from src.agents.sales_playbook import (
+    build_sales_fallback_response,
+    classify_sales_signals,
+    infer_sales_stage,
+    normalize_channel,
+)
 from src.graph.state import LeadGraphState
 
 # Configure logging
@@ -294,6 +305,23 @@ class ConversationRequest(BaseModel):
     lead_id: str
     message: str
     channel: Optional[str] = "email"
+
+
+class ProspectConversationMessage(BaseModel):
+    role: str = Field(..., pattern="^(prospect|ai|assistant|human)$")
+    message: str = Field(..., min_length=1)
+
+
+class ProspectConversationRequest(BaseModel):
+    message: str = Field(..., min_length=1)
+    channel: Optional[str] = "whatsapp"
+    contact_name: Optional[str] = None
+    contact_phone: Optional[str] = None
+    business_phone: Optional[str] = None
+    transcript: List[ProspectConversationMessage] = Field(default_factory=list, max_length=8)
+    entities: Dict[str, Any] = Field(default_factory=dict)
+    lead_context: Dict[str, Any] = Field(default_factory=dict)
+    ops_state: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ResolveContactRequest(BaseModel):
@@ -4591,6 +4619,234 @@ async def handle_conversation(
         raise
     except Exception as e:
         logger.error(f"Conversation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _build_prospect_analysis_bundle(
+    lead_context: Optional[Dict[str, Any]] = None,
+    ops_state: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    lead_context = lead_context or {}
+    ops_state = ops_state or {}
+    top_issue = lead_context.get("top_issue") or "booking drop-off on WhatsApp"
+    next_best_action = lead_context.get("next_best_action") or (
+        "understand the clinic workflow before suggesting any change"
+    )
+    niche = ops_state.get("niche") or "Derm & Aesthetic clinic"
+    city = ops_state.get("city")
+    decision_maker_name = lead_context.get("decision_maker_name")
+    decision_maker_role = lead_context.get("decision_maker_role")
+
+    return {
+        "guidance": {
+            "top_issue": top_issue,
+            "next_best_action": next_best_action,
+            "recommended_channel": "whatsapp",
+        },
+        "facts": {
+            "top_issue": top_issue,
+            "next_best_action": next_best_action,
+            "decision_maker_name": decision_maker_name,
+            "decision_maker_role": decision_maker_role,
+            "recommended_channel": "whatsapp",
+        },
+        "agent_context": {
+            "business_summary": f"Early-stage sales thread for a {niche} lead.",
+            "conversion_summary": f"Primary commercial angle: {top_issue}.",
+            "known_pain_points": [top_issue],
+            "trust_markers": [city] if city else [],
+            "decision_maker_name": decision_maker_name,
+            "decision_maker_role": decision_maker_role,
+            "recommended_offer": "WhatsApp enquiry handling and booking conversion",
+            "recommended_channel": "whatsapp",
+            "recommended_next_step": next_best_action,
+        },
+        "scores": {
+            "final_score": lead_context.get("final_score"),
+            "preview_match_score": lead_context.get("preview_match_score"),
+        },
+    }
+
+
+def _should_use_fast_prospect_opening(message: str, entities: Dict[str, Any]) -> bool:
+    normalized = str(message or "").strip().lower()
+    if not normalized:
+        return True
+
+    greeting_only = normalized in {
+        "hi",
+        "hii",
+        "hello",
+        "hey",
+        "yo",
+        "good morning",
+        "good afternoon",
+        "good evening",
+    }
+    very_short = len(normalized.split()) <= 3
+    has_real_signal = bool(
+        (entities.get("pain_points") or [])
+        or (entities.get("objection_categories") or [])
+        or entities.get("requested_next_step")
+        or entities.get("pain_confirmed")
+    )
+    return greeting_only or (very_short and not has_real_signal)
+
+
+def _build_prospect_fast_opening(message: str, ops_state: Optional[Dict[str, Any]] = None) -> str:
+    normalized = str(message or "").strip().lower()
+    ops_state = ops_state or {}
+    niche = str(ops_state.get("niche") or "").strip().lower()
+    clinic_label = "clinic"
+    if "hospital" in niche:
+        clinic_label = "hospital"
+    elif "dental" in niche or "dent" in niche:
+        clinic_label = "dental clinic"
+    elif niche:
+        clinic_label = "clinic"
+
+    if any(token in normalized for token in ("booking", "appointment", "consultation")):
+        return (
+            "Understood. Is this for one clinic or multiple branches, and do you want WhatsApp "
+            "to just capture enquiries or help confirm bookings too?"
+        )
+
+    return (
+        f"Hi, this is ZRAI. Is this for one {clinic_label} or multiple branches, and is the main need "
+        "enquiry capture, booking, or follow-up on WhatsApp?"
+    )
+
+
+@app.post("/api/v1/conversation/prospect")
+async def handle_prospect_conversation(
+    request: ProspectConversationRequest,
+    user_id: Optional[str] = Depends(get_user_id),
+):
+    """Handle fast clinic-sales reasoning for unlinked WhatsApp prospect threads."""
+    try:
+        conversation_agent = get_conversation_agent()
+        channel = normalize_channel(request.channel)
+        lead_context = request.lead_context or {}
+        ops_state = request.ops_state or {}
+
+        synthetic_lead = {
+            "lead_id": uuid4(),
+            "business_name": (
+                lead_context.get("company_name")
+                or request.contact_name
+                or "Clinic prospect"
+            ),
+            "category": ops_state.get("niche") or "clinic",
+            "location": ops_state.get("city"),
+        }
+        analysis_bundle = _build_prospect_analysis_bundle(
+            lead_context=lead_context,
+            ops_state=ops_state,
+        )
+
+        transcript = conversation_agent._hydrate_transcript(
+            [
+                {"role": item.role, "message": item.message}
+                for item in request.transcript[-6:]
+            ]
+        )
+        entities = conversation_agent._hydrate_entities(request.entities or {})
+
+        conversation = Conversation(
+            conversation_id=uuid4(),
+            lead_id=synthetic_lead["lead_id"],
+            transcript=transcript,
+            entities=entities,
+        )
+        conversation.transcript.append(
+            ConversationMessage(
+                role="prospect",
+                message=request.message,
+            )
+        )
+
+        entities = conversation_agent._extract_entities(
+            request.message,
+            conversation.entities,
+            channel=channel,
+            lead=synthetic_lead,
+        )
+        seed_signals = classify_sales_signals(request.message)
+        if seed_signals.get("lead_channels"):
+            entities.lead_channels = list(
+                dict.fromkeys([*entities.lead_channels, *seed_signals["lead_channels"]])
+            )
+        entities.current_channel = channel
+        entities.stage = infer_sales_stage(entities.model_dump())
+        conversation.entities = entities
+
+        if _should_use_fast_prospect_opening(request.message, entities.model_dump()):
+            ai_response = _build_prospect_fast_opening(
+                request.message,
+                ops_state=ops_state,
+            )
+            conversation.transcript.append(
+                ConversationMessage(
+                    role="ai",
+                    message=ai_response,
+                )
+            )
+            return {
+                "success": True,
+                "conversation": {
+                    "conversation_id": str(conversation.conversation_id),
+                    "entities": conversation.entities.model_dump(),
+                },
+                "ai_response": ai_response,
+                "needs_escalation": False,
+                "escalation_reason": None,
+            }
+
+        should_escalate, escalation_reasons = conversation_agent._check_escalation_criteria(
+            entities,
+            request.message,
+        )
+
+        if entities.opt_out:
+            ai_response = build_sales_fallback_response(
+                entities.model_dump(),
+                analysis_bundle,
+            )
+        else:
+            try:
+                ai_response = conversation_agent._generate_response(
+                    conversation,
+                    synthetic_lead,
+                    request.message,
+                    analysis_bundle,
+                    channel,
+                )
+            except Exception as exc:
+                logger.error(f"Prospect conversation response generation error: {exc}")
+                ai_response = build_sales_fallback_response(
+                    entities.model_dump(),
+                    analysis_bundle,
+                )
+
+        conversation.transcript.append(
+            ConversationMessage(
+                role="ai",
+                message=ai_response,
+            )
+        )
+
+        return {
+            "success": True,
+            "conversation": {
+                "conversation_id": str(conversation.conversation_id),
+                "entities": conversation.entities.model_dump(),
+            },
+            "ai_response": ai_response,
+            "needs_escalation": should_escalate,
+            "escalation_reason": ", ".join(escalation_reasons) if escalation_reasons else None,
+        }
+    except Exception as e:
+        logger.error(f"Prospect conversation error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
