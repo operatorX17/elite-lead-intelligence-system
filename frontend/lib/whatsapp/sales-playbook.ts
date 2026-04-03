@@ -250,6 +250,16 @@ function lastAssistantAskedPracticalStepConfirmation(
   );
 }
 
+function lastAssistantAskedCaptureVsBooking(reply: string | null | undefined) {
+  const normalized = String(reply ?? "");
+  return (
+    /\b(lead capture|collect (?:patient )?details|enquiry)\b/i.test(normalized) &&
+    /\b(confirmed booking|confirmed appointment|booking inside whatsapp|booking inside the chat)\b/i.test(
+      normalized
+    )
+  );
+}
+
 function isGeneralCapabilityQuestion(text: string) {
   return /\b(what can you do|who are you|who are u|who r u|what is this|what do you do|how can you help|what are you|what's your role|whats your role)\b/i.test(
     text
@@ -785,8 +795,22 @@ export function buildWhatsAppFallbackReply(
     if (state.painConfirmed && state.painPoints.includes("booking_gap")) {
       return pickFreshReply(
         [
-          "Understood. Is this for a single clinic or more than one branch? And do you want WhatsApp to just collect patient details, or actually confirm bookings too?",
-          "Got it. Is the goal to capture the patient enquiry first, or do you want patients to reach a confirmed appointment inside WhatsApp itself?",
+          "Understood. Tell me which one you want first: just enquiry capture on WhatsApp, or confirmed bookings inside WhatsApp. Also, is this for one clinic or multiple branches?",
+          "Got it. Pick the main goal first: enquiry capture only, or full booking inside WhatsApp. If relevant, tell me whether this is for one clinic or several branches.",
+        ],
+        replyHistory
+      );
+    }
+
+    if (
+      /\b(enquiry|inquiry|lead capture|capture only|just enquiry|just inquiry|collect (?:patient )?details)\b/i.test(
+        incomingText || ""
+      )
+    ) {
+      return pickFreshReply(
+        [
+          "Got it. So this is more of an enquiry capture flow. Is this for one clinic or multiple branches, and where are patients coming in from now: WhatsApp, Instagram, ads, or website?",
+          "Understood. Then the main flow is enquiry capture, not full booking. Tell me if this is one clinic or multiple branches, and what channels are bringing patients in now.",
         ],
         replyHistory
       );
@@ -808,6 +832,16 @@ export function buildWhatsAppFallbackReply(
     }
 
     if (isLightweightAffirmation(incomingText || "")) {
+      if (lastAssistantAskedCaptureVsBooking(latestAssistantReply)) {
+        return pickFreshReply(
+          [
+            "Tell me which one you want first: enquiry capture only, or confirmed bookings inside WhatsApp.",
+            "Pick one for me: just enquiry capture, or full booking inside WhatsApp.",
+          ],
+          replyHistory
+        );
+      }
+
       return pickFreshReply(
         [
           "Perfect. Tell me briefly what you want WhatsApp to handle first, and I’ll narrow it properly.",

@@ -62,3 +62,21 @@ test("clinic-sales greeting stays in healthcare intake mode for unknown inbound 
   assert.match(reply, /clinic|healthcare|whatsapp/i);
   assert.doesNotMatch(reply, /What are you looking to get sorted right now/i);
 });
+
+test("just enquiry is treated as a real workflow answer, not a generic follow-up loop", () => {
+  const seededState = whatsappState.createWhatsAppInboundSalesProspectState({
+    painPoints: ["booking_gap", "whatsapp_gap"],
+    painConfirmed: true,
+  } as any);
+
+  const reply = salesPlaybook.buildWhatsAppFallbackReply(
+    seededState,
+    [],
+    null,
+    "Just enquiry please!",
+    "Got it. Pick the main goal first: enquiry capture only, or full booking inside WhatsApp. If relevant, tell me whether this is for one clinic or several branches."
+  );
+
+  assert.match(reply, /one clinic|multiple branches|instagram|website|whatsapp/i);
+  assert.doesNotMatch(reply, /What are you looking to get sorted right now/i);
+});
