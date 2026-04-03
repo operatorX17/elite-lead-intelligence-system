@@ -2837,7 +2837,9 @@ def is_clinic_style_niche(raw_niche: str) -> bool:
 def should_use_osint_discovery(raw_niche: str) -> bool:
     """Return true when a niche should use public-web company discovery."""
     niche = (raw_niche or "").strip().lower()
-    return niche in OSINT_FIRST_NICHES
+    if niche in OSINT_FIRST_NICHES:
+        return True
+    return is_clinic_style_niche(niche)
 
 
 def build_osint_queries(raw_niche: str, raw_geo: str, requested_limit: int) -> List[str]:
@@ -2860,6 +2862,18 @@ def build_osint_queries(raw_niche: str, raw_geo: str, requested_limit: int) -> L
             f"{geo} fintech companies",
             f'{geo} payments platform "pricing"',
             f'{geo} fintech software "request a demo"',
+        ]
+    elif is_clinic_style_niche(niche):
+        premium_tokens = ["premium", "luxury", "high end", "high-end", "elite", "upscale"]
+        premium_hint = any(token in niche for token in premium_tokens)
+        clinic_core = '("aesthetic clinic" OR "skin clinic" OR "dermatology clinic" OR "cosmetic clinic" OR medspa OR "laser clinic")'
+        premium_clause = '("premium" OR luxury OR upscale OR elite OR "high-end") ' if premium_hint else ""
+        candidates = [
+            f'"{geo}" {premium_clause}{clinic_core} ("book appointment" OR "book consultation" OR whatsapp)',
+            f'"{geo}" {premium_clause}{clinic_core} ("consultation" OR "treatment" OR "skin" OR "laser")',
+            f'site:.com "{geo}" {premium_clause}{clinic_core} -jobs -supplier -wholesale -training',
+            f'"{geo}" ("skin clinic" OR "aesthetic clinic") ("lavelle road" OR indiranagar OR koramangala OR jayanagar OR "mg road" OR whitefield)',
+            f'"{geo}" ("dermatologist" OR "cosmetic dermatologist") ("clinic" OR consultation) -hospital -college',
         ]
     else:
         candidates = [
