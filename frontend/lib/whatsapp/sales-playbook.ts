@@ -260,6 +260,14 @@ function isOutboundClinicThread(state: WhatsAppAgentState) {
   return state.leadChannels.includes("outbound_whatsapp");
 }
 
+function isClinicSalesThread(state: WhatsAppAgentState) {
+  return (
+    isOutboundClinicThread(state) ||
+    state.leadChannels.includes("sales_whatsapp") ||
+    state.leadChannels.includes("clinic_sales")
+  );
+}
+
 function inferRole(text: string) {
   for (const [label, patterns] of Object.entries(ROLE_PATTERNS)) {
     if (patterns.some((pattern) => pattern.test(text))) {
@@ -495,6 +503,10 @@ export function inferNextBestMove(state: WhatsAppAgentState) {
     return "Keep the clinic in founder-led SDR mode: diagnose enquiry drop-off, quantify WhatsApp volume, then move to a 3-minute demo.";
   }
 
+  if (isClinicSalesThread(state) && !state.painConfirmed) {
+    return "Keep this in clinic-sales intake mode: confirm clinic context, clarify booking vs follow-up need, then narrow the real drop-off point.";
+  }
+
   switch (state.stage) {
     case "NEW":
     case "ENGAGED":
@@ -531,8 +543,12 @@ export function summarizeConversationState({
     `${conversation.contactName} is in ${state.stage.toLowerCase()} stage`,
   ];
 
-  if (isOutboundClinicThread(state) && !conversation.linkedLeadId) {
-    summaryParts.push("outbound clinic SDR thread");
+  if (isClinicSalesThread(state) && !conversation.linkedLeadId) {
+    summaryParts.push(
+      isOutboundClinicThread(state)
+        ? "outbound clinic SDR thread"
+        : "unlinked inbound clinic sales thread"
+    );
   }
 
   if (state.painPoints.length > 0) {
@@ -720,6 +736,101 @@ export function buildWhatsAppFallbackReply(
       [
         "The main thing I'm trying to understand is whether WhatsApp enquiries are actually turning into booked consults consistently, or whether some cool off before that. What's happening on your side?",
         "From what I see, most clinics don't lose demand - they lose momentum between the first message and the booked slot. Does that show up on your side too?",
+      ],
+      replyHistory
+    );
+  }
+
+  if (!isLinkedLeadThread && isClinicSalesThread(state)) {
+    if (state.optOut) {
+      return pickFreshReply(
+        [
+          "Understood. I’ll close this from here.",
+          "All good. I’ll stop here.",
+        ],
+        replyHistory
+      );
+    }
+
+    if (state.handoffRecommended || state.requestedNextStep === "call") {
+      return pickFreshReply(
+        [
+          "Better to keep this clean with a quick walkthrough. Do you want to do that now or later today?",
+          "This is easier to show properly than drag over text. Want a quick walkthrough?",
+        ],
+        replyHistory
+      );
+    }
+
+    if (isLightweightGreeting(incomingText || "")) {
+      return pickFreshReply(
+        [
+          "Hey. Is this for a clinic, hospital, or healthcare service? If yes, tell me whether you need patient booking, follow-up, or lead capture.",
+          "Hi. If this is for a clinic workflow, tell me the main need first: patient booking, follow-up, or enquiry handling.",
+        ],
+        replyHistory
+      );
+    }
+
+    if (isGeneralCapabilityQuestion(incomingText || "")) {
+      return pickFreshReply(
+        [
+          "I handle clinic-side WhatsApp conversations around booking, follow-up, and enquiry handling. Tell me what workflow you need help with.",
+          "I’m here for the clinic-side WhatsApp workflow. Tell me whether the issue is booking, follow-up, or patient enquiries going loose.",
+        ],
+        replyHistory
+      );
+    }
+
+    if (state.painConfirmed && state.painPoints.includes("booking_gap")) {
+      return pickFreshReply(
+        [
+          "Understood. Is the current need just lead capture on WhatsApp, or do you want patients to reach a confirmed booking inside the chat itself?",
+          "Got it. Do you want WhatsApp to only collect the enquiry, or to take the patient all the way to a confirmed booking?",
+        ],
+        replyHistory
+      );
+    }
+
+    if (
+      state.painConfirmed &&
+      (state.painPoints.includes("whatsapp_gap") ||
+        state.painPoints.includes("missed_follow_up") ||
+        state.painPoints.includes("slow_response"))
+    ) {
+      return pickFreshReply(
+        [
+          "Understood. What is actually breaking now: slow first reply, weak follow-up, or patients dropping before the booking gets confirmed?",
+          "That helps. Is the bigger issue reply speed, follow-up discipline, or chats going quiet before a slot is locked?",
+        ],
+        replyHistory
+      );
+    }
+
+    if (isLightweightAffirmation(incomingText || "")) {
+      return pickFreshReply(
+        [
+          "Good. Tell me the exact workflow you want: lead capture, patient booking, reminders, or follow-up.",
+          "Alright. What is the main thing you want this number to handle: booking, follow-up, reminders, or lead capture?",
+        ],
+        replyHistory
+      );
+    }
+
+    if (isLightweightAcknowledgement(incomingText || "")) {
+      return pickFreshReply(
+        [
+          "Okay. Give me the exact clinic-side workflow you want and I’ll keep it structured from there.",
+          "Alright. Tell me the booking or follow-up workflow you need, and I’ll narrow it properly.",
+        ],
+        replyHistory
+      );
+    }
+
+    return pickFreshReply(
+      [
+        "Tell me the clinic context and the workflow you need: patient booking, follow-up, reminders, or lead capture.",
+        "Give me the exact clinic-side need in one line - booking, follow-up, reminders, or enquiry handling - and I’ll take it from there.",
       ],
       replyHistory
     );
@@ -1034,6 +1145,33 @@ export function buildWhatsAppSystemPrompt({
       "If the latest inbound is a greeting, do not lose the outbound frame. Re-open with the same enquiry-drop-off conversation.",
       "If the clinic asks who you are or what you do, explain it plainly in one or two short lines and stay on the booking problem.",
       "If the clinic asks for details, give one concrete operational point instead of promising to show it later.",
+      `Current stage: ${state.stage}`,
+      `Priority: ${state.priority}`,
+      `State summary: ${state.summary ?? "none"}`,
+      `Next best move: ${state.nextBestMove ?? "none"}`,
+      `Last suggested reply: ${state.lastSuggestedReply ?? "none"}`,
+      `Pain points: ${state.painPoints.join(", ") || "not yet confirmed"}`,
+      `Objections: ${state.objectionCategories.join(", ") || "none"}`,
+      `Requested next step: ${state.requestedNextStep ?? "unknown"}`,
+      `Contact: ${conversation.contactName}`,
+      `Recent transcript:\n${transcript || "No prior transcript"}`,
+    ].join("\n");
+  }
+
+  if (!conversation.linkedLeadId && isClinicSalesThread(state)) {
+    return [
+      "You are a human-sounding clinic sales intake assistant on a WhatsApp sales line.",
+      "This is an inbound clinic prospect thread without a resolved lead record yet.",
+      "Do not act like a generic support bot.",
+      "Assume the contact is exploring clinic-side help with patient booking, follow-up, reminders, or enquiry handling unless the thread proves otherwise.",
+      "Never say you are an AI.",
+      "Keep replies short, calm, structured, and human.",
+      "Ask one grounded question at a time.",
+      "Do not jump into a long pitch.",
+      "First confirm whether this is for a clinic, hospital, or healthcare service.",
+      "Then clarify the exact workflow needed: booking, follow-up, reminders, or lead capture.",
+      "If they mention booking or WhatsApp patient handling, keep the thread in healthcare-sales mode instead of falling back to generic inbox language.",
+      "If they ask for pricing, proposal, sender setup, whether it can run on their number, or operational details, prepare a clean founder handoff.",
       `Current stage: ${state.stage}`,
       `Priority: ${state.priority}`,
       `State summary: ${state.summary ?? "none"}`,

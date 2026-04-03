@@ -352,6 +352,50 @@ export function createWhatsAppOpsState(overrides?: WhatsAppOpsStatePatch) {
   });
 }
 
+export function createWhatsAppInboundSalesProspectState({
+  summary,
+  nextBestMove,
+}: {
+  summary?: string | null;
+  nextBestMove?: string | null;
+} = {}) {
+  return createWhatsAppAgentState({
+    stage: "ENGAGED",
+    priority: "medium",
+    confidence: 0.32,
+    leadChannels: ["sales_whatsapp", "clinic_sales", "inbound_whatsapp"],
+    summary:
+      normalizeText(summary) ??
+      "Unlinked inbound clinic prospect on the sales WhatsApp line",
+    nextBestMove:
+      normalizeText(nextBestMove) ??
+      "Clarify whether this is for a clinic, what workflow is needed, and where booking or follow-up is breaking.",
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+export function createWhatsAppInboundSalesProspectOpsState({
+  niche,
+  city,
+  owner,
+  senderStatus,
+}: {
+  niche?: string | null;
+  city?: string | null;
+  owner?: string | null;
+  senderStatus?: WhatsAppSenderStatus;
+} = {}) {
+  return createWhatsAppOpsState({
+    commercialStatus: "replied",
+    senderStatus: senderStatus ?? "live",
+    niche: normalizeText(niche) ?? "Derm & Aesthetic",
+    city: normalizeText(city),
+    owner: normalizeText(owner),
+    contactChannel: "whatsapp",
+    senderOnboardingPossible: true,
+  });
+}
+
 export function mergeWhatsAppAgentState(
   current: Partial<WhatsAppAgentState> | null | undefined,
   patch: Partial<WhatsAppAgentState>

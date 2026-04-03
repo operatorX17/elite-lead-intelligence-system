@@ -26,7 +26,12 @@ import {
   verifyWhatsAppWebhookSignature,
 } from "@/lib/whatsapp/provider";
 import { isWhatsAppSandboxLead } from "@/lib/whatsapp/sandbox";
-import { normalizeWhatsAppOpsState } from "@/lib/whatsapp/state";
+import {
+  createWhatsAppInboundSalesProspectOpsState,
+  createWhatsAppInboundSalesProspectState,
+  normalizeWhatsAppAgentState,
+  normalizeWhatsAppOpsState,
+} from "@/lib/whatsapp/state";
 import { waitUntil } from "@vercel/functions";
 
 const WHATSAPP_REPLY_BUDGET_MS = 8000;
@@ -77,6 +82,8 @@ async function processInboundWhatsAppMessage({
     }
 
     if (!latestConversation.linkedLeadId) {
+      let resolvedLeadContext = false;
+
       try {
         const resolved = await resolveLeadContextForWhatsAppThread({
           contactPhone: latestConversation.contactPhone,
@@ -84,6 +91,7 @@ async function processInboundWhatsAppMessage({
           abortSignal: replyAbortController.signal,
         });
         if (resolved?.leadContext) {
+          resolvedLeadContext = true;
           latestConversation =
             (await updateWhatsAppConversationLeadLink({
               id: latestConversation.id,
@@ -93,6 +101,49 @@ async function processInboundWhatsAppMessage({
         }
       } catch (error) {
         console.error("[whatsapp:webhook] Lead linking failed", error);
+      }
+
+      if (!resolvedLeadContext) {
+        const currentAgentState = normalizeWhatsAppAgentState(
+          latestConversation.agentState
+        );
+        const currentOpsState = normalizeWhatsAppOpsState(
+          latestConversation.opsState
+        );
+        const shouldBootstrapSalesProspect =
+          latestConversation.source === "webhook" &&
+          !latestConversation.leadContext?.leadId &&
+          currentAgentState.leadChannels.length === 0;
+
+        if (shouldBootstrapSalesProspect) {
+          const seededAgentState = createWhatsAppInboundSalesProspectState({
+            summary: `Unlinked inbound clinic prospect on ${latestConversation.businessPhone || "the sales line"}`,
+          });
+          const seededOpsState = createWhatsAppInboundSalesProspectOpsState({
+            niche: currentOpsState.niche ?? "Derm & Aesthetic",
+            city: currentOpsState.city,
+            owner: currentOpsState.owner,
+            senderStatus: latestConversation.businessPhone
+              ? "live"
+              : currentOpsState.senderStatus,
+          });
+
+          latestConversation =
+            (await updateWhatsAppConversationAgentState({
+              id: latestConversation.id,
+              patch: seededAgentState,
+            })) || latestConversation;
+
+          await updateWhatsAppConversationOpsState({
+            id: latestConversation.id,
+            patch: seededOpsState,
+          });
+
+          latestConversation = {
+            ...latestConversation,
+            opsState: seededOpsState,
+          };
+        }
       }
     }
 
