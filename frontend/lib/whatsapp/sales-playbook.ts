@@ -765,8 +765,8 @@ export function buildWhatsAppFallbackReply(
     if (isLightweightGreeting(incomingText || "")) {
       return pickFreshReply(
         [
-          "Hey. Is this for a clinic, hospital, or healthcare service? If yes, tell me whether you need patient booking, follow-up, or lead capture.",
-          "Hi. If this is for a clinic workflow, tell me the main need first: patient booking, follow-up, or enquiry handling.",
+          "Hi, this is ZRAI. Happy to help. Is this for your clinic or healthcare team? Tell me a little about what you want WhatsApp to handle.",
+          "Hi, this is ZRAI. If this is for a clinic or healthcare setup, tell me briefly what you want to set up on WhatsApp and I’ll guide from there.",
         ],
         replyHistory
       );
@@ -785,8 +785,8 @@ export function buildWhatsAppFallbackReply(
     if (state.painConfirmed && state.painPoints.includes("booking_gap")) {
       return pickFreshReply(
         [
-          "Understood. Is the current need just lead capture on WhatsApp, or do you want patients to reach a confirmed booking inside the chat itself?",
-          "Got it. Do you want WhatsApp to only collect the enquiry, or to take the patient all the way to a confirmed booking?",
+          "Understood. Is this for a single clinic or more than one branch? And do you want WhatsApp to just collect patient details, or actually confirm bookings too?",
+          "Got it. Is the goal to capture the patient enquiry first, or do you want patients to reach a confirmed appointment inside WhatsApp itself?",
         ],
         replyHistory
       );
@@ -810,8 +810,8 @@ export function buildWhatsAppFallbackReply(
     if (isLightweightAffirmation(incomingText || "")) {
       return pickFreshReply(
         [
-          "Good. Tell me the exact workflow you want: lead capture, patient booking, reminders, or follow-up.",
-          "Alright. What is the main thing you want this number to handle: booking, follow-up, reminders, or lead capture?",
+          "Perfect. Tell me briefly what you want WhatsApp to handle first, and I’ll narrow it properly.",
+          "Alright. Tell me the main workflow you want help with on WhatsApp, and I’ll take it step by step.",
         ],
         replyHistory
       );
@@ -829,8 +829,8 @@ export function buildWhatsAppFallbackReply(
 
     return pickFreshReply(
       [
-        "Tell me the clinic context and the workflow you need: patient booking, follow-up, reminders, or lead capture.",
-        "Give me the exact clinic-side need in one line - booking, follow-up, reminders, or enquiry handling - and I’ll take it from there.",
+        "Tell me a little about the clinic and what you want WhatsApp to handle, and I’ll keep it clear from there.",
+        "Give me a little context about the clinic and the workflow you want on WhatsApp, and I’ll guide you properly.",
       ],
       replyHistory
     );
@@ -1166,10 +1166,11 @@ export function buildWhatsAppSystemPrompt({
       "Assume the contact is exploring clinic-side help with patient booking, follow-up, reminders, or enquiry handling unless the thread proves otherwise.",
       "Never say you are an AI.",
       "Keep replies short, calm, structured, and human.",
+      "On the first turn, introduce yourself lightly as ZRAI instead of sounding like an anonymous bot.",
       "Ask one grounded question at a time.",
       "Do not jump into a long pitch.",
-      "First confirm whether this is for a clinic, hospital, or healthcare service.",
-      "Then clarify the exact workflow needed: booking, follow-up, reminders, or lead capture.",
+      "First confirm whether this is for a clinic, hospital, or healthcare service, then ask for a little context.",
+      "After that, clarify the workflow naturally: booking, follow-up, reminders, lead capture, or another clinic-side need.",
       "If they mention booking or WhatsApp patient handling, keep the thread in healthcare-sales mode instead of falling back to generic inbox language.",
       "If they ask for pricing, proposal, sender setup, whether it can run on their number, or operational details, prepare a clean founder handoff.",
       `Current stage: ${state.stage}`,

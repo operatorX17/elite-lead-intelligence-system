@@ -58,6 +58,7 @@ test("clinic-sales greeting stays in healthcare intake mode for unknown inbound 
     null
   );
 
-  assert.match(reply, /clinic|hospital|healthcare|booking|follow-up/i);
+  assert.match(reply, /zrai/i);
+  assert.match(reply, /clinic|healthcare|whatsapp/i);
   assert.doesNotMatch(reply, /What are you looking to get sorted right now/i);
 });
