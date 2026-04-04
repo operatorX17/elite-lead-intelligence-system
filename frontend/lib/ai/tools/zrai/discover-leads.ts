@@ -10,6 +10,37 @@ import type { ChatMessage } from "@/lib/types";
 import { MAX_DISCOVERY_LIMIT, ZRAI_BACKEND_URL } from "@/lib/zrai/constants";
 import { createZRAIProgressReporter } from "./progress";
 
+function normalizeClinicDiscoveryNiche(niche: string): string {
+  const raw = String(niche || "").trim();
+  const lowered = raw.toLowerCase();
+
+  if (
+    /(skin|aesthetic|derma|dermatology|cosmetic|medspa|beauty)/i.test(lowered)
+  ) {
+    return "premium skin and aesthetic clinics";
+  }
+
+  if (/(dental|dentist|orthodontic|oral)/i.test(lowered)) {
+    return "premium dental clinics";
+  }
+
+  if (/(hair|transplant|trichology)/i.test(lowered)) {
+    return "premium hair clinics";
+  }
+
+  return raw;
+}
+
+function isBudgetConstraint(detail: string | undefined): boolean {
+  const message = String(detail || "").toLowerCase();
+  return (
+    message.includes("remaining usage") ||
+    message.includes("billing/subscription") ||
+    message.includes("budget exceeded") ||
+    message.includes("paid plan")
+  );
+}
+
 export const discoverLeads = ({
   dataStream,
 }: {
@@ -49,8 +80,9 @@ Only set mock=true when the user explicitly asks for mock, fake, or test data.`,
         ),
     }),
     execute: async ({ niche, geo, limit, mock }) => {
+      const normalizedNiche = normalizeClinicDiscoveryNiche(niche);
       console.log(
-        `[discoverLeads] Starting discovery: niche=${niche}, geo=${geo}, limit=${limit}, mock=${mock}`
+        `[discoverLeads] Starting discovery: niche=${niche}, normalizedNiche=${normalizedNiche}, geo=${geo}, limit=${limit}, mock=${mock}`
       );
       const progress = createZRAIProgressReporter({
         dataStream,
@@ -78,11 +110,14 @@ Only set mock=true when the user explicitly asks for mock, fake, or test data.`,
             : "Calling the live discovery backend and waiting for lead results."
         );
 
-        const response = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ niche, geo, limit, mock }),
-        });
+        const callDiscovery = async (requestedNiche: string) =>
+          fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ niche: requestedNiche, geo, limit, mock }),
+          });
+
+        let response = await callDiscovery(normalizedNiche || niche);
 
         console.log(`[discoverLeads] Response status: ${response.status}`);
 
@@ -98,13 +133,52 @@ Only set mock=true when the user explicitly asks for mock, fake, or test data.`,
             detail = errorText;
           }
 
+          if (isBudgetConstraint(detail) && normalizedNiche !== niche) {
+            console.warn(
+              `[discoverLeads] Retrying discovery with normalized clinic niche after budget-style failure: ${normalizedNiche}`
+            );
+            response = await callDiscovery(normalizedNiche);
+            if (response.ok) {
+              const retryData = await response.json();
+              progress.advance(
+                2,
+                `Normalized the clinic query and prepared ${retryData.count} discovered lead${retryData.count === 1 ? "" : "s"} for review.`,
+                { discovered: retryData.count, retried: true }
+              );
+              progress.success(
+                `Discovery complete. Prepared ${retryData.count} lead${retryData.count === 1 ? "" : "s"} for review.`,
+                { discovered: retryData.count, runId: retryData.run_id ?? null }
+              );
+              return {
+                success: true,
+                leads: retryData.leads,
+                count: retryData.count,
+                run_id: retryData.run_id,
+                summary:
+                  retryData.count > 0
+                    ? `Discovered ${retryData.count} real leads in the ${normalizedNiche} niche (${geo}) using the live discovery backend.`
+                    : `Discovery completed for ${normalizedNiche} in ${geo}, but no verified leads matched the current filters yet.`,
+                artifactTrigger: {
+                  kind: "lead-list" as const,
+                  data: {
+                    leads: retryData.leads,
+                    niche: normalizedNiche,
+                    geo,
+                  },
+                },
+              };
+            }
+          }
+
           const normalizedDetail = detail?.trim();
           const suggestion = normalizedDetail?.includes("getaddrinfo failed")
             ? "Supabase is unreachable in this local environment. Restart the backend so it can use the local memory fallback. Do not retry automatically."
             : normalizedDetail?.toLowerCase().includes("timed out")
               ? "Live discovery timed out. Stop here and ask the user whether to retry with a narrower query or smaller lead count."
-              : response.status >= 500
-                ? "The backend is up, but discovery failed inside the service. Check the backend logs for the real dependency error."
+              : isBudgetConstraint(normalizedDetail)
+                ? "Discovery hit an upstream scraper budget constraint. Refine the niche or retry with a clinic-specific query instead of switching to mock data."
+                : response.status >= 500
+                  ? "The backend is up, but discovery failed inside the service. Check the backend logs for the real dependency error."
                 : "Check if the ZRAI backend server is running on port 8001.";
           progress.error(
             1,
