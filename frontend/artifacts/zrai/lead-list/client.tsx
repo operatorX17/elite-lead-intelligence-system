@@ -23,6 +23,7 @@ import {
   needsFounderIntelligence,
   type FounderIntelPayload,
 } from "@/lib/zrai/founder-intelligence";
+import { ensurePersistedLead, isUuidLeadId } from "@/lib/zrai/lead-resolution";
 import type { AnalysisBundle, Lead, SignalFacts } from "@/lib/zrai/types";
 import { getZRAILeadByIdEndpoint, ZRAI_ENDPOINTS } from "@/lib/zrai/constants";
 
@@ -545,6 +546,30 @@ function sanitizeLeadRows(leads: Lead[]) {
   return leads.filter((lead) => Boolean(lead?.id && lead?.company_name));
 }
 
+function replaceLeadRow(existing: Lead[], previousLeadId: string, incoming: Lead) {
+  const filtered = existing.filter((lead) => lead.id !== previousLeadId && lead.id !== incoming.id);
+  return sanitizeLeadRows([...filtered, incoming]);
+}
+
+function replaceProcessedLeadDetails(
+  existing: Record<string, ProcessedLeadDetails> | undefined,
+  previousLeadId: string,
+  nextLeadId: string
+) {
+  const current = { ...(existing || {}) };
+  const previousDetails = current[previousLeadId];
+  if (previousLeadId !== nextLeadId) {
+    delete current[previousLeadId];
+  }
+  if (previousDetails) {
+    current[nextLeadId] = {
+      ...(current[nextLeadId] || {}),
+      ...previousDetails,
+    };
+  }
+  return current;
+}
+
 function serializeLeadListPayload(
   leads: Lead[],
   metadata?: Pick<LeadListMetadata, "filter" | "processedDetails" | "sortBy" | "sortOrder">
@@ -984,6 +1009,38 @@ function LeadListContent({
     setProcessingIds((prev) => Array.from(new Set([...prev, ...freshLeadIds])));
 
     try {
+      const persistedLeadMap = new Map<string, Lead>();
+      let nextLeadRows = leads;
+      let nextProcessedDetails = processedDetails || {};
+
+      for (const leadId of freshLeadIds) {
+        const rawLead = leads.find((candidate) => candidate.id === leadId);
+        if (!rawLead) {
+          continue;
+        }
+
+        if (isUuidLeadId(rawLead.id)) {
+          persistedLeadMap.set(leadId, rawLead);
+          continue;
+        }
+
+        const importedLead = await ensurePersistedLead(rawLead);
+        persistedLeadMap.set(leadId, importedLead);
+        nextLeadRows = replaceLeadRow(nextLeadRows, rawLead.id, importedLead);
+        nextProcessedDetails = replaceProcessedLeadDetails(
+          nextProcessedDetails,
+          rawLead.id,
+          importedLead.id
+        );
+      }
+
+      if (nextLeadRows !== leads || nextProcessedDetails !== (processedDetails || {})) {
+        syncLeadListState({
+          nextLeads: nextLeadRows,
+          nextProcessedDetails,
+        });
+      }
+
       const response = await fetch(ZRAI_ENDPOINTS.processLeads, {
         method: "POST",
         headers: {
@@ -991,7 +1048,7 @@ function LeadListContent({
         },
         signal: controller.signal,
         body: JSON.stringify({
-          lead_ids: freshLeadIds,
+          lead_ids: freshLeadIds.map((leadId) => persistedLeadMap.get(leadId)?.id || leadId),
           include_outreach: true,
         }),
       });
@@ -1195,9 +1252,40 @@ function LeadListContent({
       return;
     }
 
+    const resolvedLead = isUuidLeadId(selectedLead.id)
+      ? selectedLead
+      : await ensurePersistedLead(selectedLead);
+    const effectiveLead =
+      resolvedLead.id === selectedLead.id
+        ? selectedLead
+        : ({
+            ...resolvedLead,
+            analysis_state: selectedLead.analysis_state,
+            score_kind: selectedLead.score_kind,
+            preview_summary: selectedLead.preview_summary,
+            source: resolvedLead.source || selectedLead.source,
+            source_label: resolvedLead.source_label || selectedLead.source_label,
+          } as Lead);
+
+    if (effectiveLead.id !== selectedLead.id) {
+      const nextLeadRows = replaceLeadRow(leads, selectedLead.id, effectiveLead);
+      const nextProcessedDetails = replaceProcessedLeadDetails(
+        processedDetails || {},
+        selectedLead.id,
+        effectiveLead.id
+      );
+      syncLeadListState({
+        nextLeads: nextLeadRows,
+        nextProcessedDetails,
+      });
+      setSelectedLead(effectiveLead);
+      setSelectedLeadLive(effectiveLead);
+      setSelectedLeadLiveDetails(nextProcessedDetails[effectiveLead.id] || null);
+    }
+
     const controller = new AbortController();
-    processControllersRef.current[selectedLead.id] = controller;
-    setProcessingIds((prev) => Array.from(new Set([...prev, selectedLead.id])));
+    processControllersRef.current[effectiveLead.id] = controller;
+    setProcessingIds((prev) => Array.from(new Set([...prev, effectiveLead.id])));
 
     try {
       const response = await fetch(ZRAI_ENDPOINTS.analyzeLead, {
@@ -1207,8 +1295,9 @@ function LeadListContent({
         },
         signal: controller.signal,
         body: JSON.stringify({
-          lead_id: selectedLead.id,
+          lead_id: effectiveLead.id,
           include_outreach: true,
+          lead: effectiveLead,
         }),
       });
 
@@ -1226,7 +1315,7 @@ function LeadListContent({
 
       if (queued) {
         const queuedLead = {
-          ...selectedLead,
+          ...effectiveLead,
           analysis_state: "analyzing",
         } as Lead;
         const mergedQueuedLeads = mergeLeadRows(leads, [queuedLead]);
@@ -1290,7 +1379,7 @@ function LeadListContent({
         toast.error(error instanceof Error ? error.message : "Lead analysis failed");
       }
     } finally {
-      clearProcessing([selectedLead.id]);
+      clearProcessing([effectiveLead.id]);
     }
   };
 
@@ -2078,13 +2167,38 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
             toast.error("No leads available to process.");
             return;
           }
+          const persistedTopLeads = await Promise.all(
+            topLeads.map((lead) =>
+              isUuidLeadId(lead.id) ? Promise.resolve(lead) : ensurePersistedLead(lead)
+            )
+          );
+          const replacedLeadRows = topLeads.reduce((nextLeads, lead, index) => {
+            const importedLead = persistedTopLeads[index];
+            return importedLead.id === lead.id
+              ? nextLeads
+              : replaceLeadRow(nextLeads, lead.id, importedLead);
+          }, leads);
+          const replacedProcessedDetails = topLeads.reduce(
+            (nextDetails, lead, index) =>
+              persistedTopLeads[index].id === lead.id
+                ? nextDetails
+                : replaceProcessedLeadDetails(nextDetails, lead.id, persistedTopLeads[index].id),
+            metadata?.processedDetails || {}
+          );
+          if (replacedLeadRows !== leads || replacedProcessedDetails !== (metadata?.processedDetails || {})) {
+            setMetadata((prev: LeadListMetadata) => ({
+              ...prev,
+              leads: replacedLeadRows,
+              processedDetails: replacedProcessedDetails,
+            }));
+          }
           const response = await fetch(ZRAI_ENDPOINTS.processLeads, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              lead_ids: topLeads.map((lead) => lead.id),
+              lead_ids: persistedTopLeads.map((lead) => lead.id),
               include_outreach: true,
             }),
           });
@@ -2155,7 +2269,8 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
           }
 
           const enrichedLeads: Lead[] = [];
-          for (const lead of visibleLeads) {
+          for (const rawLead of visibleLeads) {
+            const lead = isUuidLeadId(rawLead.id) ? rawLead : await ensurePersistedLead(rawLead);
             const response = await fetch(ZRAI_ENDPOINTS.enrich, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -2222,7 +2337,13 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
           const response = await fetch(ZRAI_ENDPOINTS.score, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ lead_ids: visibleLeads.map((lead) => lead.id) }),
+            body: JSON.stringify({
+              lead_ids: await Promise.all(
+                visibleLeads.map(async (lead) =>
+                  isUuidLeadId(lead.id) ? lead.id : (await ensurePersistedLead(lead)).id
+                )
+              ),
+            }),
           });
 
           if (!response.ok) {

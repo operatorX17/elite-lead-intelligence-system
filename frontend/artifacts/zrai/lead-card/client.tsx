@@ -15,6 +15,7 @@ import {
   needsFounderIntelligence,
   type FounderIntelPayload,
 } from "@/lib/zrai/founder-intelligence";
+import { ensurePersistedLead, isUuidLeadId } from "@/lib/zrai/lead-resolution";
 import { getZRAILeadByIdEndpoint, ZRAI_ENDPOINTS } from "@/lib/zrai/constants";
 import type { AnalysisBundle, Lead, SignalFacts } from "@/lib/zrai/types";
 
@@ -412,6 +413,10 @@ function LeadStatusBadge({ status }: { status: string }) {
   );
 }
 
+async function resolvePersistentLead(lead: Lead) {
+  return isUuidLeadId(lead.id) ? lead : ensurePersistedLead(lead);
+}
+
 function LeadCardContent({
   content,
   metadata,
@@ -694,12 +699,23 @@ function LeadCardContent({
 
     setIsAnalyzing(true);
     try {
+      const persistentLead = await resolvePersistentLead(lead);
+      if (persistentLead.id !== lead.id) {
+        setMetadata((prev: LeadCardMetadata) => ({
+          ...prev,
+          lead: persistentLead,
+          liveLead: persistentLead,
+        }));
+        setLiveLead(persistentLead);
+      }
+
       const response = await fetch(ZRAI_ENDPOINTS.analyzeLead, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          lead_id: lead.id,
+          lead_id: persistentLead.id,
           include_outreach: true,
+          lead: persistentLead,
         }),
       });
 
@@ -717,7 +733,7 @@ function LeadCardContent({
 
       if (queued) {
         const queuedLead = {
-          ...lead,
+          ...persistentLead,
           analysis_state: "analyzing",
         } as Lead;
         const queuedProcessedDetails = {
@@ -1254,11 +1270,12 @@ export const leadCardArtifact = new Artifact<"lead-card", LeadCardMetadata>({
           toast.error("No lead loaded.");
           return;
         }
+        const persistentLead = await resolvePersistentLead(lead);
 
         const response = await fetch(ZRAI_ENDPOINTS.enrich, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ lead_id: lead.id }),
+          body: JSON.stringify({ lead_id: persistentLead.id }),
         });
 
         if (!response.ok) {
@@ -1301,11 +1318,12 @@ export const leadCardArtifact = new Artifact<"lead-card", LeadCardMetadata>({
           toast.error("No lead loaded.");
           return;
         }
+        const persistentLead = await resolvePersistentLead(lead);
 
         const response = await fetch(ZRAI_ENDPOINTS.score, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ lead_ids: [lead.id] }),
+          body: JSON.stringify({ lead_ids: [persistentLead.id] }),
         });
 
         if (!response.ok) {
@@ -1356,12 +1374,13 @@ export const leadCardArtifact = new Artifact<"lead-card", LeadCardMetadata>({
           toast.error("No lead loaded.");
           return;
         }
+        const persistentLead = await resolvePersistentLead(lead);
 
         const response = await fetch(ZRAI_ENDPOINTS.outreach, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            lead_id: lead.id,
+            lead_id: persistentLead.id,
             channel: "email",
             action: "draft",
           }),
@@ -1402,12 +1421,13 @@ export const leadCardArtifact = new Artifact<"lead-card", LeadCardMetadata>({
           toast.error("No lead loaded.");
           return;
         }
+        const persistentLead = await resolvePersistentLead(lead);
 
         const response = await fetch(ZRAI_ENDPOINTS.analyzeLead, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            lead_id: lead.id,
+            lead_id: persistentLead.id,
             include_outreach: true,
           }),
         });
@@ -1427,7 +1447,7 @@ export const leadCardArtifact = new Artifact<"lead-card", LeadCardMetadata>({
 
         if (queued) {
           const queuedLead = {
-            ...lead,
+            ...persistentLead,
             analysis_state: "analyzing",
           } as Lead;
           const queuedProcessedDetails = {
@@ -1449,7 +1469,7 @@ export const leadCardArtifact = new Artifact<"lead-card", LeadCardMetadata>({
 
           for (let attempt = 0; attempt < 45; attempt += 1) {
             await new Promise((resolve) => setTimeout(resolve, 4000));
-            const latestResponse = await fetch(getZRAILeadByIdEndpoint(lead.id));
+            const latestResponse = await fetch(getZRAILeadByIdEndpoint(persistentLead.id));
             if (!latestResponse.ok) {
               continue;
             }
