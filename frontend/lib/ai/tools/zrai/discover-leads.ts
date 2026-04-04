@@ -10,6 +10,8 @@ import type { ChatMessage } from "@/lib/types";
 import { MAX_DISCOVERY_LIMIT, ZRAI_BACKEND_URL } from "@/lib/zrai/constants";
 import { createZRAIProgressReporter } from "./progress";
 
+const FIRECRAWL_SEARCH_URL = "https://api.firecrawl.dev/v1/search";
+
 function normalizeClinicDiscoveryNiche(niche: string): string {
   const raw = String(niche || "").trim();
   const lowered = raw.toLowerCase();
@@ -29,6 +31,199 @@ function normalizeClinicDiscoveryNiche(niche: string): string {
   }
 
   return raw;
+}
+
+function buildClinicDiscoveryFallbacks(niche: string): string[] {
+  const raw = String(niche || "").trim();
+  const normalized = normalizeClinicDiscoveryNiche(raw);
+  const candidates = [
+    raw,
+    normalized,
+    "premium skin and aesthetic clinics",
+    "skin clinics",
+    "aesthetic clinics",
+    "dermatology clinics",
+    "cosmetic clinics",
+  ];
+
+  const deduped: string[] = [];
+  const seen = new Set<string>();
+  for (const candidate of candidates) {
+    const value = String(candidate || "").trim();
+    const key = value.toLowerCase();
+    if (!value || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    deduped.push(value);
+  }
+  return deduped;
+}
+
+function buildClinicFirecrawlQueries(niche: string, geo: string): string[] {
+  const normalized = normalizeClinicDiscoveryNiche(niche).toLowerCase();
+
+  if (/(skin|aesthetic|derma|dermatology|cosmetic|medspa|beauty)/i.test(normalized)) {
+    return [
+      `site:.in ${geo} "skin clinic" "book appointment"`,
+      `${geo} premium dermatology clinic`,
+      `${geo} "aesthetic clinic" whatsapp`,
+      `${geo} "cosmetic clinic" consultation`,
+    ];
+  }
+
+  if (/(dental|dentist|orthodontic|oral)/i.test(normalized)) {
+    return [
+      `site:.in ${geo} "dental clinic" "book appointment"`,
+      `${geo} premium dental clinic`,
+      `${geo} cosmetic dentistry clinic`,
+    ];
+  }
+
+  if (/(hair|transplant|trichology)/i.test(normalized)) {
+    return [
+      `site:.in ${geo} "hair transplant clinic" consultation`,
+      `${geo} premium hair clinic`,
+      `${geo} trichology clinic whatsapp`,
+    ];
+  }
+
+  return [`${geo} ${niche}`];
+}
+
+function extractDomain(rawUrl: string): string {
+  try {
+    return new URL(rawUrl).hostname.replace(/^www\./, "").toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function inferCompanyName(rawUrl: string, title: string): string {
+  const normalizedTitle = String(title || "")
+    .split("|")[0]
+    .split("-")[0]
+    .trim();
+  if (normalizedTitle.length >= 3) {
+    return normalizedTitle;
+  }
+
+  const domain = extractDomain(rawUrl);
+  const stem = domain.split(".")[0]?.replace(/[-_]+/g, " ").trim() || domain;
+  return stem
+    .split(" ")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function isBlockedClinicSearchResult(rawUrl: string, title: string): boolean {
+  const domain = extractDomain(rawUrl);
+  const loweredTitle = String(title || "").toLowerCase();
+
+  if (!domain) {
+    return true;
+  }
+
+  if (
+    [
+      "instagram.com",
+      "facebook.com",
+      "m.facebook.com",
+      "linkedin.com",
+      "www.linkedin.com",
+      "youtube.com",
+      "x.com",
+      "twitter.com",
+    ].includes(domain)
+  ) {
+    return true;
+  }
+
+  if (
+    loweredTitle.includes("top 10") ||
+    loweredTitle.includes("list of best") ||
+    loweredTitle.includes("best skin clinics") ||
+    loweredTitle.includes("near me")
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+async function discoverClinicLeadsWithFirecrawl({
+  geo,
+  limit,
+  niche,
+}: {
+  geo: string;
+  limit: number;
+  niche: string;
+}) {
+  const apiKey = process.env.FIRECRAWL_API_KEY;
+  if (!apiKey) {
+    return [];
+  }
+
+  const queries = buildClinicFirecrawlQueries(niche, geo);
+  const leads: Array<Record<string, unknown>> = [];
+  const seenDomains = new Set<string>();
+
+  for (const query of queries) {
+    const response = await fetch(FIRECRAWL_SEARCH_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        query,
+        limit: Math.min(Math.max(limit, 8), 10),
+      }),
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      continue;
+    }
+
+    const payload = (await response.json()) as {
+      data?: Array<{ description?: string; title?: string; url?: string }>;
+    };
+
+    for (const item of payload.data || []) {
+      const website = String(item.url || "").trim();
+      const domain = extractDomain(website);
+      const title = String(item.title || "").trim();
+
+      if (!website || !domain || seenDomains.has(domain)) {
+        continue;
+      }
+      if (isBlockedClinicSearchResult(website, title)) {
+        continue;
+      }
+
+      seenDomains.add(domain);
+      leads.push({
+        id: `fc-${domain}`,
+        company_name: inferCompanyName(website, title),
+        domain,
+        website,
+        niche,
+        geo,
+        status: "discovered",
+        source: "firecrawl-search",
+        snippet: item.description || "",
+      });
+
+      if (leads.length >= limit) {
+        return leads;
+      }
+    }
+  }
+
+  return leads;
 }
 
 function isBudgetConstraint(detail: string | undefined): boolean {
@@ -101,6 +296,7 @@ Only set mock=true when the user explicitly asks for mock, fake, or test data.`,
         // Call backend directly (bypassing frontend API route for reliability)
         const backendUrl = ZRAI_BACKEND_URL || "http://localhost:8001";
         const url = `${backendUrl}/api/v1/discover`;
+        const clinicFallbackNiches = buildClinicDiscoveryFallbacks(niche);
 
         console.log(`[discoverLeads] Calling backend: ${url}`);
         progress.advance(
@@ -196,6 +392,86 @@ Only set mock=true when the user explicitly asks for mock, fake, or test data.`,
 
         const data = await response.json();
         console.log(`[discoverLeads] Success: ${data.count} leads discovered`);
+
+        if (!mock && Number(data.count || 0) === 0 && clinicFallbackNiches.length > 1) {
+          for (const fallbackNiche of clinicFallbackNiches.slice(1)) {
+            console.warn(
+              `[discoverLeads] Primary discovery returned 0 leads; retrying clinic fallback niche: ${fallbackNiche}`
+            );
+            const fallbackResponse = await callDiscovery(fallbackNiche);
+            if (!fallbackResponse.ok) {
+              continue;
+            }
+
+            const fallbackData = await fallbackResponse.json();
+            if (Number(fallbackData.count || 0) <= 0) {
+              continue;
+            }
+
+            progress.advance(
+              2,
+              `Broadened the clinic search and found ${fallbackData.count} lead${fallbackData.count === 1 ? "" : "s"} for review.`,
+              { discovered: fallbackData.count, retried: true }
+            );
+            progress.success(
+              `Discovery complete. Prepared ${fallbackData.count} lead${fallbackData.count === 1 ? "" : "s"} for review.`,
+              { discovered: fallbackData.count, runId: fallbackData.run_id ?? null }
+            );
+
+            return {
+              success: true,
+              leads: fallbackData.leads,
+              count: fallbackData.count,
+              run_id: fallbackData.run_id,
+              summary: `Discovered ${fallbackData.count} real leads in ${geo} after broadening the clinic search from "${niche}" to "${fallbackNiche}".`,
+              artifactTrigger: {
+                kind: "lead-list" as const,
+                data: {
+                  leads: fallbackData.leads,
+                  niche: fallbackNiche,
+                  geo,
+                },
+              },
+            };
+          }
+        }
+
+        if (!mock && Number(data.count || 0) === 0) {
+          const firecrawlLeads = await discoverClinicLeadsWithFirecrawl({
+            niche,
+            geo,
+            limit,
+          });
+
+          if (firecrawlLeads.length > 0) {
+            progress.advance(
+              2,
+              `Live backend returned no clinics, so Firecrawl search recovered ${firecrawlLeads.length} likely matches for review.`,
+              { discovered: firecrawlLeads.length, fallback: "firecrawl-search" }
+            );
+            progress.success(
+              `Discovery complete. Prepared ${firecrawlLeads.length} lead${firecrawlLeads.length === 1 ? "" : "s"} for review.`,
+              { discovered: firecrawlLeads.length, runId: null }
+            );
+
+            return {
+              success: true,
+              leads: firecrawlLeads,
+              count: firecrawlLeads.length,
+              run_id: null,
+              summary: `Discovered ${firecrawlLeads.length} clinic leads in ${geo} using Firecrawl search fallback after the primary discovery service returned no verified matches.`,
+              artifactTrigger: {
+                kind: "lead-list" as const,
+                data: {
+                  leads: firecrawlLeads,
+                  niche,
+                  geo,
+                },
+              },
+            };
+          }
+        }
+
         progress.advance(
           2,
           `Normalizing ${data.count} discovered lead${data.count === 1 ? "" : "s"} for the artifact.`,

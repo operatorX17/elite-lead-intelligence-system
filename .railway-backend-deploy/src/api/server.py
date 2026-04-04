@@ -114,6 +114,14 @@ DISCOVERY_KEYWORD_VARIANTS = {
         "cosmetic clinic",
         "hair clinic",
     ],
+    "premium skin and aesthetic clinics": [
+        "skin clinic",
+        "aesthetic clinic",
+        "dermatology clinic",
+        "cosmetic clinic",
+        "laser clinic",
+        "medspa",
+    ],
 }
 
 NICHE_RELEVANCE_HINTS = {
@@ -2846,6 +2854,9 @@ def build_osint_queries(raw_niche: str, raw_geo: str, requested_limit: int) -> L
             f'site:.com "{geo}" {premium_clause}{clinic_core} -jobs -supplier -wholesale -training',
             f'"{geo}" ("skin clinic" OR "aesthetic clinic") ("lavelle road" OR indiranagar OR koramangala OR jayanagar OR "mg road" OR whitefield)',
             f'"{geo}" ("dermatologist" OR "cosmetic dermatologist") ("clinic" OR consultation) -hospital -college',
+            f'"{geo}" ("premium skin clinic" OR "premium aesthetic clinic" OR "premium dermatology clinic")',
+            f'"{geo}" ("indiranagar" OR "koramangala" OR "whitefield" OR "jayanagar" OR "lavelle road" OR "mg road") ("skin clinic" OR "aesthetic clinic" OR "cosmetic clinic")',
+            f'site:.com "{geo}" ("anti aging clinic" OR "facial aesthetics" OR "skin treatment clinic") -hospital -college -jobs',
         ]
     else:
         candidates = [
@@ -2856,6 +2867,32 @@ def build_osint_queries(raw_niche: str, raw_geo: str, requested_limit: int) -> L
 
     max_queries = max(3, min(5, requested_limit))
     return candidates[:max_queries]
+
+
+def build_clinic_fallback_niches(raw_niche: str) -> List[str]:
+    """Generate broader clinic niche retries when the first discovery pass returns nothing."""
+    lowered = (raw_niche or "").strip().lower()
+    candidates = [
+        raw_niche,
+        "premium skin and aesthetic clinics",
+        "skin clinics",
+        "aesthetic clinics",
+        "dermatology clinics",
+        "cosmetic clinics",
+        "laser clinics",
+    ]
+    if "premium" not in lowered:
+        candidates.insert(1, f"premium {raw_niche}".strip())
+
+    deduped: List[str] = []
+    seen = set()
+    for candidate in candidates:
+        normalized = str(candidate or "").strip().lower()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(str(candidate).strip())
+    return deduped
 
 
 def normalize_search_result_url(raw_url: str) -> Optional[str]:
@@ -3777,6 +3814,33 @@ async def discover_leads(
             None,
             lambda: verify_discovered_leads(request.niche, leads, request.limit),
         )
+
+        if not leads and is_clinic_style_niche(request.niche):
+            logger.info(
+                "Primary clinic discovery returned no leads for niche=%s geo=%s; trying broader clinic fallbacks",
+                request.niche,
+                request.geo,
+            )
+            fallback_pool: List[Lead] = []
+            fallback_limit = min(max(request.limit * 2, 12), 30)
+            for fallback_niche in build_clinic_fallback_niches(request.niche):
+                fallback_batch = await loop.run_in_executor(
+                    None,
+                    lambda fallback_niche=fallback_niche: discover_company_candidates_osint(
+                        fallback_niche, request.geo, fallback_limit
+                    ),
+                )
+                fallback_pool.extend(fallback_batch)
+                fallback_pool = dedupe_discovered_leads(fallback_pool)
+                if len(fallback_pool) >= fallback_limit:
+                    break
+
+            if fallback_pool:
+                fallback_ranked = rank_discovered_leads(request.niche, fallback_pool, request.limit)
+                leads = await loop.run_in_executor(
+                    None,
+                    lambda: verify_discovered_leads(request.niche, fallback_ranked, request.limit),
+                )
 
         discovery_source = infer_discovery_source_from_niche(request.niche)
 
