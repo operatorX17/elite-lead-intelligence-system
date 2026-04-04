@@ -222,6 +222,12 @@ function isLightweightAffirmation(text: string) {
   );
 }
 
+function isLowInformationReply(text: string) {
+  return /^\s*(?:i\s*(?:do\s*not|don't|dont)\s*know|not\s*sure|unsure|no\s*idea|idk|don't\s*know\s*yet|dont\s*know\s*yet)[!?.\s]*$/i.test(
+    text
+  );
+}
+
 function lastAssistantAskedFocusChoice(reply: string | null | undefined) {
   const normalized = String(reply ?? "");
   return (
@@ -775,8 +781,8 @@ export function buildWhatsAppFallbackReply(
     if (isLightweightGreeting(incomingText || "")) {
       return pickFreshReply(
         [
-          "Hi, this is ZRAI. Happy to help. Is this for your clinic or healthcare team? Tell me a little about what you want WhatsApp to handle.",
-          "Hi, this is ZRAI. If this is for a clinic or healthcare setup, tell me briefly what you want to set up on WhatsApp and I’ll guide from there.",
+          "Hi, this is ZRAI. Is this for your clinic or healthcare setup? Tell me a little about what you want WhatsApp to handle and I'll guide you from there.",
+          "Hi, this is ZRAI. If this is for a clinic, tell me what kind of setup you are looking at on WhatsApp - enquiries, bookings, or follow-up.",
         ],
         replyHistory
       );
@@ -785,8 +791,18 @@ export function buildWhatsAppFallbackReply(
     if (isGeneralCapabilityQuestion(incomingText || "")) {
       return pickFreshReply(
         [
-          "I handle clinic-side WhatsApp conversations around booking, follow-up, and enquiry handling. Tell me what workflow you need help with.",
-          "I’m here for the clinic-side WhatsApp workflow. Tell me whether the issue is booking, follow-up, or patient enquiries going loose.",
+          "This line is for clinic-side WhatsApp setup - enquiries, booking flow, and follow-up. Tell me what kind of clinic this is and what you want WhatsApp to handle.",
+          "I help clinics set up WhatsApp around enquiries, bookings, and follow-up. Start with the clinic type and the workflow you want to tighten.",
+        ],
+        replyHistory
+      );
+    }
+
+    if (isLowInformationReply(incomingText || "")) {
+      return pickFreshReply(
+        [
+          "No issue. Start with two things: what kind of clinic this is, and whether you want WhatsApp mainly for enquiries, bookings, or follow-up.",
+          "That's fine. Tell me what type of clinic this is first, then tell me if the main need is enquiry capture, booking, or follow-up on WhatsApp.",
         ],
         replyHistory
       );
@@ -844,8 +860,8 @@ export function buildWhatsAppFallbackReply(
 
       return pickFreshReply(
         [
-          "Perfect. Tell me briefly what you want WhatsApp to handle first, and I’ll narrow it properly.",
-          "Alright. Tell me the main workflow you want help with on WhatsApp, and I’ll take it step by step.",
+          "Perfect. Start with the clinic type, then tell me whether the main need is enquiries, bookings, or follow-up on WhatsApp.",
+          "Alright. Tell me what kind of clinic this is and which workflow matters first - enquiry capture, booking, or follow-up.",
         ],
         replyHistory
       );
@@ -854,8 +870,8 @@ export function buildWhatsAppFallbackReply(
     if (isLightweightAcknowledgement(incomingText || "")) {
       return pickFreshReply(
         [
-          "Okay. Give me the exact clinic-side workflow you want and I’ll keep it structured from there.",
-          "Alright. Tell me the booking or follow-up workflow you need, and I’ll narrow it properly.",
+          "Okay. Start with the clinic type and the part you want WhatsApp to handle - enquiries, bookings, or follow-up.",
+          "Alright. Tell me what kind of clinic this is and whether the first priority is booking, follow-up, or enquiry capture.",
         ],
         replyHistory
       );
@@ -863,8 +879,8 @@ export function buildWhatsAppFallbackReply(
 
     return pickFreshReply(
       [
-        "Tell me a little about the clinic and what you want WhatsApp to handle, and I’ll keep it clear from there.",
-        "Give me a little context about the clinic and the workflow you want on WhatsApp, and I’ll guide you properly.",
+        "Tell me a little about the clinic first, then tell me what you want WhatsApp to handle - enquiries, bookings, or follow-up.",
+        "Give me two things: the clinic type, and the workflow you want on WhatsApp. I'll take it from there.",
       ],
       replyHistory
     );
@@ -874,8 +890,8 @@ export function buildWhatsAppFallbackReply(
     if (isLightweightGreeting(incomingText || "")) {
       return pickFreshReply(
         [
-          "Hey. Good to hear from you. What are you looking to get sorted right now?",
-          "Hey. Glad you messaged. What do you want help with right now?",
+          "Hi, this is ZRAI. Is this for a clinic or healthcare business? If yes, tell me what you want WhatsApp to handle.",
+          "Hi, this is ZRAI. If this is for a clinic, tell me whether the main need is enquiries, bookings, or follow-up on WhatsApp.",
         ],
         replyHistory
       );
@@ -884,8 +900,18 @@ export function buildWhatsAppFallbackReply(
     if (isGeneralCapabilityQuestion(incomingText || "")) {
       return pickFreshReply(
         [
-          "I'm here to handle this chat properly, answer questions, and help move things forward without making it messy. What do you need help with?",
-          "I'm the one handling messages on this number. I can answer questions, keep context straight, and help with follow-up if needed. What do you want to sort out?",
+          "This line is for clinic-side WhatsApp setup. Tell me what kind of clinic this is and whether you are looking at enquiries, bookings, or follow-up.",
+          "I help clinics tighten their WhatsApp flow. Start with the clinic type and the part you want to improve first.",
+        ],
+        replyHistory
+      );
+    }
+
+    if (isLowInformationReply(incomingText || "")) {
+      return pickFreshReply(
+        [
+          "No problem. Start with the clinic type, then tell me if the need is enquiry capture, booking, or follow-up on WhatsApp.",
+          "That's okay. Tell me what kind of clinic this is first, and whether WhatsApp needs to handle enquiries, bookings, or follow-up.",
         ],
         replyHistory
       );
@@ -894,8 +920,8 @@ export function buildWhatsAppFallbackReply(
     if (isLightweightAffirmation(incomingText || "")) {
       return pickFreshReply(
         [
-          "Good. Tell me what you want to get done and I'll keep it simple.",
-          "Alright. What do you want help with first?",
+          "Good. Start with the clinic type, then tell me whether the first need is enquiries, bookings, or follow-up.",
+          "Alright. Tell me what kind of clinic this is and which WhatsApp workflow matters first.",
         ],
         replyHistory
       );
@@ -904,8 +930,8 @@ export function buildWhatsAppFallbackReply(
     if (isLightweightAcknowledgement(incomingText || "")) {
       return pickFreshReply(
         [
-          "Alright. Tell me what you want to do next and I'll keep it clear.",
-          "Okay. What do you want help with from here?",
+          "Alright. Start with the clinic type, then tell me what you want WhatsApp to handle.",
+          "Okay. Tell me if this is for a clinic and whether the first need is enquiry capture, booking, or follow-up.",
         ],
         replyHistory
       );
@@ -913,8 +939,8 @@ export function buildWhatsAppFallbackReply(
 
     return pickFreshReply(
       [
-        "Tell me the context and what you want help with, and I'll keep the thread clear from there.",
-        "Give me the situation in one line and I'll take it from there.",
+        "Tell me what kind of clinic this is and what you want WhatsApp to handle, and I'll guide it properly from there.",
+        "Give me the clinic type and the workflow you want on WhatsApp - enquiries, bookings, or follow-up - and I'll take it from there.",
       ],
       replyHistory
     );

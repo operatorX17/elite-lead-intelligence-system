@@ -61,6 +61,7 @@ test("clinic-sales greeting stays in healthcare intake mode for unknown inbound 
   assert.match(reply, /zrai/i);
   assert.match(reply, /clinic|healthcare|whatsapp/i);
   assert.doesNotMatch(reply, /What are you looking to get sorted right now/i);
+  assert.doesNotMatch(reply, /what do you want help with right now/i);
 });
 
 test("just enquiry is treated as a real workflow answer, not a generic follow-up loop", () => {
@@ -79,4 +80,36 @@ test("just enquiry is treated as a real workflow answer, not a generic follow-up
 
   assert.match(reply, /one clinic|multiple branches|instagram|website|whatsapp/i);
   assert.doesNotMatch(reply, /What are you looking to get sorted right now/i);
+});
+
+test("low-information replies are guided into clinic qualification instead of dead-end support prompts", () => {
+  const seededState = whatsappState.createWhatsAppInboundSalesProspectState();
+
+  const reply = salesPlaybook.buildWhatsAppFallbackReply(
+    seededState,
+    [],
+    null,
+    "I don't know",
+    "Hi, this is ZRAI. Is this for your clinic or healthcare setup?"
+  );
+
+  assert.match(reply, /clinic|enquiries|booking|follow-up/i);
+  assert.doesNotMatch(reply, /what do you want help with/i);
+  assert.doesNotMatch(reply, /what are you looking to get sorted/i);
+});
+
+test("generic unlinked greetings on the sales line stay clinic-oriented", () => {
+  const genericState = whatsappState.createWhatsAppAgentState();
+
+  const reply = salesPlaybook.buildWhatsAppFallbackReply(
+    genericState,
+    [],
+    null,
+    "hi",
+    null
+  );
+
+  assert.match(reply, /zrai/i);
+  assert.match(reply, /clinic|healthcare|whatsapp/i);
+  assert.doesNotMatch(reply, /what are you looking to get sorted/i);
 });
