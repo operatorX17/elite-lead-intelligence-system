@@ -117,11 +117,20 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         lead_with_apify = {**lead, **raw_apify_data}
         
         website_context = self._fetch_website_context(lead.get("website"))
+        instagram_profile = self._extract_instagram_profile(lead, website_context)
+        if instagram_profile:
+            social_profiles = dict(website_context.get("social_profiles") or {})
+            social_profiles["instagram_profile"] = instagram_profile
+            website_context["social_profiles"] = social_profiles
 
         # Extract tech signals and clinic-specific contact context from the site.
         tech_signals = self._extract_tech_signals(website_context.get("content", ""))
 
         people_intelligence = self._extract_people_intelligence(lead, website_context)
+        if instagram_profile:
+            people_intelligence["instagram_profile"] = instagram_profile
+            if instagram_profile.get("full_name") and not people_intelligence.get("decision_maker_name"):
+                people_intelligence["decision_maker_name"] = instagram_profile.get("full_name")
 
         # Extract decision maker info from business name, contact pages, social/profile hints,
         # and ranked people intelligence derived from the site and public search results.
@@ -329,6 +338,82 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         context["contact_paths"] = deduped_paths
 
         return context
+
+    def _extract_instagram_profile(
+        self,
+        lead: Dict[str, Any],
+        website_context: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Extract Instagram profile intelligence for the lead when an IG handle exists."""
+        social_profiles = dict(website_context.get("social_profiles") or {})
+        instagram_candidates: List[str] = []
+        lead_instagram = lead.get("instagram")
+        if isinstance(lead_instagram, str) and lead_instagram.strip():
+            instagram_candidates.append(lead_instagram.strip())
+        instagram_candidates.extend(list(social_profiles.get("instagram") or []))
+
+        username = None
+        profile_url = None
+        for candidate in instagram_candidates:
+            parsed = self._extract_instagram_username(candidate)
+            if parsed:
+                username = parsed
+                profile_url = candidate
+                break
+
+        if not username:
+            return {}
+
+        profile = self._apify.run_instagram_bio_extractor(username)
+        if not profile:
+            return {}
+
+        biography = (
+            profile.get("biography")
+            or profile.get("bio")
+            or profile.get("biographyText")
+            or profile.get("description")
+        )
+        full_name = (
+            profile.get("fullName")
+            or profile.get("full_name")
+            or profile.get("name")
+        )
+        external_url = profile.get("externalUrl") or profile.get("external_url") or profile.get("website")
+        follower_count = (
+            profile.get("followersCount")
+            or profile.get("followers")
+            or profile.get("follower_count")
+        )
+
+        normalized: Dict[str, Any] = {
+            "username": username,
+            "profile_url": profile_url or f"https://www.instagram.com/{username}/",
+            "full_name": full_name,
+            "bio": biography,
+            "external_url": external_url,
+            "followers_count": follower_count,
+            "source": "apify_instagram_bio_extractor",
+        }
+        return {key: value for key, value in normalized.items() if value not in (None, "", [], {})}
+
+    def _extract_instagram_username(self, value: Optional[str]) -> Optional[str]:
+        """Extract a clean Instagram username from a URL or raw handle."""
+        raw = (value or "").strip()
+        if not raw:
+            return None
+        if "instagram.com" not in raw.lower():
+            candidate = raw.lstrip("@").strip("/")
+            return candidate or None
+
+        parsed = urlparse(raw if raw.startswith(("http://", "https://")) else f"https://{raw}")
+        segments = [segment for segment in parsed.path.split("/") if segment]
+        if not segments:
+            return None
+        candidate = segments[0].lstrip("@").strip()
+        if candidate.lower() in {"reel", "p", "stories", "explore"}:
+            return None
+        return candidate or None
 
     def _fetch_embedded_asset_content(self, raw_html: str, base_url: str) -> str:
         """Fetch a small bounded set of same-origin JS assets to recover data from JS-shell sites."""

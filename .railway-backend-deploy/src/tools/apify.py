@@ -49,6 +49,7 @@ class ApifyClient:
     GOOGLE_ADS_ACTOR = "N8vqwV9wL9wpIsLDz"
     WEBSITE_CRAWLER_ACTOR = "apify/website-content-crawler"
     CONTACT_SCRAPER_ACTOR = "apify/contact-info-scraper"
+    INSTAGRAM_BIO_EXTRACTOR_ACTOR = "ZufOwumbzPOXiSyhh"
     
     def __init__(self, api_token: Optional[str] = None):
         config = load_config()
@@ -319,6 +320,47 @@ class ApifyClient:
         except Exception as e:
             logger.error("Google Ads scraper error: %s", e)
             raise
+
+    def run_instagram_bio_extractor(
+        self,
+        username: str,
+        sessionid: str = "",
+        ds_user_id: str = "",
+        csrftoken: str = "",
+    ) -> Dict[str, Any]:
+        """Run the Instagram bio extractor actor for a single public profile."""
+        normalized_username = (username or "").strip().lstrip("@").strip("/")
+        if not normalized_username:
+            return {}
+
+        logger.info("Running Instagram bio extractor for username: %s", normalized_username)
+
+        input_data = {
+            "username": normalized_username,
+            "sessionid": sessionid,
+            "ds_user_id": ds_user_id,
+            "csrftoken": csrftoken,
+        }
+
+        try:
+            with self._without_broken_local_proxy():
+                run = self._client.actor(self.INSTAGRAM_BIO_EXTRACTOR_ACTOR).call(
+                    run_input=input_data,
+                    memory_mbytes=self._config.memory_mbytes,
+                    timeout_secs=self._config.default_timeout_secs,
+                )
+                dataset = self._client.dataset(run["defaultDatasetId"])
+                items = list(dataset.iterate_items())
+
+            if not items:
+                return {}
+
+            first = items[0] or {}
+            logger.info("Instagram bio extractor returned data for %s", normalized_username)
+            return first
+        except Exception as e:
+            logger.warning("Instagram bio extractor error for %s: %s", normalized_username, e)
+            return {}
     
     def crawl_website(
         self,

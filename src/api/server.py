@@ -7,7 +7,7 @@ Exposes the LangGraph pipeline via REST API for the frontend.
 import os
 import logging
 import asyncio
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Callable
 from contextlib import asynccontextmanager
 from uuid import uuid4, UUID
 from datetime import datetime
@@ -3676,10 +3676,10 @@ async def health_check():
     """Health check endpoint."""
     db = getattr(app.state, "db", None)
     agents_status = {
-        "orchestrator": hasattr(app.state, 'orchestrator') and app.state.orchestrator is not None,
-        "discovery": hasattr(app.state, 'discovery_agent') and app.state.discovery_agent is not None,
-        "enrichment": hasattr(app.state, 'enrichment_agent') and app.state.enrichment_agent is not None,
-        "scoring": hasattr(app.state, 'scoring_agent') and app.state.scoring_agent is not None,
+        "orchestrator": _is_agent_ready("orchestrator", get_orchestrator),
+        "discovery": _is_agent_ready("discovery", get_discovery_agent),
+        "enrichment": _is_agent_ready("enrichment", get_enrichment_agent),
+        "scoring": _is_agent_ready("scoring", get_scoring_agent),
     }
     return {
         "status": "healthy" if all(agents_status.values()) else "degraded",
@@ -3687,6 +3687,27 @@ async def health_check():
         "agents": agents_status,
         "storage": "memory" if getattr(db, "is_memory_backend", False) else "supabase",
     }
+
+
+def _is_agent_ready(agent_name: str, getter: Callable[[], Any]) -> bool:
+    """Treat lazily initialized agents as healthy if they can initialize on demand."""
+    try:
+        getter()
+        return True
+    except Exception as exc:
+        logger.warning("Health check could not initialize %s: %s", agent_name, exc)
+        return False
+
+
+def _is_apify_budget_error(exc: Exception) -> bool:
+    """Detect Apify quota/billing exhaustion so discovery can fall back gracefully."""
+    message = str(exc).lower()
+    return (
+        "remaining usage" in message
+        or "billing/subscription" in message
+        or "consider upgrading to a paid plan" in message
+        or "budget exceeded" in message
+    )
 
 # ============================================================================
 # Discovery Endpoint
@@ -3750,17 +3771,30 @@ async def discover_leads(
         else:
             geo_filter = build_discovery_geo(request.geo)
             keywords = build_discovery_keywords(request.niche, query_limit)
-            leads = await loop.run_in_executor(
-                None,
-                lambda: discovery_agent.discover_from_google_maps(
-                    keywords=keywords,
-                    geo=geo_filter,
-                    limit=query_limit,
-                    auto_process=False,
-                    skip_duplicate_check=True,
-                    detailed_scrape=False,
+            try:
+                leads = await loop.run_in_executor(
+                    None,
+                    lambda: discovery_agent.discover_from_google_maps(
+                        keywords=keywords,
+                        geo=geo_filter,
+                        limit=query_limit,
+                        auto_process=False,
+                        skip_duplicate_check=True,
+                        detailed_scrape=False,
+                    )
                 )
-            )
+            except Exception as exc:
+                if not _is_apify_budget_error(exc):
+                    raise
+                logger.warning(
+                    "Apify discovery budget exceeded for niche=%s geo=%s; falling back to OSINT discovery",
+                    request.niche,
+                    request.geo,
+                )
+                leads = await loop.run_in_executor(
+                    None,
+                    lambda: discover_company_candidates_osint(request.niche, request.geo, query_limit),
+                )
 
             if geo_filter.get("city"):
                 leads = [lead for lead in leads if matches_requested_geo(request.geo, lead)]
