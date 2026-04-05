@@ -2,6 +2,7 @@ import { z } from "zod";
 import { auth } from "@/app/(auth)/auth";
 import { ZRAI_BACKEND_URL } from "@/lib/zrai/constants";
 import { authError, backendError, notFoundError, validationError, ZRAIAPIError } from "@/lib/zrai/errors";
+import { persistImportableLead } from "@/lib/zrai/import-bridge";
 
 
 
@@ -45,7 +46,7 @@ function isUuid(value: string) {
 
 async function materializeLeadId(
   body: z.infer<typeof analyzeRequestSchema>,
-  userId: string
+  _userId: string
 ) {
   if (isUuid(body.lead_id)) {
     return body.lead_id;
@@ -62,55 +63,7 @@ async function materializeLeadId(
     });
   }
 
-  const importResponse = await fetch(`${ZRAI_BACKEND_URL}/api/v1/import`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-User-ID": userId,
-    },
-    body: JSON.stringify({
-      source:
-        body.lead.source ||
-        body.lead.source_label ||
-        "lead_os_preview_import",
-      leads: [
-        {
-          company_name: body.lead.company_name,
-          domain: body.lead.domain,
-          niche: body.lead.verified_fit || body.lead.niche || undefined,
-          geo: body.lead.geo || undefined,
-          contacts: (body.lead.contacts || [])
-            .map((contact) => ({
-              name: contact.name || undefined,
-              email: contact.email || undefined,
-              phone: contact.phone || undefined,
-              linkedin_url: contact.linkedin_url || undefined,
-              title: contact.title || undefined,
-            }))
-            .filter((contact) =>
-              Boolean(
-                contact.name ||
-                  contact.email ||
-                  contact.phone ||
-                  contact.linkedin_url ||
-                  contact.title
-              )
-            ),
-        },
-      ],
-    }),
-  });
-
-  if (!importResponse.ok) {
-    const errorData = await importResponse.json().catch(() => ({}));
-    throw backendError("run", errorData.detail || errorData.message || "Failed to import preview lead");
-  }
-
-  const importPayload = await importResponse.json();
-  const importedLead =
-    importPayload?.data?.leads?.[0] ||
-    importPayload?.leads?.[0] ||
-    null;
+  const importedLead = await persistImportableLead(body.lead);
 
   if (!importedLead?.id || !isUuid(importedLead.id)) {
     throw backendError("run", "Failed to resolve preview lead into a persisted lead");
