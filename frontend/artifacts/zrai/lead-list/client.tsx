@@ -1252,42 +1252,42 @@ function LeadListContent({
       return;
     }
 
-    const resolvedLead = isUuidLeadId(selectedLead.id)
-      ? selectedLead
-      : await ensurePersistedLead(selectedLead);
-    const effectiveLead =
-      resolvedLead.id === selectedLead.id
-        ? selectedLead
-        : ({
-            ...resolvedLead,
-            analysis_state: selectedLead.analysis_state,
-            score_kind: selectedLead.score_kind,
-            preview_summary: selectedLead.preview_summary,
-            source: resolvedLead.source || selectedLead.source,
-            source_label: resolvedLead.source_label || selectedLead.source_label,
-          } as Lead);
-
-    if (effectiveLead.id !== selectedLead.id) {
-      const nextLeadRows = replaceLeadRow(leads, selectedLead.id, effectiveLead);
-      const nextProcessedDetails = replaceProcessedLeadDetails(
-        processedDetails || {},
-        selectedLead.id,
-        effectiveLead.id
-      );
-      syncLeadListState({
-        nextLeads: nextLeadRows,
-        nextProcessedDetails,
-      });
-      setSelectedLead(effectiveLead);
-      setSelectedLeadLive(effectiveLead);
-      setSelectedLeadLiveDetails(nextProcessedDetails[effectiveLead.id] || null);
-    }
-
-    const controller = new AbortController();
-    processControllersRef.current[effectiveLead.id] = controller;
-    setProcessingIds((prev) => Array.from(new Set([...prev, effectiveLead.id])));
-
     try {
+      const resolvedLead = isUuidLeadId(selectedLead.id)
+        ? selectedLead
+        : await ensurePersistedLead(selectedLead);
+      const effectiveLead =
+        resolvedLead.id === selectedLead.id
+          ? selectedLead
+          : ({
+              ...resolvedLead,
+              analysis_state: selectedLead.analysis_state,
+              score_kind: selectedLead.score_kind,
+              preview_summary: selectedLead.preview_summary,
+              source: resolvedLead.source || selectedLead.source,
+              source_label: resolvedLead.source_label || selectedLead.source_label,
+            } as Lead);
+
+      if (effectiveLead.id !== selectedLead.id) {
+        const nextLeadRows = replaceLeadRow(leads, selectedLead.id, effectiveLead);
+        const nextProcessedDetails = replaceProcessedLeadDetails(
+          processedDetails || {},
+          selectedLead.id,
+          effectiveLead.id
+        );
+        syncLeadListState({
+          nextLeads: nextLeadRows,
+          nextProcessedDetails,
+        });
+        setSelectedLead(effectiveLead);
+        setSelectedLeadLive(effectiveLead);
+        setSelectedLeadLiveDetails(nextProcessedDetails[effectiveLead.id] || null);
+      }
+
+      const controller = new AbortController();
+      processControllersRef.current[effectiveLead.id] = controller;
+      setProcessingIds((prev) => Array.from(new Set([...prev, effectiveLead.id])));
+
       const response = await fetch(ZRAI_ENDPOINTS.analyzeLead, {
         method: "POST",
         headers: {
@@ -1378,9 +1378,12 @@ function LeadListContent({
       } else {
         toast.error(error instanceof Error ? error.message : "Lead analysis failed");
       }
-    } finally {
-      clearProcessing([effectiveLead.id]);
-    }
+      } finally {
+      const currentLeadId = isUuidLeadId(selectedLead.id)
+        ? selectedLead.id
+        : selectedLeadLive?.id || metadata?.liveSelectedLead?.id || selectedLead.id;
+      clearProcessing([currentLeadId]);
+      }
   };
 
   const isSelectedLeadProcessing = selectedLead
