@@ -140,6 +140,25 @@ function getAnalysisLabel(lead: Lead) {
     : "Preview";
 }
 
+function getResolvedAnalysisState(
+  lead: Lead | null | undefined,
+  processedDetails: ProcessedLeadDetails | null | undefined
+) {
+  return (
+    processedDetails?.analysis_state ||
+    lead?.analysis_state ||
+    (lead?.score_kind === "final_score" ? "analyzed" : null)
+  );
+}
+
+function isTerminalAnalysisState(
+  lead: Lead | null | undefined,
+  processedDetails: ProcessedLeadDetails | null | undefined
+) {
+  const state = getResolvedAnalysisState(lead, processedDetails);
+  return state === "analyzed" || state === "failed";
+}
+
 function getStatusHelp(status: Lead["status"]) {
   switch (status) {
     case "qualified_preview":
@@ -969,6 +988,31 @@ function LeadListContent({
     setProcessingIds((prev) => prev.filter((id) => !leadIds.includes(id)));
   };
 
+  const remapProcessingIds = (mappings: Array<{ from: string; to: string }>) => {
+    const validMappings = mappings.filter(
+      ({ from, to }) => Boolean(from) && Boolean(to) && from !== to
+    );
+    if (!validMappings.length) {
+      return;
+    }
+
+    for (const { from, to } of validMappings) {
+      const controller = processControllersRef.current[from];
+      if (controller && !processControllersRef.current[to]) {
+        processControllersRef.current[to] = controller;
+      }
+      delete processControllersRef.current[from];
+    }
+
+    setProcessingIds((prev) => {
+      const remapped = prev.map((id) => {
+        const mapping = validMappings.find(({ from }) => from === id);
+        return mapping?.to || id;
+      });
+      return Array.from(new Set(remapped));
+    });
+  };
+
   const stopProcessing = (leadIds?: string[]) => {
     const idsToStop = leadIds?.length ? leadIds : Object.keys(processControllersRef.current);
     const controllers = Array.from(
@@ -991,7 +1035,14 @@ function LeadListContent({
     );
   };
 
-  const processLeads = async (leadIds: string[]) => {
+  const processLeads = async (
+    leadIds: string[],
+    options?: {
+      includeOutreach?: boolean;
+      successMessage?: string;
+      emptyMessage?: string;
+    }
+  ) => {
     if (leadIds.length === 0) {
       return;
     }
@@ -1007,6 +1058,8 @@ function LeadListContent({
     }
 
     setProcessingIds((prev) => Array.from(new Set([...prev, ...freshLeadIds])));
+
+    let activeLeadIds = [...freshLeadIds];
 
     try {
       const persistedLeadMap = new Map<string, Lead>();
@@ -1041,6 +1094,17 @@ function LeadListContent({
         });
       }
 
+      const remappedLeadIds = freshLeadIds.map(
+        (leadId) => persistedLeadMap.get(leadId)?.id || leadId
+      );
+      remapProcessingIds(
+        freshLeadIds.map((leadId, index) => ({
+          from: leadId,
+          to: remappedLeadIds[index],
+        }))
+      );
+      activeLeadIds = remappedLeadIds;
+
       const response = await fetch(ZRAI_ENDPOINTS.processLeads, {
         method: "POST",
         headers: {
@@ -1048,8 +1112,8 @@ function LeadListContent({
         },
         signal: controller.signal,
         body: JSON.stringify({
-          lead_ids: freshLeadIds.map((leadId) => persistedLeadMap.get(leadId)?.id || leadId),
-          include_outreach: true,
+          lead_ids: activeLeadIds,
+          include_outreach: options?.includeOutreach ?? true,
         }),
       });
 
@@ -1083,7 +1147,7 @@ function LeadListContent({
         ] as const);
 
       if (processedLeads.length === 0) {
-        toast.error("No leads were processed successfully.");
+        toast.error(options?.emptyMessage || "No leads were processed successfully.");
         return;
       }
 
@@ -1110,18 +1174,52 @@ function LeadListContent({
       }
 
       toast.success(
-        `Processed ${processedLeads.length} lead${processedLeads.length === 1 ? "" : "s"} through enrich, intent, proof, and outreach.`
+        options?.successMessage ||
+          `Processed ${processedLeads.length} lead${processedLeads.length === 1 ? "" : "s"} through enrich, intent, proof, and outreach.`
       );
-    } catch (error) {
+      } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
         toast.success("Lead processing stopped.");
         return;
       }
       toast.error(error instanceof Error ? error.message : "Lead processing failed");
     } finally {
-      clearProcessing(freshLeadIds);
+      clearProcessing(activeLeadIds);
     }
   };
+
+  useEffect(() => {
+    if (!processingIds.length) {
+      return;
+    }
+
+    const completedIds = processingIds.filter((leadId) => {
+      const rowLead =
+        leads.find((candidate) => candidate.id === leadId) ||
+        (selectedLead?.id === leadId ? selectedLead : null) ||
+        (selectedLeadLive?.id === leadId ? selectedLeadLive : null) ||
+        (metadata?.liveSelectedLead?.id === leadId ? metadata.liveSelectedLead : null);
+      const rowDetails =
+        processedDetails?.[leadId] ||
+        (selectedLeadLive?.id === leadId ? selectedLeadLiveDetails : null) ||
+        (metadata?.liveSelectedLead?.id === leadId ? metadata.liveSelectedLeadDetails : null);
+
+      return isTerminalAnalysisState(rowLead, rowDetails);
+    });
+
+    if (completedIds.length) {
+      clearProcessing(completedIds);
+    }
+  }, [
+    processingIds,
+    leads,
+    processedDetails,
+    selectedLead,
+    selectedLeadLive,
+    selectedLeadLiveDetails,
+    metadata?.liveSelectedLead,
+    metadata?.liveSelectedLeadDetails,
+  ]);
 
   const refreshSelectedLeadTruth = async () => {
     if (!selectedLead?.id) {
@@ -1240,10 +1338,12 @@ function LeadListContent({
         liveSelectedLead: hydrated.lead,
         liveSelectedLeadDetails: hydrated.processedDetails,
       }));
+      clearProcessing([leadId]);
       toast.success("Lead analyzed.");
       return;
     }
 
+    clearProcessing([leadId]);
     toast.success("Analysis is still running. Use Refresh truth in a moment.");
   };
 
@@ -1386,9 +1486,6 @@ function LeadListContent({
       }
   };
 
-  const isSelectedLeadProcessing = selectedLead
-    ? processingIds.includes(selectedLead.id)
-    : false;
   const inspectorLead =
     hydrateLeadFromStoredAnalysis(selectedLeadLive, selectedLeadLiveDetails) ||
     hydrateLeadFromStoredAnalysis(metadata?.liveSelectedLead, metadata?.liveSelectedLeadDetails || null) ||
@@ -1401,6 +1498,12 @@ function LeadListContent({
     selectedLeadLiveDetails ||
     metadata?.liveSelectedLeadDetails ||
     (inspectorLead ? processedDetails[inspectorLead.id] : undefined);
+  const selectedLeadEffectiveState = getResolvedAnalysisState(inspectorLead, selectedLeadDetails);
+  const isSelectedLeadProcessing = selectedLead
+    ? processingIds.includes(inspectorLead?.id || selectedLead.id) &&
+      selectedLeadEffectiveState !== "analyzed" &&
+      selectedLeadEffectiveState !== "failed"
+    : false;
   const analysisBundle = getAnalysisBundle(inspectorLead, selectedLeadDetails);
   const signalFacts = getSignalFacts(inspectorLead, selectedLeadDetails);
   const contactIntel = getContactIntelligence(
@@ -1455,6 +1558,34 @@ function LeadListContent({
                 leads.length
             ) || 0}
           </span>
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              className="rounded-md bg-emerald-600 px-3 py-2 text-xs text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={!sortedLeads.length || !!processingIds.length}
+              onClick={() =>
+                void processLeads(
+                  sortedLeads.map((lead) => lead.id),
+                  {
+                    includeOutreach: false,
+                    successMessage: `Analyzed ${sortedLeads.length} visible lead${sortedLeads.length === 1 ? "" : "s"}.`,
+                    emptyMessage: "No visible leads were analyzed successfully.",
+                  }
+                )
+              }
+              type="button"
+            >
+              Analyze visible
+            </button>
+            {!!processingIds.length && (
+              <button
+                className="rounded-md border border-red-500/50 px-3 py-2 text-xs text-red-300 transition hover:bg-red-500/10"
+                onClick={() => stopProcessing()}
+                type="button"
+              >
+                Stop all
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="min-h-0 flex-1 overflow-auto">
@@ -2151,9 +2282,9 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
       },
     },
     {
-      icon: <span className="font-semibold text-[10px]">P3</span>,
-      label: "Analyze top 3",
-      description: "Run analysis truth, scoring, and one best outreach draft for the top 3 leads",
+      icon: <span className="font-semibold text-[10px]">AI</span>,
+      label: "Analyze visible",
+      description: "Run analysis truth, scoring, and proof for all visible leads",
       onClick: async ({ content, metadata, setMetadata }) => {
         try {
           const parsed = JSON.parse(content);
@@ -2165,23 +2296,23 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
             metadata?.sortBy || "score",
             metadata?.sortOrder || "desc"
           );
-          const topLeads = sortedLeads.slice(0, 3);
-          if (topLeads.length === 0) {
+          const visibleLeads = sortedLeads;
+          if (visibleLeads.length === 0) {
             toast.error("No leads available to process.");
             return;
           }
           const persistedTopLeads = await Promise.all(
-            topLeads.map((lead) =>
+            visibleLeads.map((lead) =>
               isUuidLeadId(lead.id) ? Promise.resolve(lead) : ensurePersistedLead(lead)
             )
           );
-          const replacedLeadRows = topLeads.reduce((nextLeads, lead, index) => {
+          const replacedLeadRows = visibleLeads.reduce((nextLeads, lead, index) => {
             const importedLead = persistedTopLeads[index];
             return importedLead.id === lead.id
               ? nextLeads
               : replaceLeadRow(nextLeads, lead.id, importedLead);
           }, leads);
-          const replacedProcessedDetails = topLeads.reduce(
+          const replacedProcessedDetails = visibleLeads.reduce(
             (nextDetails, lead, index) =>
               persistedTopLeads[index].id === lead.id
                 ? nextDetails
@@ -2202,7 +2333,7 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
             },
             body: JSON.stringify({
               lead_ids: persistedTopLeads.map((lead) => lead.id),
-              include_outreach: true,
+              include_outreach: false,
             }),
           });
           if (!response.ok) {
@@ -2235,16 +2366,20 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
             toast.error("No leads were processed successfully.");
             return;
           }
-          setMetadata((prev: LeadListMetadata) => ({
-            ...prev,
-            leads: mergeLeadRows(prev.leads, processedLeads),
-            processedDetails: {
+          setMetadata((prev: LeadListMetadata) => {
+            const nextLeads = mergeLeadRows(prev.leads, processedLeads);
+            const nextProcessedDetails = {
               ...(prev.processedDetails || {}),
               ...Object.fromEntries(processedDetailEntries),
-            },
-          }));
+            };
+            return {
+              ...prev,
+              leads: nextLeads,
+              processedDetails: nextProcessedDetails,
+            };
+          });
           toast.success(
-            `Processed ${processedLeads.length} top lead${processedLeads.length === 1 ? "" : "s"}.`
+            `Analyzed ${processedLeads.length} visible lead${processedLeads.length === 1 ? "" : "s"}.`
           );
         } catch (error) {
           toast.error(error instanceof Error ? error.message : "Processing failed");
