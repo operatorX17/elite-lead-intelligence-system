@@ -7,6 +7,7 @@ Exposes the LangGraph pipeline via REST API for the frontend.
 import os
 import logging
 import asyncio
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from typing import Optional, List, Dict, Any, Callable
 from contextlib import asynccontextmanager
 from uuid import uuid4, UUID
@@ -41,6 +42,14 @@ from src.graph.state import LeadGraphState
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+FAST_ANALYZE_AGENT_TIMEOUTS = {
+    "enrichment": 20,
+    "intent": 15,
+    "audit": 30,
+    "scoring": 15,
+    "outreach": 20,
+}
 
 
 def _build_cors_origins() -> List[str]:
@@ -230,6 +239,7 @@ OSINT_LISTICLE_TERMS = {
     "comparison",
 }
 BRAVE_SEARCH_API_URL = "https://api.search.brave.com/res/v1/web/search"
+FIRECRAWL_SEARCH_API_URL = "https://api.firecrawl.dev/v1/search"
 SIGNALS_VERSION = "clinic_intel_v1"
 
 # ============================================================================
@@ -2570,8 +2580,43 @@ def run_selected_lead_pipeline(
     lead_data: Dict[str, Any],
     *,
     include_outreach: bool = True,
+    include_audit: bool = True,
 ) -> Dict[str, Any]:
     """Run the heavy operator chain for a selected lead preview."""
+    def run_agent_step(
+        step_name: str,
+        agent_callable,
+        current_state: Dict[str, Any],
+        *,
+        required: bool,
+    ) -> Dict[str, Any]:
+        timeout_seconds = FAST_ANALYZE_AGENT_TIMEOUTS.get(step_name, 20)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(agent_callable, current_state)
+            try:
+                return future.result(timeout=timeout_seconds)
+            except FuturesTimeoutError as exc:
+                future.cancel()
+                message = (
+                    f"{step_name} timed out after {timeout_seconds}s for lead "
+                    f"{lead_data.get('lead_id')}"
+                )
+                logger.warning(message)
+                if required:
+                    raise RuntimeError(message) from exc
+
+                metadata = dict((current_state.get("metadata") or {}))
+                warnings = list(metadata.get("analysis_warnings") or [])
+                warnings.append(message)
+                return {
+                    **current_state,
+                    "metadata": {
+                        **metadata,
+                        "analysis_warnings": warnings,
+                    },
+                    "errors": list(current_state.get("errors") or []) + [message],
+                }
+
     lead_payload = dict(lead_data)
     lead_state = db.get_lead_state(UUID(str(lead_data.get("lead_id")))) or {}
     ads_verification = verify_clinic_ads(lead_payload, lead_state)
@@ -2589,7 +2634,7 @@ def run_selected_lead_pipeline(
         last_node="discovery",
         metadata={
             "ads_verification": ads_verification,
-            "force_audit": True,
+            "force_audit": include_audit,
         },
     )
 
@@ -2599,9 +2644,10 @@ def run_selected_lead_pipeline(
     scoring_agent = get_scoring_agent()
     outreach_agent = get_outreach_agent()
 
-    state = enrichment_agent(state)
-    state = intent_agent(state)
-    state = audit_agent(state)
+    state = run_agent_step("enrichment", enrichment_agent, state, required=True)
+    state = run_agent_step("intent", intent_agent, state, required=True)
+    if include_audit:
+        state = run_agent_step("audit", audit_agent, state, required=False)
 
     signal_facts = build_signal_facts(
         lead_payload,
@@ -2665,7 +2711,7 @@ def run_selected_lead_pipeline(
             "signal_facts": signal_facts,
             "analysis_bundle": analysis_bundle,
         }
-        state = outreach_agent(state)
+        state = run_agent_step("outreach", outreach_agent, state, required=False)
 
     return {
         "enrichment": state.get("enrichment") or {},
@@ -2921,6 +2967,132 @@ def build_clinic_fallback_niches(raw_niche: str) -> List[str]:
         seen.add(normalized)
         deduped.append(str(candidate).strip())
     return deduped
+
+
+def build_firecrawl_clinic_queries(raw_niche: str, raw_geo: str) -> List[str]:
+    """Build high-signal Firecrawl search queries for clinic discovery."""
+    niche = (raw_niche or "").strip().lower()
+    geo = (raw_geo or "").strip()
+
+    if any(token in niche for token in ["skin", "aesthetic", "derma", "dermatology", "cosmetic", "laser", "medspa"]):
+        return [
+            f'site:.in {geo} "skin clinic" "book appointment"',
+            f'{geo} premium dermatology clinic',
+            f'{geo} "aesthetic clinic" whatsapp',
+            f'{geo} "cosmetic clinic" consultation',
+        ]
+
+    if any(token in niche for token in ["dental", "dentist", "orthodontic", "oral"]):
+        return [
+            f'site:.in {geo} "dental clinic" "book appointment"',
+            f'{geo} premium dental clinic',
+            f'{geo} cosmetic dentistry clinic',
+        ]
+
+    if any(token in niche for token in ["hair", "transplant", "trichology"]):
+        return [
+            f'site:.in {geo} "hair transplant clinic" consultation',
+            f'{geo} premium hair clinic',
+            f'{geo} trichology clinic whatsapp',
+        ]
+
+    return [f"{geo} {raw_niche}".strip()]
+
+
+def is_low_quality_firecrawl_result(raw_url: str, title: str) -> bool:
+    """Drop obvious directories, social links, and noisy listicles from Firecrawl search."""
+    domain = (extract_domain(raw_url) or "").lower().replace("www.", "")
+    lowered_title = (title or "").lower()
+
+    if not domain:
+        return True
+
+    if domain in {
+        "instagram.com",
+        "facebook.com",
+        "linkedin.com",
+        "youtube.com",
+        "x.com",
+        "twitter.com",
+        "justdial.com",
+        "practo.com",
+        "threebestrated.in",
+        "sulekha.com",
+    }:
+        return True
+
+    return any(
+        blocked in lowered_title
+        for blocked in ["top 10", "best ", "near me", "list of", "directory"]
+    )
+
+
+def discover_company_candidates_firecrawl(raw_niche: str, raw_geo: str, limit: int) -> List[Lead]:
+    """Use Firecrawl search as a discovery fallback when Google Maps/OSINT come up empty."""
+    api_key = os.getenv("FIRECRAWL_API_KEY") or os.getenv("FIRE_CRAWL_API_KEY")
+    if not api_key:
+        return []
+
+    leads: List[Lead] = []
+    seen_domains = set()
+
+    for query in build_firecrawl_clinic_queries(raw_niche, raw_geo):
+        try:
+            response = requests.post(
+                FIRECRAWL_SEARCH_API_URL,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "query": query,
+                    "limit": min(max(limit, 8), 10),
+                },
+                timeout=30,
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except Exception as exc:
+            logger.warning("Firecrawl discovery search failed for query=%s: %s", query, exc)
+            continue
+
+        for item in payload.get("data") or []:
+            website = canonicalize_company_website(str(item.get("url") or "").strip())
+            title = str(item.get("title") or "").strip()
+            domain = (extract_domain(website) or "").lower().replace("www.", "")
+
+            if not website or not domain or domain in seen_domains:
+                continue
+            if is_low_quality_firecrawl_result(website, title):
+                continue
+
+            seen_domains.add(domain)
+            company_name = title.split("|")[0].split("-")[0].strip()
+            if not company_name or len(company_name) < 3:
+                company_name = infer_company_name_from_url(website)
+
+            leads.append(
+                Lead(
+                    lead_id=uuid4(),
+                    business_name=company_name,
+                    category=raw_niche,
+                    location=raw_geo,
+                    geo_tags=[raw_niche, raw_geo],
+                    website=website,
+                    landing_page_url=website,
+                    phone=None,
+                    emails_found=[],
+                    facebook_page=None,
+                    instagram=None,
+                    ads_active=False,
+                    lead_lifecycle_state=LeadLifecycleState.NEW,
+                )
+            )
+
+            if len(leads) >= limit * 2:
+                return leads
+
+    return leads
 
 
 def normalize_search_result_url(raw_url: str) -> Optional[str]:
@@ -3236,6 +3408,17 @@ def discover_company_candidates_osint(raw_niche: str, raw_geo: str, limit: int) 
 
             if len(leads) >= limit * 2:
                 return leads
+
+    if is_clinic_style_niche(raw_niche) and len(leads) < max(4, min(limit, 8)):
+        firecrawl_leads = discover_company_candidates_firecrawl(raw_niche, raw_geo, limit)
+        for lead in firecrawl_leads:
+            domain = (extract_domain(lead.website) or "").lower().replace("www.", "")
+            if not domain or domain in seen_domains:
+                continue
+            seen_domains.add(domain)
+            leads.append(lead)
+            if len(leads) >= limit * 2:
+                break
 
     return leads
 
@@ -4286,6 +4469,7 @@ async def analyze_lead(
                 db,
                 current_lead,
                 include_outreach=request.include_outreach,
+                include_audit=False,
             ),
         )
         return result
@@ -4301,6 +4485,7 @@ def execute_lead_analysis(
     lead_data: Dict[str, Any],
     *,
     include_outreach: bool,
+    include_audit: bool = False,
 ) -> Dict[str, Any]:
     """Run the full single-lead analysis flow and persist the result."""
     lead_model = lead_data_to_model(lead_data)
@@ -4313,6 +4498,7 @@ def execute_lead_analysis(
         db,
         lead_data,
         include_outreach=include_outreach,
+        include_audit=include_audit,
     )
     processed["intent"] = harmonize_intent_with_proof(
         processed.get("intent") or {},
@@ -4409,7 +4595,12 @@ def run_lead_analysis_background(lead_id: str, include_outreach: bool) -> None:
         return
 
     try:
-        execute_lead_analysis(db, lead_data, include_outreach=include_outreach)
+        execute_lead_analysis(
+            db,
+            lead_data,
+            include_outreach=include_outreach,
+            include_audit=False,
+        )
         logger.info("Background analysis completed for lead_id=%s", lead_id)
     except Exception as exc:
         logger.exception("Background analysis failed for lead_id=%s", lead_id)

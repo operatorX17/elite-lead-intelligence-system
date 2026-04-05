@@ -109,7 +109,9 @@ export async function POST(request: Request): Promise<Response> {
       throw error;
     }
 
-    const backendResponse = await fetch(`${ZRAI_BACKEND_URL}/api/v1/analyze-lead-async`, {
+    const backendPath = body.include_outreach ? "/api/v1/analyze-lead-async" : "/api/v1/analyze-lead";
+
+    const backendResponse = await fetch(`${ZRAI_BACKEND_URL}${backendPath}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

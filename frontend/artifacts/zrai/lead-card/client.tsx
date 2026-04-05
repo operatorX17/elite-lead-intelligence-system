@@ -714,7 +714,7 @@ function LeadCardContent({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           lead_id: persistentLead.id,
-          include_outreach: true,
+          include_outreach: false,
           lead: persistentLead,
         }),
       });
@@ -1428,7 +1428,7 @@ export const leadCardArtifact = new Artifact<"lead-card", LeadCardMetadata>({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             lead_id: persistentLead.id,
-            include_outreach: true,
+            include_outreach: false,
           }),
         });
 

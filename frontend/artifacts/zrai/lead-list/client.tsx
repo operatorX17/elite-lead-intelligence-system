@@ -1296,7 +1296,7 @@ function LeadListContent({
         signal: controller.signal,
         body: JSON.stringify({
           lead_id: effectiveLead.id,
-          include_outreach: true,
+          include_outreach: false,
           lead: effectiveLead,
         }),
       });
@@ -2038,7 +2038,7 @@ function LeadListContent({
             </div>
             {isSelectedLeadProcessing && (
               <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-200">
-                Running enrichment, ads verification, proof extraction, scoring, and one best outreach draft for this lead. Click{" "}
+                Running fast lead analysis for this lead: enrichment, intent fit, scoring, and backend truth sync. Click{" "}
                 Stop analyze to cancel it.
               </div>
             )}
