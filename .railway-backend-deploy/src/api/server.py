@@ -1700,8 +1700,13 @@ def build_analysis_bundle(
     decision_maker_confidence = signal_facts.get("decision_maker_confidence")
     best_contact_phone = signal_facts.get("best_contact_phone")
     best_contact_email = signal_facts.get("best_contact_email")
+    best_contact_linkedin = signal_facts.get("best_contact_linkedin")
     best_contact_channel = signal_facts.get("best_contact_channel")
     best_contact_reason = signal_facts.get("best_contact_reason")
+    decision_maker_candidates = signal_facts.get("decision_maker_candidates") or []
+    doctor_profiles = signal_facts.get("doctor_profiles") or []
+    branch_contacts = signal_facts.get("branch_contacts") or []
+    contact_evidence = signal_facts.get("contact_evidence") or []
     contact_intelligence = signal_facts.get("contact_intelligence") or {}
     top_contact = contact_intelligence.get("top_contact") or {}
 
