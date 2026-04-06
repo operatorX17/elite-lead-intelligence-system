@@ -2998,10 +2998,7 @@ def is_low_quality_firecrawl_result(raw_url: str, title: str) -> bool:
     }:
         return True
 
-    return any(
-        blocked in lowered_title
-        for blocked in ["top 10", "best ", "near me", "list of", "directory"]
-    )
+    return any(blocked in lowered_title for blocked in ["top 10", "near me", "list of", "directory"])
 
 
 def discover_company_candidates_firecrawl(raw_niche: str, raw_geo: str, limit: int) -> List[Lead]:
@@ -3044,9 +3041,7 @@ def discover_company_candidates_firecrawl(raw_niche: str, raw_geo: str, limit: i
                 continue
 
             seen_domains.add(domain)
-            company_name = title.split("|")[0].split("-")[0].strip()
-            if not company_name or len(company_name) < 3:
-                company_name = infer_company_name_from_url(website)
+            company_name = infer_company_name_from_title(website, title)
 
             leads.append(
                 Lead(
@@ -3194,6 +3189,105 @@ def infer_company_name_from_url(url: str) -> str:
     hostname = domain.lower().replace("www.", "")
     stem = hostname.split(".")[0].replace("-", " ").replace("_", " ").strip()
     return " ".join(part.capitalize() for part in stem.split()) or domain
+
+
+SEO_BRAND_BLOCKLIST = (
+    "best ",
+    "top ",
+    "#1",
+    "near me",
+    "directory",
+    "list of",
+    "clinic in ",
+    "hospital in ",
+    "dermatologist in ",
+    "skin clinic in ",
+    "hair clinic in ",
+    "cosmetic clinic in ",
+    "multispecialty hospital in ",
+)
+
+SEO_GEO_HINTS = (
+    "bangalore",
+    "bengaluru",
+    "jayanagar",
+    "indiranagar",
+    "whitefield",
+    "koramangala",
+    "hsr",
+    "marathahalli",
+)
+
+
+def _normalize_brand_token(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", (value or "").lower())
+
+
+def _looks_like_seo_brand_noise(value: str) -> bool:
+    lowered = (value or "").strip().lower()
+    if not lowered:
+        return True
+    return any(token in lowered for token in SEO_BRAND_BLOCKLIST)
+
+
+def infer_company_name_from_title(url: str, title: str) -> str:
+    """Infer a likely real brand name from a search result title."""
+    fallback = infer_company_name_from_url(url)
+    title = (title or "").strip()
+    if not title:
+        return fallback
+
+    domain = extract_domain(url) or url
+    hostname = domain.lower().replace("www.", "")
+    domain_stem = hostname.split(".")[0]
+    domain_token = _normalize_brand_token(domain_stem)
+
+    raw_segments: List[str] = []
+    for segment in re.split(r"\|", title):
+        cleaned = segment.strip(" -:\u2013\u2014,")
+        if cleaned:
+            raw_segments.append(cleaned)
+        for subsegment in re.split(r"\s[-\u2013\u2014]\s", cleaned):
+            normalized = subsegment.strip(" -:\u2013\u2014,")
+            if normalized:
+                raw_segments.append(normalized)
+        if ":" in cleaned:
+            prefix = cleaned.split(":", 1)[0].strip(" -:\u2013\u2014,")
+            if prefix:
+                raw_segments.append(prefix)
+
+    best_segment = ""
+    best_score = float("-inf")
+    for segment in raw_segments:
+        lowered = segment.lower()
+        normalized = _normalize_brand_token(segment)
+        score = 0
+
+        if _looks_like_seo_brand_noise(segment):
+            score -= 6
+        if any(hint in lowered for hint in SEO_GEO_HINTS):
+            score -= 3
+        if len(segment.split()) > 8:
+            score -= 2
+        if 3 <= len(segment) <= 60:
+            score += 1
+        if len(segment.split()) <= 6:
+            score += 1
+        if any(token in lowered for token in ["clinic", "clinics", "aesthetic", "skin", "hair", "care", "laser"]):
+            score += 1
+        if domain_token and domain_token in normalized:
+            score += 6
+        if "example.com" in lowered:
+            score -= 6
+
+        if score > best_score:
+            best_segment = segment
+            best_score = score
+
+    if best_segment and best_score >= 2:
+        return best_segment
+
+    return fallback
 
 
 def canonicalize_company_website(url: str) -> str:

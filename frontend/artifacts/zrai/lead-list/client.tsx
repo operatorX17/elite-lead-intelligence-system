@@ -550,15 +550,70 @@ function getDecisionLabel(finalScore: number | null | undefined) {
   return "Low priority";
 }
 
+function getLeadRowPriority(lead: Lead) {
+  let score = 0;
+  if (lead.score_kind === "final_score") {
+    score += 10;
+  }
+  if (lead.analysis_state === "analyzed") {
+    score += 8;
+  } else if (lead.analysis_state === "analyzing") {
+    score += 2;
+  }
+  if ((lead.contacts?.length || 0) > 0) {
+    score += 3;
+  }
+  if (lead.source && lead.source !== "Unknown") {
+    score += 1;
+  }
+  if (lead.score != null) {
+    score += 1;
+  }
+  return score;
+}
+
 function mergeLeadRows(existing: Lead[], incoming: Lead[]) {
-  const byId = new Map(existing.map((lead) => [lead.id, lead]));
+  const byIdentity = new Map<string, Lead>();
+
+  const upsert = (lead: Lead) => {
+    if (!lead?.id || !lead?.company_name) {
+      return;
+    }
+
+    const keys = [lead.id];
+    if (lead.domain) {
+      keys.push(`domain:${lead.domain.toLowerCase()}`);
+    }
+
+    const existingLead = keys
+      .map((key) => byIdentity.get(key))
+      .find(Boolean);
+    const nextLead =
+      existingLead && getLeadRowPriority(existingLead) > getLeadRowPriority(lead)
+        ? { ...lead, ...existingLead }
+        : { ...existingLead, ...lead };
+
+    for (const key of keys) {
+      byIdentity.set(key, nextLead as Lead);
+    }
+  };
+
+  for (const lead of existing) {
+    upsert(lead);
+  }
+
   for (const lead of incoming) {
     if (!lead?.id || !lead?.company_name) {
       continue;
     }
-    byId.set(lead.id, { ...(byId.get(lead.id) || {}), ...lead });
+    upsert(lead);
   }
-  return Array.from(byId.values());
+
+  const deduped = new Map<string, Lead>();
+  for (const lead of byIdentity.values()) {
+    deduped.set(lead.id, lead);
+  }
+  return Array.from(deduped.values());
 }
 
 function sanitizeLeadRows(leads: Lead[]) {
@@ -566,7 +621,13 @@ function sanitizeLeadRows(leads: Lead[]) {
 }
 
 function replaceLeadRow(existing: Lead[], previousLeadId: string, incoming: Lead) {
-  const filtered = existing.filter((lead) => lead.id !== previousLeadId && lead.id !== incoming.id);
+  const normalizedDomain = incoming.domain?.toLowerCase() || "";
+  const filtered = existing.filter(
+    (lead) =>
+      lead.id !== previousLeadId &&
+      lead.id !== incoming.id &&
+      (!normalizedDomain || lead.domain?.toLowerCase() !== normalizedDomain)
+  );
   return sanitizeLeadRows([...filtered, incoming]);
 }
 

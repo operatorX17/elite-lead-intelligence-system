@@ -99,22 +99,121 @@ function extractDomain(rawUrl: string): string {
   }
 }
 
-function inferCompanyName(rawUrl: string, title: string): string {
-  const normalizedTitle = String(title || "")
-    .split("|")[0]
-    .split("-")[0]
-    .trim();
-  if (normalizedTitle.length >= 3) {
-    return normalizedTitle;
-  }
+const SEO_BRAND_BLOCKLIST = [
+  "best ",
+  "top ",
+  "#1",
+  "near me",
+  "directory",
+  "list of",
+  "clinic in ",
+  "hospital in ",
+  "dermatologist in ",
+  "skin clinic in ",
+  "hair clinic in ",
+  "cosmetic clinic in ",
+  "multispecialty hospital in ",
+];
 
+const SEO_GEO_HINTS = [
+  "bangalore",
+  "bengaluru",
+  "jayanagar",
+  "indiranagar",
+  "whitefield",
+  "koramangala",
+  "hsr",
+  "marathahalli",
+];
+
+function normalizeBrandToken(value: string): string {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function looksLikeSeoBrandNoise(value: string): boolean {
+  const lowered = String(value || "").trim().toLowerCase();
+  if (!lowered) {
+    return true;
+  }
+  return SEO_BRAND_BLOCKLIST.some((token) => lowered.includes(token));
+}
+
+function inferCompanyName(rawUrl: string, title: string): string {
   const domain = extractDomain(rawUrl);
-  const stem = domain.split(".")[0]?.replace(/[-_]+/g, " ").trim() || domain;
-  return stem
+  const fallback = (domain.split(".")[0]?.replace(/[-_]+/g, " ").trim() || domain)
     .split(" ")
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+
+  const rawTitle = String(title || "").trim();
+  if (!rawTitle) {
+    return fallback;
+  }
+
+  const domainStem = domain.split(".")[0] || "";
+  const domainToken = normalizeBrandToken(domainStem);
+  const rawSegments: string[] = [];
+
+  for (const segment of rawTitle.split("|")) {
+    const cleaned = segment.trim().replace(/^[-:,\s]+|[-:,\s]+$/g, "");
+    if (cleaned) {
+      rawSegments.push(cleaned);
+    }
+    for (const subsegment of cleaned.split(/\s[-–—]\s/)) {
+      const normalized = subsegment.trim().replace(/^[-:,\s]+|[-:,\s]+$/g, "");
+      if (normalized) {
+        rawSegments.push(normalized);
+      }
+    }
+    if (cleaned.includes(":")) {
+      const prefix = cleaned.split(":", 1)[0]?.trim().replace(/^[-:,\s]+|[-:,\s]+$/g, "");
+      if (prefix) {
+        rawSegments.push(prefix);
+      }
+    }
+  }
+
+  let bestSegment = "";
+  let bestScore = Number.NEGATIVE_INFINITY;
+
+  for (const segment of rawSegments) {
+    const lowered = segment.toLowerCase();
+    const normalized = normalizeBrandToken(segment);
+    let score = 0;
+
+    if (looksLikeSeoBrandNoise(segment)) {
+      score -= 6;
+    }
+    if (SEO_GEO_HINTS.some((hint) => lowered.includes(hint))) {
+      score -= 3;
+    }
+    if (segment.split(/\s+/).length > 8) {
+      score -= 2;
+    }
+    if (segment.length >= 3 && segment.length <= 60) {
+      score += 1;
+    }
+    if (segment.split(/\s+/).length <= 6) {
+      score += 1;
+    }
+    if (["clinic", "clinics", "aesthetic", "skin", "hair", "care", "laser"].some((token) => lowered.includes(token))) {
+      score += 1;
+    }
+    if (domainToken && normalized.includes(domainToken)) {
+      score += 6;
+    }
+    if (lowered.includes("example.com")) {
+      score -= 6;
+    }
+
+    if (score > bestScore) {
+      bestSegment = segment;
+      bestScore = score;
+    }
+  }
+
+  return bestSegment && bestScore >= 2 ? bestSegment : fallback;
 }
 
 function isBlockedClinicSearchResult(rawUrl: string, title: string): boolean {
@@ -143,7 +242,6 @@ function isBlockedClinicSearchResult(rawUrl: string, title: string): boolean {
   if (
     loweredTitle.includes("top 10") ||
     loweredTitle.includes("list of best") ||
-    loweredTitle.includes("best skin clinics") ||
     loweredTitle.includes("near me")
   ) {
     return true;
@@ -161,7 +259,7 @@ async function discoverClinicLeadsWithFirecrawl({
   limit: number;
   niche: string;
 }) {
-  const apiKey = process.env.FIRECRAWL_API_KEY;
+  const apiKey = process.env.FIRECRAWL_API_KEY || process.env.FIRE_CRAWL_API_KEY;
   if (!apiKey) {
     return [];
   }
