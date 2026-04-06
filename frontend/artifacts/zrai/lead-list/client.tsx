@@ -591,12 +591,16 @@ function replaceProcessedLeadDetails(
 
 function serializeLeadListPayload(
   leads: Lead[],
-  metadata?: Pick<LeadListMetadata, "filter" | "processedDetails" | "sortBy" | "sortOrder">
+  metadata?: Pick<
+    LeadListMetadata,
+    "filter" | "processedDetails" | "selectedLeadId" | "sortBy" | "sortOrder"
+  >
 ) {
   return JSON.stringify({
     filter: metadata?.filter || "",
     leads,
     processedDetails: metadata?.processedDetails || {},
+    selectedLeadId: metadata?.selectedLeadId || null,
     sortBy: metadata?.sortBy || "score",
     sortOrder: metadata?.sortOrder || "desc",
   });
@@ -818,6 +822,35 @@ function LeadListContent({
   const sortBy = metadata?.sortBy || contentPayload.sortBy || "score";
   const sortOrder = metadata?.sortOrder || contentPayload.sortOrder || "desc";
   const sortedLeads = sortLeads(filteredLeads, sortBy, sortOrder);
+  const persistedSelectedLeadId = metadata?.selectedLeadId || contentPayload.selectedLeadId || null;
+
+  const persistLeadListContent = ({
+    nextFilter,
+    nextLeads,
+    nextProcessedDetails,
+    nextSelectedLeadId,
+    nextSortBy,
+    nextSortOrder,
+  }: {
+    nextFilter?: string;
+    nextLeads?: Lead[];
+    nextProcessedDetails?: Record<string, ProcessedLeadDetails>;
+    nextSelectedLeadId?: string | null;
+    nextSortBy?: string;
+    nextSortOrder?: "asc" | "desc";
+  }) => {
+    setArtifact((draft) => ({
+      ...draft,
+      content: serializeLeadListPayload(nextLeads || leads, {
+        filter: nextFilter ?? filter,
+        processedDetails: nextProcessedDetails ?? processedDetails ?? {},
+        selectedLeadId:
+          nextSelectedLeadId !== undefined ? nextSelectedLeadId : persistedSelectedLeadId,
+        sortBy: nextSortBy ?? sortBy,
+        sortOrder: nextSortOrder ?? sortOrder,
+      }),
+    }));
+  };
   const processedDetails =
     metadata?.processedDetails && Object.keys(metadata.processedDetails).length > 0
       ? metadata.processedDetails
@@ -873,30 +906,59 @@ function LeadListContent({
   const syncLeadListState = ({
     nextLeads,
     nextProcessedDetails,
+    nextSelectedLeadId,
   }: {
     nextLeads: Lead[];
     nextProcessedDetails?: Record<string, ProcessedLeadDetails>;
+    nextSelectedLeadId?: string | null;
   }) => {
     setMetadata((prev: LeadListMetadata) => {
       const updated = {
         ...prev,
         leads: nextLeads,
         processedDetails: nextProcessedDetails ?? prev.processedDetails ?? {},
+        selectedLeadId:
+          nextSelectedLeadId !== undefined
+            ? nextSelectedLeadId
+            : prev.selectedLeadId ?? contentPayload.selectedLeadId ?? null,
       };
 
-      setArtifact((draft) => ({
-        ...draft,
-        content: serializeLeadListPayload(updated.leads, {
-          filter: updated.filter,
-          processedDetails: updated.processedDetails,
-          sortBy: updated.sortBy,
-          sortOrder: updated.sortOrder,
-        }),
-      }));
+      persistLeadListContent({
+        nextFilter: updated.filter,
+        nextLeads: updated.leads,
+        nextProcessedDetails: updated.processedDetails,
+        nextSelectedLeadId: updated.selectedLeadId ?? null,
+        nextSortBy: updated.sortBy,
+        nextSortOrder: updated.sortOrder,
+      });
 
       return updated;
     });
   };
+
+  useEffect(() => {
+    if (!persistedSelectedLeadId) {
+      if (selectedLead) {
+        setSelectedLead(null);
+        setSelectedLeadLive(null);
+        setSelectedLeadLiveDetails(null);
+      }
+      return;
+    }
+
+    if (selectedLead?.id === persistedSelectedLeadId) {
+      return;
+    }
+
+    const rehydratedLead = leads.find((lead) => lead.id === persistedSelectedLeadId);
+    if (!rehydratedLead) {
+      return;
+    }
+
+    setSelectedLead(rehydratedLead);
+    setSelectedLeadLive(null);
+    setSelectedLeadLiveDetails(null);
+  }, [persistedSelectedLeadId, leads, selectedLead]);
 
   useEffect(() => {
     if (!selectedLead) {
@@ -973,12 +1035,17 @@ function LeadListContent({
   }
 
   const handleSort = (column: string) => {
+    const nextSortOrder =
+      sortBy === column && sortOrder === "desc" ? "asc" : "desc";
     setMetadata((prev: LeadListMetadata) => ({
       ...prev,
       sortBy: column,
-      sortOrder:
-        prev.sortBy === column && prev.sortOrder === "desc" ? "asc" : "desc",
+      sortOrder: nextSortOrder,
     }));
+    persistLeadListContent({
+      nextSortBy: column,
+      nextSortOrder,
+    });
   };
 
   const clearProcessing = (leadIds: string[]) => {
@@ -1065,6 +1132,7 @@ function LeadListContent({
       const persistedLeadMap = new Map<string, Lead>();
       let nextLeadRows = leads;
       let nextProcessedDetails = processedDetails || {};
+      let nextSelectedLeadId = persistedSelectedLeadId;
 
       for (const leadId of freshLeadIds) {
         const rawLead = leads.find((candidate) => candidate.id === leadId);
@@ -1085,12 +1153,16 @@ function LeadListContent({
           rawLead.id,
           importedLead.id
         );
+        if (nextSelectedLeadId === rawLead.id) {
+          nextSelectedLeadId = importedLead.id;
+        }
       }
 
       if (nextLeadRows !== leads || nextProcessedDetails !== (processedDetails || {})) {
         syncLeadListState({
           nextLeads: nextLeadRows,
           nextProcessedDetails,
+          nextSelectedLeadId,
         });
       }
 
@@ -1261,6 +1333,7 @@ function LeadListContent({
               [selectedLead.id]: hydrated.processedDetails,
             }
           : processedDetails,
+        nextSelectedLeadId: selectedLead.id,
       });
       setSelectedLead(mergedLeads.find((lead) => lead.id === selectedLead.id) || hydrated.lead);
       setSelectedLeadLive(hydrated.lead);
@@ -1329,6 +1402,7 @@ function LeadListContent({
               [leadId]: hydrated.processedDetails,
             }
           : processedDetails,
+        nextSelectedLeadId: leadId,
       });
       setSelectedLead(mergedLeads.find((lead) => lead.id === leadId) || hydrated.lead);
       setSelectedLeadLive(hydrated.lead);
@@ -1378,6 +1452,7 @@ function LeadListContent({
         syncLeadListState({
           nextLeads: nextLeadRows,
           nextProcessedDetails,
+          nextSelectedLeadId: effectiveLead.id,
         });
         setSelectedLead(effectiveLead);
         setSelectedLeadLive(effectiveLead);
@@ -1429,6 +1504,7 @@ function LeadListContent({
               analysis_updated_at: payloadData?.analysis_updated_at || payload?.analysis_updated_at || null,
             } as ProcessedLeadDetails,
           },
+          nextSelectedLeadId: queuedLead.id,
         });
         setSelectedLead(mergedQueuedLeads.find((lead) => lead.id === queuedLead.id) || queuedLead);
         setSelectedLeadLive(queuedLead);
@@ -1467,6 +1543,7 @@ function LeadListContent({
           ...(processedDetails || {}),
           [analyzedLead.id]: hydrated.processedDetails || analyzedProcessedDetailsRaw,
         },
+        nextSelectedLeadId: analyzedLead.id,
       });
       setSelectedLead(mergedLeads.find((lead) => lead.id === analyzedLead.id) || hydrated.lead);
       setSelectedLeadLive(hydrated.lead);
@@ -1534,18 +1611,22 @@ function LeadListContent({
     <div className="flex h-full min-h-0 flex-row">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div className="border-zinc-200 border-b p-3 dark:border-zinc-700">
-          <input
-            className="w-full rounded-md border border-zinc-300 bg-transparent px-3 py-2 text-sm dark:border-zinc-600"
-            onChange={(event) =>
-              setMetadata((prev: LeadListMetadata) => ({
-                ...prev,
-                filter: event.target.value,
-              }))
-            }
-            placeholder="Filter leads..."
-            type="text"
-            value={filter}
-          />
+            <input
+              className="w-full rounded-md border border-zinc-300 bg-transparent px-3 py-2 text-sm dark:border-zinc-600"
+              onChange={(event) => {
+                const nextFilter = event.target.value;
+                setMetadata((prev: LeadListMetadata) => ({
+                  ...prev,
+                  filter: nextFilter,
+                }));
+                persistLeadListContent({
+                  nextFilter,
+                });
+              }}
+              placeholder="Filter leads..."
+              type="text"
+              value={filter}
+            />
         </div>
 
         <div className="flex gap-4 border-zinc-200 border-b bg-zinc-50 p-3 text-sm dark:border-zinc-700 dark:bg-zinc-800">
@@ -1646,6 +1727,9 @@ function LeadListContent({
                       liveSelectedLead: null,
                       liveSelectedLeadDetails: null,
                     }));
+                    persistLeadListContent({
+                      nextSelectedLeadId: lead.id,
+                    });
                   }}
                 />
               ))}
@@ -1672,6 +1756,9 @@ function LeadListContent({
                   liveSelectedLead: null,
                   liveSelectedLeadDetails: null,
                 }));
+                persistLeadListContent({
+                  nextSelectedLeadId: null,
+                });
               }}
               type="button"
             >
@@ -2219,6 +2306,7 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
         content: serializeLeadListPayload(leads, {
           filter: payload.filter || "",
           processedDetails,
+          selectedLeadId: payload.selectedLeadId || null,
           sortBy: payload.sortBy || "score",
           sortOrder: payload.sortOrder || "desc",
         }),
