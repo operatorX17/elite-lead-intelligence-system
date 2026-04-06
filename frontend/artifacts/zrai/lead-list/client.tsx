@@ -807,6 +807,9 @@ function LeadListContent({
   const [isRefreshingTruth, setIsRefreshingTruth] = useState(false);
   const processControllersRef = useRef<Record<string, AbortController>>({});
   const founderIntelCacheRef = useRef<Record<string, FounderIntelPayload>>({});
+  const leadsRef = useRef<Lead[]>([]);
+  const processedDetailsRef = useRef<Record<string, ProcessedLeadDetails>>({});
+  const selectedLeadIdRef = useRef<string | null>(null);
   const { setArtifact } = useArtifact();
 
   // Prefer metadata because operator actions can mutate leads after the initial artifact is streamed.
@@ -832,6 +835,18 @@ function LeadListContent({
   const sortOrder = metadata?.sortOrder || contentPayload.sortOrder || "desc";
   const sortedLeads = sortLeads(filteredLeads, sortBy, sortOrder);
   const persistedSelectedLeadId = metadata?.selectedLeadId || contentPayload.selectedLeadId || null;
+
+  useEffect(() => {
+    leadsRef.current = leads;
+  }, [leads]);
+
+  useEffect(() => {
+    processedDetailsRef.current = processedDetails || {};
+  }, [processedDetails]);
+
+  useEffect(() => {
+    selectedLeadIdRef.current = persistedSelectedLeadId;
+  }, [persistedSelectedLeadId]);
 
   const persistLeadListContent = ({
     nextFilter,
@@ -1008,54 +1023,6 @@ function LeadListContent({
     }
   }, [leads, selectedLead]);
 
-  useEffect(() => {
-    if (!selectedLead?.id) {
-      return;
-    }
-
-    let cancelled = false;
-
-    const refreshSelectedLead = async () => {
-      try {
-        const response = await fetch(getZRAILeadByIdEndpoint(selectedLead.id));
-        if (!response.ok) {
-          return;
-        }
-
-        const payload = await response.json();
-        const payloadData = getPayloadData(payload);
-        if (!(payload?.success ?? true) || cancelled) {
-          return;
-        }
-
-        const latestLead = (payloadData?.lead || payloadData) as Lead;
-        if (!latestLead?.id || !latestLead?.company_name) {
-          return;
-        }
-        const latestProcessedDetailsRaw = payloadData.processed_details as ProcessedLeadDetails | undefined;
-        const hydrated = await hydrateFounderIntel(latestLead, latestProcessedDetailsRaw || null);
-        if (cancelled) {
-          return;
-        }
-        setSelectedLeadLive(hydrated.lead);
-        setSelectedLeadLiveDetails(hydrated.processedDetails);
-        setMetadata((prev: LeadListMetadata) => ({
-          ...prev,
-          liveSelectedLead: hydrated.lead,
-          liveSelectedLeadDetails: hydrated.processedDetails,
-        }));
-      } catch {
-        // Keep the embedded artifact payload if refresh fails.
-      }
-    };
-
-    void refreshSelectedLead();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedLead?.id]);
-
   if (leads.length === 0) {
     return (
       <div className="flex h-full items-center justify-center p-8">
@@ -1160,15 +1127,18 @@ function LeadListContent({
     setProcessingIds((prev) => Array.from(new Set([...prev, ...freshLeadIds])));
 
     let activeLeadIds = [...freshLeadIds];
+    let workingLeadRows = leadsRef.current;
+    let workingProcessedDetails = processedDetailsRef.current;
+    let workingSelectedLeadId = selectedLeadIdRef.current;
 
     try {
       const persistedLeadMap = new Map<string, Lead>();
-      let nextLeadRows = leads;
-      let nextProcessedDetails = processedDetails || {};
-      let nextSelectedLeadId = persistedSelectedLeadId;
+      let nextLeadRows = workingLeadRows;
+      let nextProcessedDetails = workingProcessedDetails;
+      let nextSelectedLeadId = workingSelectedLeadId;
 
       for (const leadId of freshLeadIds) {
-        const rawLead = leads.find((candidate) => candidate.id === leadId);
+        const rawLead = workingLeadRows.find((candidate) => candidate.id === leadId);
         if (!rawLead) {
           continue;
         }
@@ -1191,13 +1161,21 @@ function LeadListContent({
         }
       }
 
-      if (nextLeadRows !== leads || nextProcessedDetails !== (processedDetails || {})) {
+      if (
+        nextLeadRows !== workingLeadRows ||
+        nextProcessedDetails !== workingProcessedDetails ||
+        nextSelectedLeadId !== workingSelectedLeadId
+      ) {
         syncLeadListState({
           nextLeads: nextLeadRows,
           nextProcessedDetails,
           nextSelectedLeadId,
         });
       }
+
+      workingLeadRows = nextLeadRows;
+      workingProcessedDetails = nextProcessedDetails;
+      workingSelectedLeadId = nextSelectedLeadId ?? null;
 
       const remappedLeadIds = freshLeadIds.map(
         (leadId) => persistedLeadMap.get(leadId)?.id || leadId
@@ -1256,14 +1234,15 @@ function LeadListContent({
         return;
       }
 
-      const mergedLeads = mergeLeadRows(leads, processedLeads);
+      const mergedLeads = mergeLeadRows(workingLeadRows, processedLeads);
       const mergedDetails = {
-        ...(processedDetails || {}),
+        ...workingProcessedDetails,
         ...Object.fromEntries(processedDetailEntries),
       };
       syncLeadListState({
         nextLeads: mergedLeads,
         nextProcessedDetails: mergedDetails,
+        nextSelectedLeadId: workingSelectedLeadId,
       });
 
       if (selectedLead) {
@@ -1357,15 +1336,17 @@ function LeadListContent({
             } as ProcessedLeadDetails)
           : null;
       const hydrated = await hydrateFounderIntel(latestLead, latestProcessedDetailsRaw);
-      const mergedLeads = mergeLeadRows(leads, [hydrated.lead]);
+      const baseLeads = leadsRef.current;
+      const baseProcessedDetails = processedDetailsRef.current;
+      const mergedLeads = mergeLeadRows(baseLeads, [hydrated.lead]);
       syncLeadListState({
         nextLeads: mergedLeads,
         nextProcessedDetails: hydrated.processedDetails
           ? {
-              ...(processedDetails || {}),
+              ...baseProcessedDetails,
               [selectedLead.id]: hydrated.processedDetails,
             }
-          : processedDetails,
+          : baseProcessedDetails,
         nextSelectedLeadId: selectedLead.id,
       });
       setSelectedLead(mergedLeads.find((lead) => lead.id === selectedLead.id) || hydrated.lead);
@@ -1426,15 +1407,17 @@ function LeadListContent({
         : null;
       const hydrated = await hydrateFounderIntel(latestLead, latestProcessedDetailsRaw);
 
-      const mergedLeads = mergeLeadRows(leads, [hydrated.lead]);
+      const baseLeads = leadsRef.current;
+      const baseProcessedDetails = processedDetailsRef.current;
+      const mergedLeads = mergeLeadRows(baseLeads, [hydrated.lead]);
       syncLeadListState({
         nextLeads: mergedLeads,
         nextProcessedDetails: hydrated.processedDetails
           ? {
-              ...(processedDetails || {}),
+              ...baseProcessedDetails,
               [leadId]: hydrated.processedDetails,
             }
-          : processedDetails,
+          : baseProcessedDetails,
         nextSelectedLeadId: leadId,
       });
       setSelectedLead(mergedLeads.find((lead) => lead.id === leadId) || hydrated.lead);
@@ -1460,6 +1443,8 @@ function LeadListContent({
     }
 
     try {
+      let workingLeadRows = leadsRef.current;
+      let workingProcessedDetails = processedDetailsRef.current;
       const resolvedLead = isUuidLeadId(selectedLead.id)
         ? selectedLead
         : await ensurePersistedLead(selectedLead);
@@ -1476,9 +1461,9 @@ function LeadListContent({
             } as Lead);
 
       if (effectiveLead.id !== selectedLead.id) {
-        const nextLeadRows = replaceLeadRow(leads, selectedLead.id, effectiveLead);
+        const nextLeadRows = replaceLeadRow(workingLeadRows, selectedLead.id, effectiveLead);
         const nextProcessedDetails = replaceProcessedLeadDetails(
-          processedDetails || {},
+          workingProcessedDetails,
           selectedLead.id,
           effectiveLead.id
         );
@@ -1490,6 +1475,8 @@ function LeadListContent({
         setSelectedLead(effectiveLead);
         setSelectedLeadLive(effectiveLead);
         setSelectedLeadLiveDetails(nextProcessedDetails[effectiveLead.id] || null);
+        workingLeadRows = nextLeadRows;
+        workingProcessedDetails = nextProcessedDetails;
       }
 
       const controller = new AbortController();
@@ -1526,28 +1513,23 @@ function LeadListContent({
           ...effectiveLead,
           analysis_state: "analyzing",
         } as Lead;
-        const mergedQueuedLeads = mergeLeadRows(leads, [queuedLead]);
+        const mergedQueuedLeads = mergeLeadRows(workingLeadRows, [queuedLead]);
+        const mergedQueuedDetails = {
+          ...workingProcessedDetails,
+          [queuedLead.id]: {
+            ...(workingProcessedDetails?.[queuedLead.id] || {}),
+            analysis_state: "analyzing",
+            analysis_updated_at: payloadData?.analysis_updated_at || payload?.analysis_updated_at || null,
+          } as ProcessedLeadDetails,
+        };
         syncLeadListState({
           nextLeads: mergedQueuedLeads,
-          nextProcessedDetails: {
-            ...(processedDetails || {}),
-            [queuedLead.id]: {
-              ...(processedDetails?.[queuedLead.id] || {}),
-              analysis_state: "analyzing",
-              analysis_updated_at: payloadData?.analysis_updated_at || payload?.analysis_updated_at || null,
-            } as ProcessedLeadDetails,
-          },
+          nextProcessedDetails: mergedQueuedDetails,
           nextSelectedLeadId: queuedLead.id,
         });
         setSelectedLead(mergedQueuedLeads.find((lead) => lead.id === queuedLead.id) || queuedLead);
         setSelectedLeadLive(queuedLead);
-        setSelectedLeadLiveDetails(
-          ({
-            ...(processedDetails?.[queuedLead.id] || {}),
-            analysis_state: "analyzing",
-            analysis_updated_at: payloadData?.analysis_updated_at || payload?.analysis_updated_at || null,
-          } as ProcessedLeadDetails)
-        );
+        setSelectedLeadLiveDetails(mergedQueuedDetails[queuedLead.id] || null);
         toast.success("Analysis started.");
         await pollLeadAnalysisCompletion(queuedLead.id);
         return;
@@ -1569,13 +1551,14 @@ function LeadListContent({
       } as ProcessedLeadDetails;
       const hydrated = await hydrateFounderIntel(analyzedLead, analyzedProcessedDetailsRaw);
 
-      const mergedLeads = mergeLeadRows(leads, [hydrated.lead]);
+      const mergedLeads = mergeLeadRows(workingLeadRows, [hydrated.lead]);
+      const mergedDetails = {
+        ...workingProcessedDetails,
+        [analyzedLead.id]: hydrated.processedDetails || analyzedProcessedDetailsRaw,
+      };
       syncLeadListState({
         nextLeads: mergedLeads,
-        nextProcessedDetails: {
-          ...(processedDetails || {}),
-          [analyzedLead.id]: hydrated.processedDetails || analyzedProcessedDetailsRaw,
-        },
+        nextProcessedDetails: mergedDetails,
         nextSelectedLeadId: analyzedLead.id,
       });
       setSelectedLead(mergedLeads.find((lead) => lead.id === analyzedLead.id) || hydrated.lead);
@@ -1806,17 +1789,26 @@ function LeadListContent({
               <div className="break-all text-sm text-zinc-500">
                 {inspectorLead.domain}
               </div>
-              {(selectedLeadLive || metadata?.liveSelectedLead) && (
+              {selectedLeadEffectiveState === "analyzed" && (
+                <div className="mt-2 inline-flex rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                  Saved analysis
+                </div>
+              )}
+              {selectedLeadEffectiveState !== "analyzed" && (selectedLeadLive || metadata?.liveSelectedLead) && (
                 <div className="mt-2 inline-flex rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
                   Live backend state
                 </div>
               )}
-              {!selectedLeadLive && !metadata?.liveSelectedLead && inspectorLead.score_kind !== "final_score" && (
+              {selectedLeadEffectiveState !== "analyzed" &&
+                !selectedLeadLive &&
+                !metadata?.liveSelectedLead &&
+                inspectorLead.score_kind !== "final_score" && (
                 <div className="mt-2 inline-flex rounded-full bg-amber-100 px-2.5 py-1 text-[11px] text-amber-800 dark:bg-amber-950 dark:text-amber-300">
                   Snapshot preview
                 </div>
               )}
-              {(selectedLeadLive || metadata?.liveSelectedLead) &&
+              {selectedLeadEffectiveState !== "analyzed" &&
+                (selectedLeadLive || metadata?.liveSelectedLead) &&
                 selectedLead &&
                 (() => {
                   const latestLead = selectedLeadLive || metadata?.liveSelectedLead;
