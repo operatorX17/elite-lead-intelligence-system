@@ -62,6 +62,7 @@ const persistedArtifactKinds: ArtifactKind[] = [
   "code",
   "image",
   "sheet",
+  "lead-list",
 ];
 
 export type UIArtifact = {

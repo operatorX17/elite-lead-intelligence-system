@@ -620,6 +620,57 @@ function sanitizeLeadRows(leads: Lead[]) {
   return leads.filter((lead) => Boolean(lead?.id && lead?.company_name));
 }
 
+function getNormalizedLeadIdentity(lead: Lead | null | undefined) {
+  if (!lead) {
+    return {
+      domain: "",
+      company: "",
+    };
+  }
+
+  return {
+    domain: String(lead.domain || "").trim().toLowerCase(),
+    company: String(lead.company_name || "").trim().toLowerCase(),
+  };
+}
+
+function resolveSelectedLeadId(
+  selectedLeadId: string | null | undefined,
+  mergedLeads: Lead[],
+  candidateLeads: Lead[]
+) {
+  if (!selectedLeadId) {
+    return null;
+  }
+
+  if (mergedLeads.some((lead) => lead.id === selectedLeadId)) {
+    return selectedLeadId;
+  }
+
+  const sourceLead = candidateLeads.find((lead) => lead.id === selectedLeadId);
+  if (!sourceLead) {
+    return null;
+  }
+
+  const identity = getNormalizedLeadIdentity(sourceLead);
+
+  const remappedLead = mergedLeads.find((lead) => {
+    const candidateIdentity = getNormalizedLeadIdentity(lead);
+
+    if (identity.domain && candidateIdentity.domain === identity.domain) {
+      return true;
+    }
+
+    if (identity.company && candidateIdentity.company === identity.company) {
+      return true;
+    }
+
+    return false;
+  });
+
+  return remappedLead?.id || null;
+}
+
 function replaceLeadRow(existing: Lead[], previousLeadId: string, incoming: Lead) {
   const normalizedDomain = incoming.domain?.toLowerCase() || "";
   const filtered = existing.filter(
@@ -871,23 +922,26 @@ function LeadListContent({
   const leadsRef = useRef<Lead[]>([]);
   const processedDetailsRef = useRef<Record<string, ProcessedLeadDetails>>({});
   const selectedLeadIdRef = useRef<string | null>(null);
-  const { setArtifact } = useArtifact();
+  const persistTimeoutRef = useRef<number | null>(null);
+  const { artifact, setArtifact } = useArtifact();
 
-  // Prefer metadata because operator actions can mutate leads after the initial artifact is streamed.
   const contentPayload = parseLeadListPayload(content);
   const contentLeads = contentPayload.leads;
-  const rawLeads = sanitizeLeadRows(
-    metadata?.leads?.length > 0 ? metadata.leads : contentLeads
+  const metadataLeads = sanitizeLeadRows(metadata?.leads || []);
+  const mergedProcessedDetails = {
+    ...(contentPayload.processedDetails || {}),
+    ...(metadata?.processedDetails || {}),
+  };
+  const mergedRawLeads = sanitizeLeadRows(
+    mergeLeadRows(contentLeads, metadataLeads)
   );
-  const processedDetails =
-    metadata?.processedDetails && Object.keys(metadata.processedDetails).length > 0
-      ? metadata.processedDetails
-      : contentPayload.processedDetails;
   const leads = sanitizeLeadRows(
-    rawLeads.map(
-      (lead) => hydrateLeadFromStoredAnalysis(lead, processedDetails?.[lead.id] || null) || lead
+    mergedRawLeads.map(
+      (lead) =>
+        hydrateLeadFromStoredAnalysis(lead, mergedProcessedDetails?.[lead.id] || null) || lead
     )
   );
+  const processedDetails = mergedProcessedDetails;
 
   const filter = metadata?.filter || contentPayload.filter || "";
   const filteredLeads = filterLeads(leads, filter);
@@ -895,7 +949,36 @@ function LeadListContent({
   const sortBy = metadata?.sortBy || contentPayload.sortBy || "score";
   const sortOrder = metadata?.sortOrder || contentPayload.sortOrder || "desc";
   const sortedLeads = sortLeads(filteredLeads, sortBy, sortOrder);
-  const persistedSelectedLeadId = metadata?.selectedLeadId || contentPayload.selectedLeadId || null;
+  const persistedSelectedLeadId =
+    resolveSelectedLeadId(
+      metadata?.selectedLeadId || contentPayload.selectedLeadId || null,
+      leads,
+      [...metadataLeads, ...contentLeads]
+    ) || null;
+
+  const queueLeadListDocumentSave = (nextContent: string) => {
+    if (!artifact?.documentId || artifact.documentId === "init") {
+      return;
+    }
+
+    if (persistTimeoutRef.current) {
+      window.clearTimeout(persistTimeoutRef.current);
+    }
+
+    persistTimeoutRef.current = window.setTimeout(() => {
+      void fetch(`/api/document?id=${artifact.documentId}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          title: artifact.title || "Lead List",
+          content: nextContent,
+          kind: artifact.kind || "lead-list",
+        }),
+      }).catch(() => {});
+    }, 350);
+  };
 
   useEffect(() => {
     leadsRef.current = leads;
@@ -924,17 +1007,20 @@ function LeadListContent({
     nextSortBy?: string;
     nextSortOrder?: "asc" | "desc";
   }) => {
+    const nextContent = serializeLeadListPayload(nextLeads || leads, {
+      filter: nextFilter ?? filter,
+      processedDetails: nextProcessedDetails ?? processedDetails ?? {},
+      selectedLeadId:
+        nextSelectedLeadId !== undefined ? nextSelectedLeadId : persistedSelectedLeadId,
+      sortBy: nextSortBy ?? sortBy,
+      sortOrder: nextSortOrder ?? sortOrder,
+    });
+
     setArtifact((draft) => ({
       ...draft,
-      content: serializeLeadListPayload(nextLeads || leads, {
-        filter: nextFilter ?? filter,
-        processedDetails: nextProcessedDetails ?? processedDetails ?? {},
-        selectedLeadId:
-          nextSelectedLeadId !== undefined ? nextSelectedLeadId : persistedSelectedLeadId,
-        sortBy: nextSortBy ?? sortBy,
-        sortOrder: nextSortOrder ?? sortOrder,
-      }),
+      content: nextContent,
     }));
+    queueLeadListDocumentSave(nextContent);
   };
 
   useEffect(() => {
@@ -954,7 +1040,11 @@ function LeadListContent({
       ...draft,
       content: nextContent,
     }));
+    queueLeadListDocumentSave(nextContent);
   }, [
+    artifact.documentId,
+    artifact.kind,
+    artifact.title,
     content,
     filter,
     leads,
@@ -964,6 +1054,14 @@ function LeadListContent({
     sortBy,
     sortOrder,
   ]);
+
+  useEffect(() => {
+    return () => {
+      if (persistTimeoutRef.current) {
+        window.clearTimeout(persistTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const hydrateFounderIntel = async (
     baseLead: Lead,
