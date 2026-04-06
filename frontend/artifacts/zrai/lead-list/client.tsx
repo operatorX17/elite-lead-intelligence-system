@@ -812,8 +812,17 @@ function LeadListContent({
   // Prefer metadata because operator actions can mutate leads after the initial artifact is streamed.
   const contentPayload = parseLeadListPayload(content);
   const contentLeads = contentPayload.leads;
-  const leads = sanitizeLeadRows(
+  const rawLeads = sanitizeLeadRows(
     metadata?.leads?.length > 0 ? metadata.leads : contentLeads
+  );
+  const processedDetails =
+    metadata?.processedDetails && Object.keys(metadata.processedDetails).length > 0
+      ? metadata.processedDetails
+      : contentPayload.processedDetails;
+  const leads = sanitizeLeadRows(
+    rawLeads.map(
+      (lead) => hydrateLeadFromStoredAnalysis(lead, processedDetails?.[lead.id] || null) || lead
+    )
   );
 
   const filter = metadata?.filter || contentPayload.filter || "";
@@ -851,10 +860,34 @@ function LeadListContent({
       }),
     }));
   };
-  const processedDetails =
-    metadata?.processedDetails && Object.keys(metadata.processedDetails).length > 0
-      ? metadata.processedDetails
-      : contentPayload.processedDetails;
+
+  useEffect(() => {
+    const nextContent = serializeLeadListPayload(leads, {
+      filter,
+      processedDetails: processedDetails || {},
+      selectedLeadId: persistedSelectedLeadId,
+      sortBy,
+      sortOrder,
+    });
+
+    if (nextContent === content) {
+      return;
+    }
+
+    setArtifact((draft) => ({
+      ...draft,
+      content: nextContent,
+    }));
+  }, [
+    content,
+    filter,
+    leads,
+    persistedSelectedLeadId,
+    processedDetails,
+    setArtifact,
+    sortBy,
+    sortOrder,
+  ]);
 
   const hydrateFounderIntel = async (
     baseLead: Lead,
