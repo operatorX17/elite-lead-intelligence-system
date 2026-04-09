@@ -844,8 +844,9 @@ def _derive_best_contact_channel(
     whatsapp_target: Optional[str],
     decision_maker_linkedin: Optional[str],
 ) -> tuple[Optional[str], Optional[str]]:
-    if whatsapp_detected and (whatsapp_target or phone_numbers):
-        return "whatsapp", "WhatsApp is already present on the clinic flow and should get the fastest response."
+    if whatsapp_detected:
+        if whatsapp_target:
+            return "whatsapp", "An explicit WhatsApp entry path is visible and can be used as the fastest response route."
     if best_contact_email:
         if _is_generic_email(best_contact_email):
             return "email", "Email is available, but it looks generic, so keep the opener tight and specific."
@@ -996,18 +997,12 @@ def build_signal_facts(
     )
 
     whatsapp_target = proof_extraction.get("whatsapp_target")
-    whatsapp_detected = bool(
-        whatsapp_target
-        or enrichment_payload.get("whatsapp_detected")
-        or proof_extraction.get("chat_widget") == "whatsapp"
+    whatsapp_widget_detected = bool(
+        proof_extraction.get("chat_widget") == "whatsapp"
         or enrichment_payload.get("chat_widget") == "whatsapp"
-        or "whatsapp" in [path.lower() for path in contact_paths]
     )
-    chat_widget_type = (
-        "whatsapp"
-        if whatsapp_detected
-        else proof_extraction.get("chat_widget") or enrichment_payload.get("chat_widget")
-    )
+    whatsapp_detected = bool(whatsapp_target)
+    chat_widget_type = proof_extraction.get("chat_widget") or enrichment_payload.get("chat_widget")
 
     if ads_verification.get("status") in {"yes", "no", "not_checked"}:
         ads_status = ads_verification.get("status")
@@ -1192,6 +1187,7 @@ def build_signal_facts(
         "booking_target": str(booking_target) if booking_target else None,
         "contact_form_detected": contact_form_detected,
         "whatsapp_detected": whatsapp_detected,
+        "whatsapp_widget_detected": whatsapp_widget_detected,
         "whatsapp_target": str(whatsapp_target) if whatsapp_target else None,
         "chat_widget_type": str(chat_widget_type) if chat_widget_type else None,
         "ads_status": ads_status,
@@ -1226,7 +1222,7 @@ def build_signal_facts(
             "phone": 1.0 if phone_numbers else 0.0,
             "booking": 0.95 if booking_target else 0.7 if booking_detected else 0.0,
             "contact_form": 0.8 if contact_form_detected else 0.0,
-            "whatsapp": 0.95 if whatsapp_target else 0.7 if whatsapp_detected else 0.0,
+            "whatsapp": 0.95 if whatsapp_target else 0.35 if whatsapp_widget_detected else 0.0,
             "ads": 1.0 if ads_status in {"yes", "no"} else 0.25,
             "reviews": 0.95 if lead_data.get("reviews_count") is not None else 0.0,
             "services": 0.8 if services else 0.0,
@@ -1313,11 +1309,14 @@ def build_site_truth_summary_from_signal_facts(signal_facts: Optional[Dict[str, 
     facts.append("phone visible" if signal_facts.get("phone_visible") else "phone not detected")
     facts.append("booking detected" if signal_facts.get("booking_detected") else "no booking detected")
 
-    if signal_facts.get("whatsapp_detected"):
-        whatsapp_target = signal_facts.get("whatsapp_target")
-        facts.append(
-            f"WhatsApp detected ({whatsapp_target})" if whatsapp_target else "WhatsApp detected"
-        )
+    whatsapp_target = signal_facts.get("whatsapp_target")
+    whatsapp_widget_detected = bool(signal_facts.get("whatsapp_widget_detected"))
+    if whatsapp_target:
+        facts.append(f"WhatsApp detected ({whatsapp_target})")
+    elif whatsapp_widget_detected:
+        facts.append("WhatsApp widget detected; exact target not extracted")
+    elif signal_facts.get("whatsapp_detected"):
+        facts.append("WhatsApp detected")
     else:
         facts.append("no WhatsApp detected")
 
@@ -1415,6 +1414,8 @@ def build_commercial_reason_from_signal_facts(
         problems.append("phone is not prominent")
     if not signal_facts.get("whatsapp_detected"):
         problems.append("no WhatsApp capture path")
+    elif signal_facts.get("whatsapp_widget_detected") and not signal_facts.get("whatsapp_target"):
+        problems.append("WhatsApp widget is visible, but the exact target was not extracted")
     booking_quality = str(signal_facts.get("booking_flow_quality") or "none").lower()
     if booking_quality in {"none", "weak"}:
         problems.append("booking path is weak")
@@ -1450,6 +1451,8 @@ def build_top_issue_from_signal_facts(signal_facts: Optional[Dict[str, Any]]) ->
 
     if not signal_facts.get("phone_visible"):
         return "Phone is not prominent"
+    if signal_facts.get("whatsapp_widget_detected") and not signal_facts.get("whatsapp_target"):
+        return "WhatsApp widget target is not cleanly extracted"
     if not signal_facts.get("whatsapp_detected"):
         return "WhatsApp capture is missing"
     booking_quality = str(signal_facts.get("booking_flow_quality") or "none").lower()
@@ -1482,6 +1485,8 @@ def build_next_best_action_from_signal_facts(signal_facts: Optional[Dict[str, An
 
     if not signal_facts.get("phone_visible"):
         return "Make phone visible in header and hero"
+    if signal_facts.get("whatsapp_widget_detected") and not signal_facts.get("whatsapp_target"):
+        return "Clarify the chat widget target and extract the exact WhatsApp entry path"
     if not signal_facts.get("whatsapp_detected"):
         return "Add WhatsApp entry path and autoresponse"
     booking_quality = str(signal_facts.get("booking_flow_quality") or "none").lower()
@@ -1664,7 +1669,7 @@ def attach_final_metadata(
         merged_contact_paths.append("phone")
     if proof_extraction.get("booking_link"):
         merged_contact_paths.append("booking")
-    if proof_extraction.get("chat_widget") == "whatsapp" or proof_extraction.get("whatsapp_target"):
+    if proof_extraction.get("whatsapp_target"):
         merged_contact_paths.append("whatsapp")
 
     if contact_paths is not None or proof_extraction:
@@ -1893,11 +1898,11 @@ def build_site_truth_summary(
 
     chat_widget = extraction.get("chat_widget")
     whatsapp_target = extraction.get("whatsapp_target")
-    if chat_widget == "whatsapp" or whatsapp_target:
-        if whatsapp_target:
-            facts.append(f"WhatsApp detected ({whatsapp_target})")
-        else:
-            facts.append("WhatsApp detected")
+    whatsapp_widget_detected = chat_widget == "whatsapp"
+    if whatsapp_target:
+        facts.append(f"WhatsApp detected ({whatsapp_target})")
+    elif whatsapp_widget_detected:
+        facts.append("WhatsApp widget detected; exact target not extracted")
     else:
         facts.append("no WhatsApp detected")
 
@@ -3835,6 +3840,7 @@ def extract_website_phones(website_text: str) -> List[str]:
 def detect_contact_paths(website_text: str, lead: Lead, emails: List[str], phones: List[str]) -> List[str]:
     """Return human-meaningful contact path hints for discovery preview."""
     paths: List[str] = []
+    website_text = (website_text or "").lower()
 
     if emails or (lead.emails_found or []):
         paths.append("email")
@@ -3848,7 +3854,10 @@ def detect_contact_paths(website_text: str, lead: Lead, emails: List[str], phone
         paths.append("booking")
     if any(token in website_text for token in ["free trial", "start free", "start your free trial", "sign up"]):
         paths.append("trial signup")
-    if any(token in website_text for token in ["whatsapp", "wa.me", "api.whatsapp.com"]):
+    if any(
+        token in website_text
+        for token in ["wa.me/", "api.whatsapp.com", "whatsapp://send", "web.whatsapp.com/send"]
+    ):
         paths.append("whatsapp")
 
     deduped: List[str] = []

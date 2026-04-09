@@ -127,6 +127,75 @@ function getLeadSummary(lead: Lead) {
   );
 }
 
+function normalizeLeadUrlValue(value: string | null | undefined) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) {
+    return "";
+  }
+
+  const normalizedInput = /^[a-z]+:\/\//.test(raw) ? raw : `https://${raw}`;
+  try {
+    const parsed = new URL(normalizedInput);
+    return parsed.hostname.replace(/^www\./, "").replace(/:\d+$/, "").trim();
+  } catch {
+    return normalizeLeadDomainValue(raw);
+  }
+}
+
+function getLeadWebsiteHostValue(lead: Lead | null | undefined) {
+  if (!lead) {
+    return "";
+  }
+
+  return (
+    normalizeLeadUrlValue(lead.website) ||
+    normalizeLeadUrlValue(lead.landing_page_url) ||
+    normalizeLeadUrlValue(lead.source_url) ||
+    normalizeLeadUrlValue(lead.url)
+  );
+}
+
+function getLeadDisplayName(lead: Lead | null | undefined) {
+  if (!lead) {
+    return "unknown lead";
+  }
+
+  const businessName = String(lead.business_name || "").trim();
+  if (businessName) {
+    return businessName;
+  }
+
+  const companyName = String(lead.company_name || "").trim();
+  if (companyName) {
+    return companyName;
+  }
+
+  const websiteHost = getLeadWebsiteHostValue(lead);
+  if (websiteHost) {
+    return websiteHost;
+  }
+
+  const domain = normalizeLeadDomainValue(lead.domain);
+  if (domain) {
+    return domain;
+  }
+
+  return lead.id || "unknown lead";
+}
+
+function hasLeadIdentity(lead: Lead | null | undefined) {
+  if (!lead) {
+    return false;
+  }
+
+  return Boolean(
+    lead.id ||
+      normalizeLeadDomainValue(lead.domain) ||
+      getLeadWebsiteHostValue(lead) ||
+      normalizeLeadCompanyValue(lead.business_name || lead.company_name)
+  );
+}
+
 function getScoreLabel(lead: Lead) {
   if (lead.analysis_state === "analyzed" || lead.score_kind === "final_score") {
     return "Final";
@@ -201,13 +270,12 @@ function formatBooleanFact(value: unknown, truthyLabel: string, falsyLabel: stri
 }
 
 function getWhatsAppFact(extractionData: Record<string, unknown> | undefined) {
-  const hasWhatsApp =
-    extractionData?.chat_widget === "whatsapp" || Boolean(extractionData?.whatsapp_target);
+  const target = extractionData?.whatsapp_target ? String(extractionData.whatsapp_target) : "";
+  const widgetDetected = String(extractionData?.chat_widget || "").toLowerCase() === "whatsapp";
   return {
-    hasWhatsApp,
-    target: extractionData?.whatsapp_target
-      ? String(extractionData.whatsapp_target)
-      : "not extracted",
+    hasWhatsApp: Boolean(target),
+    widgetDetected,
+    target: target || "not extracted",
   };
 }
 
@@ -246,7 +314,10 @@ function getCanonicalProofFacts(
       (extractionData?.booking_link ? String(extractionData.booking_link) : null),
     whatsappDetected:
       signalFacts?.whatsapp_detected ??
-      (extractionData?.chat_widget === "whatsapp" || Boolean(extractionData?.whatsapp_target)),
+      Boolean(extractionData?.whatsapp_target),
+    whatsappWidgetDetected:
+      signalFacts?.whatsapp_widget_detected ??
+      String(extractionData?.chat_widget || "").toLowerCase() === "whatsapp",
     whatsappTarget:
       signalFacts?.whatsapp_target ||
       (extractionData?.whatsapp_target ? String(extractionData.whatsapp_target) : null),
@@ -280,7 +351,11 @@ function getCanonicalProofInsights(
   );
 
   if (!facts.whatsappDetected) {
-    insights.push("WhatsApp capture path is missing.");
+    if (facts.whatsappWidgetDetected) {
+      insights.push("WhatsApp widget is present, but the exact target was not cleanly extracted.");
+    } else {
+      insights.push("WhatsApp capture path is missing.");
+    }
   } else if (!facts.whatsappTarget) {
     insights.push("WhatsApp is present, but the exact target was not cleanly extracted.");
   } else {
@@ -334,7 +409,9 @@ function getTopIssue(signalFacts: SignalFacts | null) {
     return "Phone is not prominent";
   }
   if (!signalFacts.whatsapp_detected) {
-    return "WhatsApp capture is missing";
+    return signalFacts.whatsapp_widget_detected
+      ? "WhatsApp widget is present, but the exact target was not cleanly extracted"
+      : "WhatsApp capture is missing";
   }
   if (!signalFacts.booking_detected || signalFacts.booking_flow_quality === "weak") {
     return "Booking flow is weak";
@@ -356,7 +433,9 @@ function getNextBestAction(signalFacts: SignalFacts | null) {
     return "Make phone visible in header and hero";
   }
   if (!signalFacts.whatsapp_detected) {
-    return "Add WhatsApp entry path and autoresponse";
+    return signalFacts.whatsapp_widget_detected
+      ? "Confirm the WhatsApp entry path and autoresponse"
+      : "Add WhatsApp entry path and autoresponse";
   }
   if (!signalFacts.booking_detected || signalFacts.booking_flow_quality === "weak") {
     return "Fix booking flow and confirmation path";
@@ -572,30 +651,115 @@ function getLeadRowPriority(lead: Lead) {
   return score;
 }
 
+function mergeLeadRecord(existing: Lead | null | undefined, incoming: Lead) {
+  if (!existing) {
+    return incoming;
+  }
+
+  return getLeadRowPriority(existing) > getLeadRowPriority(incoming)
+    ? ({ ...incoming, ...existing } as Lead)
+    : ({ ...existing, ...incoming } as Lead);
+}
+
+function isSameLeadEntity(a: Lead | null | undefined, b: Lead | null | undefined) {
+  if (!a || !b) {
+    return false;
+  }
+
+  if (a.id && b.id && a.id === b.id) {
+    return true;
+  }
+
+  const aIdentity = getNormalizedLeadIdentity(a);
+  const bIdentity = getNormalizedLeadIdentity(b);
+
+  if (aIdentity.domain && bIdentity.domain && aIdentity.domain === bIdentity.domain) {
+    return true;
+  }
+
+  if (aIdentity.website && bIdentity.website && aIdentity.website === bIdentity.website) {
+    return true;
+  }
+
+  if (aIdentity.domain && bIdentity.website && aIdentity.domain === bIdentity.website) {
+    return true;
+  }
+
+  if (aIdentity.website && bIdentity.domain && aIdentity.website === bIdentity.domain) {
+    return true;
+  }
+
+  const companyMatches =
+    aIdentity.company &&
+    bIdentity.company &&
+    aIdentity.company === bIdentity.company;
+  const domainConflicts =
+    Boolean(aIdentity.domain && bIdentity.domain && aIdentity.domain !== bIdentity.domain);
+  const websiteConflicts =
+    Boolean(aIdentity.website && bIdentity.website && aIdentity.website !== bIdentity.website);
+
+  if (companyMatches && !domainConflicts && !websiteConflicts) {
+    return true;
+  }
+
+  return false;
+}
+
+function getCanonicalLeadEntityKey(lead: Lead | null | undefined) {
+  if (!lead) {
+    return "";
+  }
+
+  const identity = getNormalizedLeadIdentity(lead);
+  const siteKey = identity.domain || identity.website;
+  if (siteKey) {
+    return `site:${siteKey}`;
+  }
+  if (identity.company) {
+    return `company:${identity.company}`;
+  }
+  return `id:${lead.id || "lead"}`;
+}
+
+function findMergedLeadEntryByEntity(
+  mergedRows: Map<string, Lead>,
+  target: Lead
+) {
+  for (const [entityKey, lead] of mergedRows.entries()) {
+    if (isSameLeadEntity(lead, target)) {
+      return [entityKey, lead] as const;
+    }
+  }
+  return null;
+}
+
 function mergeLeadRows(existing: Lead[], incoming: Lead[]) {
-  const byIdentity = new Map<string, Lead>();
+  const mergedRows = new Map<string, Lead>();
 
   const upsert = (lead: Lead) => {
-    if (!lead?.id || !lead?.company_name) {
+    if (!lead?.id && !hasLeadIdentity(lead)) {
       return;
     }
 
-    const keys = [lead.id];
-    if (lead.domain) {
-      keys.push(`domain:${lead.domain.toLowerCase()}`);
+    const entityKey = getCanonicalLeadEntityKey(lead);
+    if (!entityKey) {
+      return;
     }
 
-    const existingLead = keys
-      .map((key) => byIdentity.get(key))
-      .find(Boolean);
-    const nextLead =
-      existingLead && getLeadRowPriority(existingLead) > getLeadRowPriority(lead)
-        ? { ...lead, ...existingLead }
-        : { ...existingLead, ...lead };
-
-    for (const key of keys) {
-      byIdentity.set(key, nextLead as Lead);
+    const matchingEntry = findMergedLeadEntryByEntity(mergedRows, lead);
+    if (matchingEntry) {
+      const [matchingKey, existingLead] = matchingEntry;
+      mergedRows.set(matchingKey, mergeLeadRecord(existingLead, lead));
+      return;
     }
+
+    const existingLead = mergedRows.get(entityKey);
+    if (existingLead) {
+      mergedRows.set(entityKey, mergeLeadRecord(existingLead, lead));
+      return;
+    }
+
+    mergedRows.set(entityKey, lead);
   };
 
   for (const lead of existing) {
@@ -603,34 +767,56 @@ function mergeLeadRows(existing: Lead[], incoming: Lead[]) {
   }
 
   for (const lead of incoming) {
-    if (!lead?.id || !lead?.company_name) {
-      continue;
-    }
     upsert(lead);
   }
 
-  const deduped = new Map<string, Lead>();
-  for (const lead of byIdentity.values()) {
-    deduped.set(lead.id, lead);
-  }
-  return Array.from(deduped.values());
+  return sanitizeLeadRows(Array.from(mergedRows.values()));
+}
+
+function dedupeLeadRows(leads: Lead[]) {
+  return mergeLeadRows([], leads);
 }
 
 function sanitizeLeadRows(leads: Lead[]) {
-  return leads.filter((lead) => Boolean(lead?.id && lead?.company_name));
+  return leads.filter((lead) => Boolean(lead?.id || hasLeadIdentity(lead)));
+}
+
+function normalizeLeadDomainValue(value: string | null | undefined) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) {
+    return "";
+  }
+
+  const withoutProtocol = raw.replace(/^[a-z]+:\/\//, "");
+  const withoutWww = withoutProtocol.replace(/^www\./, "");
+  const hostname = withoutWww.split(/[/?#]/)[0] || withoutWww;
+  return hostname.replace(/:\d+$/, "").trim();
+}
+
+function normalizeLeadCompanyValue(value: string | null | undefined) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFKC")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function getNormalizedLeadIdentity(lead: Lead | null | undefined) {
   if (!lead) {
     return {
       domain: "",
+      website: "",
       company: "",
     };
   }
 
   return {
-    domain: String(lead.domain || "").trim().toLowerCase(),
-    company: String(lead.company_name || "").trim().toLowerCase(),
+    domain: normalizeLeadDomainValue(lead.domain),
+    website: getLeadWebsiteHostValue(lead),
+    company: normalizeLeadCompanyValue(lead.business_name || lead.company_name),
   };
 }
 
@@ -652,34 +838,56 @@ function resolveSelectedLeadId(
     return null;
   }
 
-  const identity = getNormalizedLeadIdentity(sourceLead);
-
-  const remappedLead = mergedLeads.find((lead) => {
-    const candidateIdentity = getNormalizedLeadIdentity(lead);
-
-    if (identity.domain && candidateIdentity.domain === identity.domain) {
-      return true;
-    }
-
-    if (identity.company && candidateIdentity.company === identity.company) {
-      return true;
-    }
-
-    return false;
-  });
+  const remappedLead = findLeadByEntity(mergedLeads, sourceLead);
 
   return remappedLead?.id || null;
 }
 
+function findLeadByEntity(leads: Lead[], target: Lead | null | undefined) {
+  if (!target) {
+    return null;
+  }
+
+  return leads.find((lead) => isSameLeadEntity(lead, target)) || null;
+}
+
+function findProcessedDetailsByEntity(
+  detailsMap: Record<string, ProcessedLeadDetails> | undefined,
+  leads: Lead[],
+  target: Lead | null | undefined
+) {
+  if (!target || !detailsMap) {
+    return undefined;
+  }
+
+  if (detailsMap[target.id]) {
+    return detailsMap[target.id];
+  }
+
+  const matchedLead = findLeadByEntity(leads, target);
+  if (matchedLead?.id && detailsMap[matchedLead.id]) {
+    return detailsMap[matchedLead.id];
+  }
+
+  return undefined;
+}
+
+function getProcessedDetailsForLead(
+  detailsMap: Record<string, ProcessedLeadDetails> | undefined,
+  leads: Lead[],
+  target: Lead | null | undefined
+) {
+  return findProcessedDetailsByEntity(detailsMap, leads, target) || null;
+}
+
 function replaceLeadRow(existing: Lead[], previousLeadId: string, incoming: Lead) {
-  const normalizedDomain = incoming.domain?.toLowerCase() || "";
   const filtered = existing.filter(
     (lead) =>
       lead.id !== previousLeadId &&
       lead.id !== incoming.id &&
-      (!normalizedDomain || lead.domain?.toLowerCase() !== normalizedDomain)
+      !isSameLeadEntity(lead, incoming)
   );
-  return sanitizeLeadRows([...filtered, incoming]);
+  return dedupeLeadRows([...filtered, incoming]);
 }
 
 function replaceProcessedLeadDetails(
@@ -701,6 +909,127 @@ function replaceProcessedLeadDetails(
   return current;
 }
 
+function mergeProcessedLeadDetailsRecords(
+  existing: ProcessedLeadDetails | null | undefined,
+  incoming: ProcessedLeadDetails | null | undefined
+) {
+  if (!existing && !incoming) {
+    return null;
+  }
+
+  if (!existing) {
+    return incoming ? { ...incoming } : null;
+  }
+
+  if (!incoming) {
+    return { ...existing };
+  }
+
+  return {
+    ...existing,
+    ...incoming,
+    enrichment: {
+      ...(existing.enrichment || {}),
+      ...(incoming.enrichment || {}),
+    },
+    intent: {
+      ...(existing.intent || {}),
+      ...(incoming.intent || {}),
+    },
+    proof: {
+      ...(existing.proof || {}),
+      ...(incoming.proof || {}),
+    },
+    scoring: {
+      ...(existing.scoring || {}),
+      ...(incoming.scoring || {}),
+    },
+    signal_facts: incoming.signal_facts || existing.signal_facts || null,
+    analysis_bundle: incoming.analysis_bundle || existing.analysis_bundle || null,
+    analysis_state: incoming.analysis_state || existing.analysis_state || null,
+    analysis_updated_at: incoming.analysis_updated_at || existing.analysis_updated_at || null,
+    signals_version: incoming.signals_version || existing.signals_version || null,
+    outreach: incoming.outreach || existing.outreach || [],
+  };
+}
+
+function collectProcessedDetailsForLeadEntity(
+  detailsMap: Record<string, ProcessedLeadDetails> | undefined,
+  leads: Lead[],
+  target: Lead | null | undefined
+) {
+  if (!target || !detailsMap) {
+    return undefined;
+  }
+
+  let mergedDetails: ProcessedLeadDetails | null =
+    target.id && detailsMap[target.id] ? { ...detailsMap[target.id] } : null;
+  const matchedIds = new Set<string>(target.id ? [target.id] : []);
+
+  for (const lead of leads) {
+    if (!lead?.id || matchedIds.has(lead.id) || !isSameLeadEntity(lead, target)) {
+      continue;
+    }
+
+    matchedIds.add(lead.id);
+    const candidateDetails = detailsMap[lead.id];
+    if (!candidateDetails) {
+      continue;
+    }
+
+    mergedDetails = mergeProcessedLeadDetailsRecords(mergedDetails, candidateDetails);
+  }
+
+  return mergedDetails || undefined;
+}
+
+function canonicalizeLeadListState({
+  leads,
+  processedDetails,
+  selectedLeadId,
+}: {
+  leads: Lead[];
+  processedDetails?: Record<string, ProcessedLeadDetails>;
+  selectedLeadId?: string | null;
+}) {
+  const sanitizedLeads = sanitizeLeadRows(leads);
+  const canonicalLeads = dedupeLeadRows(sanitizedLeads);
+  const canonicalProcessedDetails: Record<string, ProcessedLeadDetails> = {};
+
+  for (const lead of canonicalLeads) {
+    const mergedDetails = collectProcessedDetailsForLeadEntity(
+      processedDetails,
+      sanitizedLeads,
+      lead
+    );
+
+    if (mergedDetails && Object.keys(mergedDetails).length > 0) {
+      canonicalProcessedDetails[lead.id] = mergedDetails;
+    }
+  }
+
+  const hydratedLeads = dedupeLeadRows(
+    canonicalLeads.map(
+      (lead) =>
+        hydrateLeadFromStoredAnalysis(
+          lead,
+          getProcessedDetailsForLead(canonicalProcessedDetails, canonicalLeads, lead)
+        ) || lead
+    )
+  );
+  const resolvedSelectedLeadId = resolveSelectedLeadId(
+    selectedLeadId ?? null,
+    hydratedLeads,
+    sanitizedLeads
+  );
+
+  return {
+    leads: hydratedLeads,
+    processedDetails: canonicalProcessedDetails,
+    selectedLeadId: resolvedSelectedLeadId,
+  };
+}
+
 function serializeLeadListPayload(
   leads: Lead[],
   metadata?: Pick<
@@ -718,8 +1047,56 @@ function serializeLeadListPayload(
   });
 }
 
+const LEAD_LIST_SNAPSHOT_PREFIX = "zrai:lead-list-snapshot:";
+
+function getLeadListSnapshotKey(documentId: string | null | undefined) {
+  if (!documentId || documentId === "init") {
+    return null;
+  }
+
+  return `${LEAD_LIST_SNAPSHOT_PREFIX}${documentId}`;
+}
+
+function getLeadAnalysisStrength(
+  leads: Lead[],
+  processedDetails: Record<string, ProcessedLeadDetails> | undefined
+) {
+  const analyzedLeadCount = leads.filter(
+    (lead) => lead.score_kind === "final_score" || lead.analysis_state === "analyzed"
+  ).length;
+  const analyzedDetailsCount = Object.values(processedDetails || {}).filter(
+    (details) => details?.analysis_state === "analyzed"
+  ).length;
+  const detailCount = Object.keys(processedDetails || {}).length;
+
+  return analyzedLeadCount * 1000 + analyzedDetailsCount * 100 + detailCount;
+}
+
+function shouldPreferLeadListSnapshot(
+  candidate: ReturnType<typeof parseLeadListPayload>,
+  current: ReturnType<typeof parseLeadListPayload>
+) {
+  const candidateStrength = getLeadAnalysisStrength(
+    candidate.leads,
+    candidate.processedDetails
+  );
+  const currentStrength = getLeadAnalysisStrength(
+    current.leads,
+    current.processedDetails
+  );
+
+  if (candidateStrength !== currentStrength) {
+    return candidateStrength > currentStrength;
+  }
+
+  const candidateLeadCount = dedupeLeadRows(candidate.leads).length;
+  const currentLeadCount = dedupeLeadRows(current.leads).length;
+
+  return candidateLeadCount > 0 && candidateLeadCount < currentLeadCount;
+}
+
 function getStableLeadKey(lead: Lead, index: number) {
-  return `${lead.id || lead.company_name || "lead"}-${index}`;
+  return getCanonicalLeadEntityKey(lead) || lead.id || lead.company_name || `lead-${index}`;
 }
 
 function getStableContactKey(leadId: string, contact: Lead["contacts"][number], index: number) {
@@ -738,8 +1115,11 @@ function filterLeads(leads: Lead[], filter: string) {
 
   return leads.filter(
     (lead) =>
-      lead.company_name.toLowerCase().includes(normalizedFilter) ||
-      lead.domain.toLowerCase().includes(normalizedFilter) ||
+      getLeadDisplayName(lead).toLowerCase().includes(normalizedFilter) ||
+      String(lead.business_name || "").toLowerCase().includes(normalizedFilter) ||
+      String(lead.company_name || "").toLowerCase().includes(normalizedFilter) ||
+      String(lead.domain || "").toLowerCase().includes(normalizedFilter) ||
+      getLeadWebsiteHostValue(lead).toLowerCase().includes(normalizedFilter) ||
       lead.niche.toLowerCase().includes(normalizedFilter) ||
       getLeadSource(lead).toLowerCase().includes(normalizedFilter) ||
       getLeadFit(lead).toLowerCase().includes(normalizedFilter)
@@ -766,8 +1146,8 @@ function sortLeads(
         return sortOrder === "asc" ? aScore - bScore : bScore - aScore;
       }
 
-      const aName = (a.company_name || "").toLowerCase();
-      const bName = (b.company_name || "").toLowerCase();
+      const aName = getLeadDisplayName(a).toLowerCase();
+      const bName = getLeadDisplayName(b).toLowerCase();
       if (aName !== bName) {
         return aName.localeCompare(bName);
       }
@@ -800,8 +1180,8 @@ function sortLeads(
     if (aVal > bVal) {
       return sortOrder === "asc" ? 1 : -1;
     }
-    const aName = (a.company_name || "").toLowerCase();
-    const bName = (b.company_name || "").toLowerCase();
+    const aName = getLeadDisplayName(a).toLowerCase();
+    const bName = getLeadDisplayName(b).toLowerCase();
     if (aName !== bName) {
       return aName.localeCompare(bName);
     }
@@ -810,6 +1190,8 @@ function sortLeads(
 }
 
 function LeadRow({ lead, onClick }: { lead: Lead; onClick: () => void }) {
+  const displayName = getLeadDisplayName(lead);
+  const secondaryIdentity = getLeadWebsiteHostValue(lead) || normalizeLeadDomainValue(lead.domain);
   const scoreColor =
     (lead.score || 0) >= 80
       ? "text-green-600"
@@ -823,8 +1205,8 @@ function LeadRow({ lead, onClick }: { lead: Lead; onClick: () => void }) {
       onClick={onClick}
     >
       <td className="p-3">
-        <div className="font-medium">{lead.company_name}</div>
-        <div className="text-xs text-zinc-500">{lead.domain}</div>
+        <div className="font-medium">{displayName}</div>
+        <div className="text-xs text-zinc-500">{secondaryIdentity}</div>
         {getLeadSummary(lead) && (
           <div className="mt-1 text-xs text-zinc-500">
             {getLeadSummary(lead)}
@@ -881,12 +1263,17 @@ function parseLeadListPayload(content: string): {
   try {
     const parsed = JSON.parse(content) as Lead[] | LeadListPayload;
     const payload = Array.isArray(parsed) ? ({ leads: parsed } satisfies LeadListPayload) : parsed;
+    const canonical = canonicalizeLeadListState({
+      leads: dedupeLeadRows(sanitizeLeadRows(payload.leads || [])),
+      processedDetails: payload.processedDetails || payload.processed_details || {},
+      selectedLeadId: payload.selectedLeadId || null,
+    });
 
     return {
       filter: payload.filter || "",
-      leads: sanitizeLeadRows(payload.leads || []),
-      processedDetails: payload.processedDetails || payload.processed_details || {},
-      selectedLeadId: payload.selectedLeadId || null,
+      leads: canonical.leads,
+      processedDetails: canonical.processedDetails,
+      selectedLeadId: canonical.selectedLeadId,
       sortBy: payload.sortBy || "score",
       sortOrder: payload.sortOrder === "asc" ? "asc" : "desc",
     };
@@ -923,11 +1310,13 @@ function LeadListContent({
   const processedDetailsRef = useRef<Record<string, ProcessedLeadDetails>>({});
   const selectedLeadIdRef = useRef<string | null>(null);
   const persistTimeoutRef = useRef<number | null>(null);
+  const snapshotRestoreRef = useRef<string | null>(null);
+  const truthRecoveryRef = useRef<string | null>(null);
   const { artifact, setArtifact } = useArtifact();
 
   const contentPayload = parseLeadListPayload(content);
   const contentLeads = contentPayload.leads;
-  const metadataLeads = sanitizeLeadRows(metadata?.leads || []);
+  const metadataLeads = dedupeLeadRows(sanitizeLeadRows(metadata?.leads || []));
   const mergedProcessedDetails = {
     ...(contentPayload.processedDetails || {}),
     ...(metadata?.processedDetails || {}),
@@ -935,13 +1324,13 @@ function LeadListContent({
   const mergedRawLeads = sanitizeLeadRows(
     mergeLeadRows(contentLeads, metadataLeads)
   );
-  const leads = sanitizeLeadRows(
-    mergedRawLeads.map(
-      (lead) =>
-        hydrateLeadFromStoredAnalysis(lead, mergedProcessedDetails?.[lead.id] || null) || lead
-    )
-  );
-  const processedDetails = mergedProcessedDetails;
+  const canonicalState = canonicalizeLeadListState({
+    leads: mergedRawLeads,
+    processedDetails: mergedProcessedDetails,
+    selectedLeadId: metadata?.selectedLeadId || contentPayload.selectedLeadId || null,
+  });
+  const leads = canonicalState.leads;
+  const processedDetails = canonicalState.processedDetails;
 
   const filter = metadata?.filter || contentPayload.filter || "";
   const filteredLeads = filterLeads(leads, filter);
@@ -949,35 +1338,36 @@ function LeadListContent({
   const sortBy = metadata?.sortBy || contentPayload.sortBy || "score";
   const sortOrder = metadata?.sortOrder || contentPayload.sortOrder || "desc";
   const sortedLeads = sortLeads(filteredLeads, sortBy, sortOrder);
-  const persistedSelectedLeadId =
-    resolveSelectedLeadId(
-      metadata?.selectedLeadId || contentPayload.selectedLeadId || null,
-      leads,
-      [...metadataLeads, ...contentLeads]
-    ) || null;
+  const persistedSelectedLeadId = canonicalState.selectedLeadId || null;
 
   const queueLeadListDocumentSave = (nextContent: string) => {
+    const snapshotKey = getLeadListSnapshotKey(artifact?.documentId);
+    if (snapshotKey) {
+      try {
+        window.localStorage.setItem(snapshotKey, nextContent);
+      } catch {}
+    }
+
     if (!artifact?.documentId || artifact.documentId === "init") {
       return;
     }
 
     if (persistTimeoutRef.current) {
       window.clearTimeout(persistTimeoutRef.current);
+      persistTimeoutRef.current = null;
     }
 
-    persistTimeoutRef.current = window.setTimeout(() => {
-      void fetch(`/api/document?id=${artifact.documentId}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          title: artifact.title || "Lead List",
-          content: nextContent,
-          kind: artifact.kind || "lead-list",
-        }),
-      }).catch(() => {});
-    }, 350);
+    void fetch(`/api/document?id=${artifact.documentId}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        title: artifact.title || "Lead List",
+        content: nextContent,
+        kind: artifact.kind || "lead-list",
+      }),
+    }).catch(() => {});
   };
 
   useEffect(() => {
@@ -991,6 +1381,88 @@ function LeadListContent({
   useEffect(() => {
     selectedLeadIdRef.current = persistedSelectedLeadId;
   }, [persistedSelectedLeadId]);
+
+  useEffect(() => {
+    const snapshotKey = getLeadListSnapshotKey(artifact?.documentId);
+    if (!snapshotKey) {
+      return;
+    }
+
+    const restoreToken = `${artifact.documentId}:${content}`;
+    if (snapshotRestoreRef.current === restoreToken) {
+      return;
+    }
+    snapshotRestoreRef.current = restoreToken;
+
+    let snapshotContent: string | null = null;
+    try {
+      snapshotContent = window.localStorage.getItem(snapshotKey);
+    } catch {
+      return;
+    }
+
+    if (!snapshotContent || snapshotContent === content) {
+      return;
+    }
+
+    const currentPayload = parseLeadListPayload(content);
+    const snapshotPayload = parseLeadListPayload(snapshotContent);
+
+    if (!shouldPreferLeadListSnapshot(snapshotPayload, currentPayload)) {
+      return;
+    }
+
+    const nextProcessedDetails = {
+      ...(currentPayload.processedDetails || {}),
+      ...(snapshotPayload.processedDetails || {}),
+      ...(metadata?.processedDetails || {}),
+    };
+    const mergedSnapshotLeads = mergeLeadRows(currentPayload.leads, snapshotPayload.leads);
+    const canonicalSnapshotState = canonicalizeLeadListState({
+      leads: mergedSnapshotLeads,
+      processedDetails: nextProcessedDetails,
+      selectedLeadId:
+        metadata?.selectedLeadId ||
+        snapshotPayload.selectedLeadId ||
+        currentPayload.selectedLeadId ||
+        null,
+    });
+    const nextContent = serializeLeadListPayload(canonicalSnapshotState.leads, {
+      filter: metadata?.filter || snapshotPayload.filter || currentPayload.filter || "",
+      processedDetails: canonicalSnapshotState.processedDetails,
+      selectedLeadId: canonicalSnapshotState.selectedLeadId,
+      sortBy: metadata?.sortBy || snapshotPayload.sortBy || currentPayload.sortBy || "score",
+      sortOrder:
+        metadata?.sortOrder || snapshotPayload.sortOrder || currentPayload.sortOrder || "desc",
+    });
+
+    setMetadata((prev: LeadListMetadata) => ({
+      ...prev,
+      leads: canonicalSnapshotState.leads,
+      processedDetails: canonicalSnapshotState.processedDetails,
+      selectedLeadId: canonicalSnapshotState.selectedLeadId,
+      filter: prev.filter || snapshotPayload.filter || currentPayload.filter || "",
+      sortBy: prev.sortBy || snapshotPayload.sortBy || currentPayload.sortBy || "score",
+      sortOrder:
+        prev.sortOrder || snapshotPayload.sortOrder || currentPayload.sortOrder || "desc",
+    }));
+    setArtifact((draft) => ({
+      ...draft,
+      content: nextContent,
+    }));
+    queueLeadListDocumentSave(nextContent);
+  }, [
+    artifact?.documentId,
+    content,
+    metadata?.filter,
+    metadata?.leads,
+    metadata?.processedDetails,
+    metadata?.selectedLeadId,
+    metadata?.sortBy,
+    metadata?.sortOrder,
+    setArtifact,
+    setMetadata,
+  ]);
 
   const persistLeadListContent = ({
     nextFilter,
@@ -1007,11 +1479,16 @@ function LeadListContent({
     nextSortBy?: string;
     nextSortOrder?: "asc" | "desc";
   }) => {
-    const nextContent = serializeLeadListPayload(nextLeads || leads, {
-      filter: nextFilter ?? filter,
+    const canonical = canonicalizeLeadListState({
+      leads: nextLeads || leads,
       processedDetails: nextProcessedDetails ?? processedDetails ?? {},
       selectedLeadId:
         nextSelectedLeadId !== undefined ? nextSelectedLeadId : persistedSelectedLeadId,
+    });
+    const nextContent = serializeLeadListPayload(canonical.leads, {
+      filter: nextFilter ?? filter,
+      processedDetails: canonical.processedDetails,
+      selectedLeadId: canonical.selectedLeadId,
       sortBy: nextSortBy ?? sortBy,
       sortOrder: nextSortOrder ?? sortOrder,
     });
@@ -1024,10 +1501,15 @@ function LeadListContent({
   };
 
   useEffect(() => {
-    const nextContent = serializeLeadListPayload(leads, {
-      filter,
+    const canonical = canonicalizeLeadListState({
+      leads,
       processedDetails: processedDetails || {},
       selectedLeadId: persistedSelectedLeadId,
+    });
+    const nextContent = serializeLeadListPayload(canonical.leads, {
+      filter,
+      processedDetails: canonical.processedDetails,
+      selectedLeadId: canonical.selectedLeadId,
       sortBy,
       sortOrder,
     });
@@ -1118,30 +1600,165 @@ function LeadListContent({
     nextLeads: Lead[];
     nextProcessedDetails?: Record<string, ProcessedLeadDetails>;
     nextSelectedLeadId?: string | null;
-  }) => {
-    setMetadata((prev: LeadListMetadata) => {
-      const updated = {
-        ...prev,
-        leads: nextLeads,
-        processedDetails: nextProcessedDetails ?? prev.processedDetails ?? {},
-        selectedLeadId:
-          nextSelectedLeadId !== undefined
-            ? nextSelectedLeadId
-            : prev.selectedLeadId ?? contentPayload.selectedLeadId ?? null,
-      };
+    }) => {
+      setMetadata((prev: LeadListMetadata) => {
+        const canonical = canonicalizeLeadListState({
+          leads: nextLeads,
+          processedDetails: nextProcessedDetails ?? prev.processedDetails ?? {},
+          selectedLeadId:
+            nextSelectedLeadId !== undefined
+              ? nextSelectedLeadId
+              : prev.selectedLeadId ?? contentPayload.selectedLeadId ?? null,
+        });
+        const updated = {
+          ...prev,
+          leads: canonical.leads,
+          processedDetails: canonical.processedDetails,
+          selectedLeadId: canonical.selectedLeadId,
+        };
 
-      persistLeadListContent({
-        nextFilter: updated.filter,
-        nextLeads: updated.leads,
-        nextProcessedDetails: updated.processedDetails,
-        nextSelectedLeadId: updated.selectedLeadId ?? null,
-        nextSortBy: updated.sortBy,
-        nextSortOrder: updated.sortOrder,
-      });
+        persistLeadListContent({
+          nextFilter: updated.filter,
+          nextLeads: updated.leads,
+          nextProcessedDetails: updated.processedDetails,
+          nextSelectedLeadId: updated.selectedLeadId ?? null,
+          nextSortBy: updated.sortBy,
+          nextSortOrder: updated.sortOrder,
+        });
 
       return updated;
     });
   };
+
+  const buildProcessedDetailsFromPayload = (
+    payloadData: Record<string, any> | null | undefined
+  ): ProcessedLeadDetails | null => {
+    if (!payloadData) {
+      return null;
+    }
+
+    const baseProcessedDetails = payloadData.processed_details || {};
+    const nextProcessedDetails = {
+      ...baseProcessedDetails,
+      signal_facts: payloadData.signal_facts || baseProcessedDetails?.signal_facts || null,
+      analysis_bundle: payloadData.analysis_bundle || baseProcessedDetails?.analysis_bundle || null,
+      analysis_state: payloadData.analysis_state || baseProcessedDetails?.analysis_state || null,
+      analysis_updated_at:
+        payloadData.analysis_updated_at || baseProcessedDetails?.analysis_updated_at || null,
+      signals_version: payloadData.signals_version || baseProcessedDetails?.signals_version || null,
+    } as ProcessedLeadDetails;
+
+    return Object.keys(nextProcessedDetails).length > 0 ? nextProcessedDetails : null;
+  };
+
+  useEffect(() => {
+    const documentId = artifact?.documentId;
+    if (!documentId || documentId === "init" || !leads.length) {
+      return;
+    }
+
+    const hasSavedAnalysis = leads.some(
+      (lead) => lead.score_kind === "final_score" || lead.analysis_state === "analyzed"
+    );
+
+    if (hasSavedAnalysis) {
+      return;
+    }
+
+    const recoveryToken = `${documentId}:${content}`;
+    if (truthRecoveryRef.current === recoveryToken) {
+      return;
+    }
+    truthRecoveryRef.current = recoveryToken;
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const recoveredLeads: Lead[] = [];
+        const recoveredProcessedDetails: Record<string, ProcessedLeadDetails> = {};
+
+        for (const rawLead of leads) {
+          const persistedLead = isUuidLeadId(rawLead.id)
+            ? rawLead
+            : await ensurePersistedLead(rawLead);
+          const response = await fetch(getZRAILeadByIdEndpoint(persistedLead.id));
+          if (!response.ok) {
+            continue;
+          }
+
+          const payload = await response.json();
+          const payloadData = getPayloadData(payload) as Record<string, any>;
+          if (!(payload?.success ?? true) || !payloadData?.lead) {
+            continue;
+          }
+
+          const latestLead = payloadData.lead as Lead;
+          const latestProcessedDetails = buildProcessedDetailsFromPayload(payloadData);
+          const hydrated = await hydrateFounderIntel(latestLead, latestProcessedDetails);
+          const hydratedState = getResolvedAnalysisState(
+            hydrated.lead,
+            hydrated.processedDetails
+          );
+
+          if (
+            hydratedState !== "analyzed" &&
+            hydrated.lead.score_kind !== "final_score" &&
+            !hydrated.processedDetails
+          ) {
+            continue;
+          }
+
+          recoveredLeads.push(hydrated.lead);
+          if (hydrated.processedDetails) {
+            recoveredProcessedDetails[hydrated.lead.id] = hydrated.processedDetails;
+          }
+        }
+
+        if (
+          cancelled ||
+          (!recoveredLeads.length && !Object.keys(recoveredProcessedDetails).length)
+        ) {
+          return;
+        }
+
+        const nextProcessedDetails = {
+          ...(processedDetailsRef.current || {}),
+          ...recoveredProcessedDetails,
+        };
+        const nextLeads = sanitizeLeadRows(
+          mergeLeadRows(leadsRef.current, recoveredLeads).map(
+            (lead) =>
+              hydrateLeadFromStoredAnalysis(
+                lead,
+                getProcessedDetailsForLead(
+                  nextProcessedDetails,
+                  mergeLeadRows(leadsRef.current, recoveredLeads),
+                  lead
+                )
+              ) || lead
+          )
+        );
+        const nextSelectedLeadId = resolveSelectedLeadId(
+          selectedLeadIdRef.current,
+          nextLeads,
+          [...leadsRef.current, ...recoveredLeads]
+        );
+
+        syncLeadListState({
+          nextLeads,
+          nextProcessedDetails,
+          nextSelectedLeadId,
+        });
+      } catch {
+        // Recovery is best-effort. Keep the list usable even if backend truth lookup fails.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [artifact?.documentId, content, leads, processedDetails]);
 
   useEffect(() => {
     if (!persistedSelectedLeadId) {
@@ -1336,13 +1953,13 @@ function LeadListContent({
       workingProcessedDetails = nextProcessedDetails;
       workingSelectedLeadId = nextSelectedLeadId ?? null;
 
-      const remappedLeadIds = freshLeadIds.map(
-        (leadId) => persistedLeadMap.get(leadId)?.id || leadId
+      const remappedLeadIds = Array.from(
+        new Set(freshLeadIds.map((leadId) => persistedLeadMap.get(leadId)?.id || leadId))
       );
       remapProcessingIds(
         freshLeadIds.map((leadId, index) => ({
           from: leadId,
-          to: remappedLeadIds[index],
+          to: persistedLeadMap.get(leadId)?.id || leadId,
         }))
       );
       activeLeadIds = remappedLeadIds;
@@ -1393,19 +2010,26 @@ function LeadListContent({
         return;
       }
 
-      const mergedLeads = mergeLeadRows(workingLeadRows, processedLeads);
+      const mergedLeads = dedupeLeadRows(mergeLeadRows(workingLeadRows, processedLeads));
       const mergedDetails = {
         ...workingProcessedDetails,
         ...Object.fromEntries(processedDetailEntries),
       };
+      const resolvedSelectedLeadId = selectedLead
+        ? resolveSelectedLeadId(
+            selectedLead.id,
+            mergedLeads,
+            [...workingLeadRows, ...processedLeads]
+          )
+        : workingSelectedLeadId;
       syncLeadListState({
         nextLeads: mergedLeads,
         nextProcessedDetails: mergedDetails,
-        nextSelectedLeadId: workingSelectedLeadId,
+        nextSelectedLeadId: resolvedSelectedLeadId,
       });
 
-      if (selectedLead) {
-        const updatedLead = mergedLeads.find((lead) => lead.id === selectedLead.id);
+      if (selectedLead && resolvedSelectedLeadId) {
+        const updatedLead = mergedLeads.find((lead) => lead.id === resolvedSelectedLeadId);
         if (updatedLead) {
           setSelectedLead(updatedLead);
           setSelectedLeadLive(updatedLead);
@@ -1497,7 +2121,12 @@ function LeadListContent({
       const hydrated = await hydrateFounderIntel(latestLead, latestProcessedDetailsRaw);
       const baseLeads = leadsRef.current;
       const baseProcessedDetails = processedDetailsRef.current;
-      const mergedLeads = mergeLeadRows(baseLeads, [hydrated.lead]);
+      const mergedLeads = dedupeLeadRows(mergeLeadRows(baseLeads, [hydrated.lead]));
+      const resolvedSelectedLeadId = resolveSelectedLeadId(
+        selectedLead.id,
+        mergedLeads,
+        [...baseLeads, hydrated.lead]
+      );
       syncLeadListState({
         nextLeads: mergedLeads,
         nextProcessedDetails: hydrated.processedDetails
@@ -1506,9 +2135,11 @@ function LeadListContent({
               [selectedLead.id]: hydrated.processedDetails,
             }
           : baseProcessedDetails,
-        nextSelectedLeadId: selectedLead.id,
+        nextSelectedLeadId: resolvedSelectedLeadId,
       });
-      setSelectedLead(mergedLeads.find((lead) => lead.id === selectedLead.id) || hydrated.lead);
+      setSelectedLead(
+        mergedLeads.find((lead) => lead.id === resolvedSelectedLeadId) || hydrated.lead
+      );
       setSelectedLeadLive(hydrated.lead);
       setSelectedLeadLiveDetails(hydrated.processedDetails);
       setMetadata((prev: LeadListMetadata) => ({
@@ -1568,7 +2199,12 @@ function LeadListContent({
 
       const baseLeads = leadsRef.current;
       const baseProcessedDetails = processedDetailsRef.current;
-      const mergedLeads = mergeLeadRows(baseLeads, [hydrated.lead]);
+      const mergedLeads = dedupeLeadRows(mergeLeadRows(baseLeads, [hydrated.lead]));
+      const resolvedSelectedLeadId = resolveSelectedLeadId(
+        leadId,
+        mergedLeads,
+        [...baseLeads, hydrated.lead]
+      );
       syncLeadListState({
         nextLeads: mergedLeads,
         nextProcessedDetails: hydrated.processedDetails
@@ -1577,9 +2213,11 @@ function LeadListContent({
               [leadId]: hydrated.processedDetails,
             }
           : baseProcessedDetails,
-        nextSelectedLeadId: leadId,
+        nextSelectedLeadId: resolvedSelectedLeadId,
       });
-      setSelectedLead(mergedLeads.find((lead) => lead.id === leadId) || hydrated.lead);
+      setSelectedLead(
+        mergedLeads.find((lead) => lead.id === resolvedSelectedLeadId) || hydrated.lead
+      );
       setSelectedLeadLive(hydrated.lead);
       setSelectedLeadLiveDetails(hydrated.processedDetails);
       setMetadata((prev: LeadListMetadata) => ({
@@ -1672,7 +2310,7 @@ function LeadListContent({
           ...effectiveLead,
           analysis_state: "analyzing",
         } as Lead;
-        const mergedQueuedLeads = mergeLeadRows(workingLeadRows, [queuedLead]);
+        const mergedQueuedLeads = dedupeLeadRows(mergeLeadRows(workingLeadRows, [queuedLead]));
         const mergedQueuedDetails = {
           ...workingProcessedDetails,
           [queuedLead.id]: {
@@ -1681,12 +2319,19 @@ function LeadListContent({
             analysis_updated_at: payloadData?.analysis_updated_at || payload?.analysis_updated_at || null,
           } as ProcessedLeadDetails,
         };
+        const resolvedQueuedLeadId = resolveSelectedLeadId(
+          queuedLead.id,
+          mergedQueuedLeads,
+          [...workingLeadRows, queuedLead]
+        );
         syncLeadListState({
           nextLeads: mergedQueuedLeads,
           nextProcessedDetails: mergedQueuedDetails,
-          nextSelectedLeadId: queuedLead.id,
+          nextSelectedLeadId: resolvedQueuedLeadId,
         });
-        setSelectedLead(mergedQueuedLeads.find((lead) => lead.id === queuedLead.id) || queuedLead);
+        setSelectedLead(
+          mergedQueuedLeads.find((lead) => lead.id === resolvedQueuedLeadId) || queuedLead
+        );
         setSelectedLeadLive(queuedLead);
         setSelectedLeadLiveDetails(mergedQueuedDetails[queuedLead.id] || null);
         toast.success("Analysis started.");
@@ -1710,17 +2355,24 @@ function LeadListContent({
       } as ProcessedLeadDetails;
       const hydrated = await hydrateFounderIntel(analyzedLead, analyzedProcessedDetailsRaw);
 
-      const mergedLeads = mergeLeadRows(workingLeadRows, [hydrated.lead]);
+      const mergedLeads = dedupeLeadRows(mergeLeadRows(workingLeadRows, [hydrated.lead]));
       const mergedDetails = {
         ...workingProcessedDetails,
         [analyzedLead.id]: hydrated.processedDetails || analyzedProcessedDetailsRaw,
       };
+      const resolvedAnalyzedLeadId = resolveSelectedLeadId(
+        analyzedLead.id,
+        mergedLeads,
+        [...workingLeadRows, hydrated.lead]
+      );
       syncLeadListState({
         nextLeads: mergedLeads,
         nextProcessedDetails: mergedDetails,
-        nextSelectedLeadId: analyzedLead.id,
+        nextSelectedLeadId: resolvedAnalyzedLeadId,
       });
-      setSelectedLead(mergedLeads.find((lead) => lead.id === analyzedLead.id) || hydrated.lead);
+      setSelectedLead(
+        mergedLeads.find((lead) => lead.id === resolvedAnalyzedLeadId) || hydrated.lead
+      );
       setSelectedLeadLive(hydrated.lead);
       setSelectedLeadLiveDetails(hydrated.processedDetails);
       toast.success("Lead analyzed.");
@@ -1731,28 +2383,60 @@ function LeadListContent({
         toast.error(error instanceof Error ? error.message : "Lead analysis failed");
       }
       } finally {
-      const currentLeadId = isUuidLeadId(selectedLead.id)
-        ? selectedLead.id
-        : selectedLeadLive?.id || metadata?.liveSelectedLead?.id || selectedLead.id;
-      clearProcessing([currentLeadId]);
+      const currentLeadIds = Array.from(
+        new Set(
+          [
+            selectedLead.id,
+            selectedLeadLive?.id,
+            metadata?.liveSelectedLead?.id,
+            ...selectedLeadEntityIds,
+          ].filter(Boolean) as string[]
+        )
+      );
+      clearProcessing(currentLeadIds);
       }
   };
 
+  const resolvedSelectedLead = findLeadByEntity(leads, selectedLead) || selectedLead;
+  const resolvedLiveSelectedLead =
+    findLeadByEntity(leads, selectedLeadLive) || selectedLeadLive;
+  const resolvedMetadataLiveLead =
+    findLeadByEntity(leads, metadata?.liveSelectedLead) || metadata?.liveSelectedLead;
+  const selectedLeadDetailsFromStore = findProcessedDetailsByEntity(
+    processedDetails,
+    leads,
+    resolvedSelectedLead
+  );
   const inspectorLead =
-    hydrateLeadFromStoredAnalysis(selectedLeadLive, selectedLeadLiveDetails) ||
-    hydrateLeadFromStoredAnalysis(metadata?.liveSelectedLead, metadata?.liveSelectedLeadDetails || null) ||
+    hydrateLeadFromStoredAnalysis(resolvedLiveSelectedLead, selectedLeadLiveDetails) ||
     hydrateLeadFromStoredAnalysis(
-      selectedLead,
-      selectedLead ? processedDetails[selectedLead.id] : undefined
+      resolvedMetadataLiveLead,
+      metadata?.liveSelectedLeadDetails || null
     ) ||
-    selectedLead;
+    hydrateLeadFromStoredAnalysis(resolvedSelectedLead, selectedLeadDetailsFromStore) ||
+    resolvedSelectedLead;
   const selectedLeadDetails =
     selectedLeadLiveDetails ||
     metadata?.liveSelectedLeadDetails ||
-    (inspectorLead ? processedDetails[inspectorLead.id] : undefined);
+    findProcessedDetailsByEntity(processedDetails, leads, inspectorLead);
   const selectedLeadEffectiveState = getResolvedAnalysisState(inspectorLead, selectedLeadDetails);
+  const selectedLeadEntityIds = inspectorLead
+    ? Array.from(
+        new Set(
+          [
+            ...leads
+              .filter((lead) => isSameLeadEntity(lead, inspectorLead))
+              .map((lead) => lead.id),
+            inspectorLead.id,
+            resolvedSelectedLead?.id,
+            resolvedLiveSelectedLead?.id,
+            resolvedMetadataLiveLead?.id,
+          ].filter((leadId): leadId is string => Boolean(leadId))
+        )
+      )
+    : [];
   const isSelectedLeadProcessing = selectedLead
-    ? processingIds.includes(inspectorLead?.id || selectedLead.id) &&
+    ? selectedLeadEntityIds.some((leadId) => processingIds.includes(leadId)) &&
       selectedLeadEffectiveState !== "analyzed" &&
       selectedLeadEffectiveState !== "failed"
     : false;
@@ -1817,13 +2501,13 @@ function LeadListContent({
           <div className="ml-auto flex items-center gap-2">
             <button
               className="rounded-md bg-emerald-600 px-3 py-2 text-xs text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={!sortedLeads.length || !!processingIds.length}
+              disabled={!dedupeLeadRows(sortedLeads).length || !!processingIds.length}
               onClick={() =>
                 void processLeads(
-                  sortedLeads.map((lead) => lead.id),
+                  dedupeLeadRows(sortedLeads).map((lead) => lead.id),
                   {
                     includeOutreach: false,
-                    successMessage: `Analyzed ${sortedLeads.length} visible lead${sortedLeads.length === 1 ? "" : "s"}.`,
+                    successMessage: `Analyzed ${dedupeLeadRows(sortedLeads).length} visible lead${dedupeLeadRows(sortedLeads).length === 1 ? "" : "s"}.`,
                     emptyMessage: "No visible leads were analyzed successfully.",
                   }
                 )
@@ -1942,11 +2626,9 @@ function LeadListContent({
           </div>
           <div className="space-y-4 p-4">
             <div>
-              <div className="font-bold text-lg">
-                {inspectorLead.company_name}
-              </div>
+              <div className="font-bold text-lg">{getLeadDisplayName(inspectorLead)}</div>
               <div className="break-all text-sm text-zinc-500">
-                {inspectorLead.domain}
+                {getLeadWebsiteHostValue(inspectorLead) || normalizeLeadDomainValue(inspectorLead.domain)}
               </div>
               {selectedLeadEffectiveState === "analyzed" && (
                 <div className="mt-2 inline-flex rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
@@ -2391,7 +3073,7 @@ function LeadListContent({
                     if (!selectedLead?.id) {
                       return;
                     }
-                    stopProcessing([selectedLead.id]);
+                    stopProcessing(selectedLeadEntityIds);
                   }}
                   type="button"
                 >
@@ -2470,30 +3152,76 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
     if ((streamPart as any).type === "data-leadList") {
       const data = (streamPart as any).data as Lead[] | LeadListPayload;
       const payload = Array.isArray(data) ? ({ leads: data } satisfies LeadListPayload) : data;
-      const leads = sanitizeLeadRows(payload.leads || []);
-      const processedDetails = payload.processedDetails || payload.processed_details || {};
+      const incomingLeads = dedupeLeadRows(sanitizeLeadRows(payload.leads || []));
+      const incomingProcessedDetails = payload.processedDetails || payload.processed_details || {};
       setMetadata((prev: LeadListMetadata) => ({
         ...prev,
         filter: payload.filter || prev.filter || "",
-        leads,
+        leads: dedupeLeadRows(
+          mergeLeadRows(
+            dedupeLeadRows(sanitizeLeadRows(prev?.leads || [])),
+            incomingLeads
+          ).map(
+            (lead) =>
+              hydrateLeadFromStoredAnalysis(
+                lead,
+                {
+                  ...incomingProcessedDetails,
+                  ...(prev.processedDetails || {}),
+                }[lead.id] || null
+              ) || lead
+          )
+        ),
         loading: false,
-        processedDetails:
-          Object.keys(processedDetails).length > 0
-            ? processedDetails
-            : (prev.processedDetails || {}),
-        selectedLeadId: payload.selectedLeadId || prev.selectedLeadId || null,
+        processedDetails: {
+          ...incomingProcessedDetails,
+          ...(prev.processedDetails || {}),
+        },
+        selectedLeadId:
+          resolveSelectedLeadId(
+            payload.selectedLeadId || prev.selectedLeadId || null,
+            dedupeLeadRows(
+              mergeLeadRows(
+                dedupeLeadRows(sanitizeLeadRows(prev?.leads || [])),
+                incomingLeads
+              )
+            ),
+            [...dedupeLeadRows(sanitizeLeadRows(prev?.leads || [])), ...incomingLeads]
+          ) || null,
         sortBy: payload.sortBy || prev.sortBy || "score",
         sortOrder: payload.sortOrder || prev.sortOrder || "desc",
       }));
       setArtifact((draft) => ({
         ...draft,
-        content: serializeLeadListPayload(leads, {
-          filter: payload.filter || "",
-          processedDetails,
-          selectedLeadId: payload.selectedLeadId || null,
-          sortBy: payload.sortBy || "score",
-          sortOrder: payload.sortOrder || "desc",
-        }),
+        content: (() => {
+          const currentPayload = parseLeadListPayload(draft.content || "");
+          const mergedDetails = {
+            ...incomingProcessedDetails,
+            ...(currentPayload.processedDetails || {}),
+          };
+          const canonicalMergedLeads = mergeLeadRows(currentPayload.leads, incomingLeads);
+          const mergedLeads = dedupeLeadRows(
+            canonicalMergedLeads.map(
+              (lead) =>
+                hydrateLeadFromStoredAnalysis(
+                  lead,
+                  getProcessedDetailsForLead(mergedDetails, canonicalMergedLeads, lead)
+                ) || lead
+            )
+          );
+          return serializeLeadListPayload(mergedLeads, {
+            filter: payload.filter || currentPayload.filter || "",
+            processedDetails: mergedDetails,
+            selectedLeadId:
+              resolveSelectedLeadId(
+                payload.selectedLeadId || currentPayload.selectedLeadId || null,
+                mergedLeads,
+                [...currentPayload.leads, ...incomingLeads]
+              ) || null,
+            sortBy: payload.sortBy || currentPayload.sortBy || "score",
+            sortOrder: payload.sortOrder || currentPayload.sortOrder || "desc",
+          });
+        })(),
         status: "idle",
       }));
     }
@@ -2557,18 +3285,39 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
       icon: <span className="font-semibold text-[10px]">AI</span>,
       label: "Analyze visible",
       description: "Run analysis truth, scoring, and proof for all visible leads",
-      onClick: async ({ content, metadata, setMetadata }) => {
+      onClick: async ({ artifact, content, metadata, setArtifact, setMetadata }) => {
         try {
-          const parsed = JSON.parse(content);
-          const contentLeads = (Array.isArray(parsed) ? parsed : parsed.leads || []) as Lead[];
-          const leads = metadata?.leads?.length ? metadata.leads : contentLeads;
-          const filteredLeads = filterLeads(leads, metadata?.filter || "");
+          const contentPayload = parseLeadListPayload(content);
+          const contentLeads = contentPayload.leads;
+          const metadataLeads = dedupeLeadRows(sanitizeLeadRows(metadata?.leads || []));
+          const mergedProcessedDetails = {
+            ...(contentPayload.processedDetails || {}),
+            ...(metadata?.processedDetails || {}),
+          };
+          const mergedCanonicalLeadRows = mergeLeadRows(contentLeads, metadataLeads);
+          const canonicalLeads = dedupeLeadRows(
+            mergedCanonicalLeadRows.map(
+              (lead) =>
+                hydrateLeadFromStoredAnalysis(
+                  lead,
+                  getProcessedDetailsForLead(
+                    mergedProcessedDetails,
+                    mergedCanonicalLeadRows,
+                    lead
+                  )
+                ) || lead
+            )
+          );
+          const filteredLeads = filterLeads(
+            canonicalLeads,
+            metadata?.filter || contentPayload.filter || ""
+          );
           const sortedLeads = sortLeads(
             filteredLeads,
-            metadata?.sortBy || "score",
-            metadata?.sortOrder || "desc"
+            metadata?.sortBy || contentPayload.sortBy || "score",
+            metadata?.sortOrder || contentPayload.sortOrder || "desc"
           );
-          const visibleLeads = sortedLeads;
+          const visibleLeads = dedupeLeadRows(sortedLeads);
           if (visibleLeads.length === 0) {
             toast.error("No leads available to process.");
             return;
@@ -2583,15 +3332,15 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
             return importedLead.id === lead.id
               ? nextLeads
               : replaceLeadRow(nextLeads, lead.id, importedLead);
-          }, leads);
+          }, canonicalLeads);
           const replacedProcessedDetails = visibleLeads.reduce(
             (nextDetails, lead, index) =>
               persistedTopLeads[index].id === lead.id
                 ? nextDetails
                 : replaceProcessedLeadDetails(nextDetails, lead.id, persistedTopLeads[index].id),
-            metadata?.processedDetails || {}
+            mergedProcessedDetails
           );
-          if (replacedLeadRows !== leads || replacedProcessedDetails !== (metadata?.processedDetails || {})) {
+          if (replacedLeadRows !== canonicalLeads || replacedProcessedDetails !== mergedProcessedDetails) {
             setMetadata((prev: LeadListMetadata) => ({
               ...prev,
               leads: replacedLeadRows,
@@ -2604,7 +3353,7 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              lead_ids: persistedTopLeads.map((lead) => lead.id),
+              lead_ids: Array.from(new Set(persistedTopLeads.map((lead) => lead.id))),
               include_outreach: false,
             }),
           });
@@ -2638,18 +3387,54 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
             toast.error("No leads were processed successfully.");
             return;
           }
-          setMetadata((prev: LeadListMetadata) => {
-            const nextLeads = mergeLeadRows(prev.leads, processedLeads);
-            const nextProcessedDetails = {
-              ...(prev.processedDetails || {}),
-              ...Object.fromEntries(processedDetailEntries),
-            };
-            return {
-              ...prev,
-              leads: nextLeads,
-              processedDetails: nextProcessedDetails,
-            };
+          const baseMetadata = (metadata || {}) as LeadListMetadata;
+          const nextLeads = mergeLeadRows(replacedLeadRows, processedLeads);
+          const nextProcessedDetails = {
+            ...(replacedProcessedDetails || {}),
+            ...Object.fromEntries(processedDetailEntries),
+          };
+          const nextSelectedLeadId = resolveSelectedLeadId(
+            baseMetadata.selectedLeadId || null,
+            nextLeads,
+            [...replacedLeadRows, ...processedLeads]
+          );
+          const nextContent = serializeLeadListPayload(nextLeads, {
+            filter: baseMetadata.filter || "",
+            processedDetails: nextProcessedDetails,
+            selectedLeadId: nextSelectedLeadId,
+            sortBy: baseMetadata.sortBy || "score",
+            sortOrder: baseMetadata.sortOrder || "desc",
           });
+
+          setMetadata((prev: LeadListMetadata) => ({
+            ...prev,
+            leads: nextLeads,
+            processedDetails: nextProcessedDetails,
+            selectedLeadId: nextSelectedLeadId,
+          }));
+          setArtifact((draft) => ({
+            ...draft,
+            content: nextContent,
+          }));
+
+          const snapshotKey = getLeadListSnapshotKey(artifact?.documentId);
+          if (snapshotKey) {
+            try {
+              window.localStorage.setItem(snapshotKey, nextContent);
+            } catch {}
+          }
+
+          if (artifact?.documentId && artifact.documentId !== "init") {
+            void fetch(`/api/document?id=${artifact.documentId}`, {
+              method: "POST",
+              body: JSON.stringify({
+                title: artifact.title,
+                content: nextContent,
+                kind: artifact.kind,
+              }),
+            }).catch(() => {});
+          }
+
           toast.success(
             `Analyzed ${processedLeads.length} visible lead${processedLeads.length === 1 ? "" : "s"}.`
           );
