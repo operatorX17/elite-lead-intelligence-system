@@ -6,6 +6,7 @@ import type {
   ProofArtifact,
   ScoringResult,
   SignalFacts,
+  ContactPoint,
 } from "@/lib/zrai/types";
 import { sanitizeDecisionMakerName } from "@/lib/zrai/people";
 
@@ -35,8 +36,13 @@ type RankedContactEntry = {
   linkedin?: string | null;
   source?: string | null;
   score?: number | null;
+  confidence?: number | null;
   reason?: string | null;
   channel?: string | null;
+  contactType?: string | null;
+  ownerScope?: string | null;
+  isDirect?: boolean;
+  isPublic?: boolean;
   kind?: "primary" | "alternate" | "actual" | "branch";
   isPrimary?: boolean;
 };
@@ -82,6 +88,34 @@ function formatValue(value: unknown) {
 
 function joinNonEmpty(values: Array<string | null | undefined>) {
   return values.map((value) => value?.trim()).filter(Boolean).join(", ");
+}
+
+function sanitizeEmail(value: string | null | undefined) {
+  const email = String(value || "").trim().toLowerCase();
+  if (!email) {
+    return null;
+  }
+  if (email.startsWith("frame-") || email.includes("@mht")) {
+    return null;
+  }
+  if (email.endsWith("@example.com") || email.endsWith("@example.org")) {
+    return null;
+  }
+  return email;
+}
+
+function sanitizePhone(value: string | null | undefined) {
+  const digits = String(value || "").replace(/\D/g, "");
+  return digits.length >= 7 ? `+${digits}`.replace("++", "+") : null;
+}
+
+function formatConfidence(value: number | null | undefined) {
+  if (value == null || Number.isNaN(value)) {
+    return null;
+  }
+
+  const normalized = value <= 1 ? value * 100 : value;
+  return `${Math.round(normalized)}%`;
 }
 
 function getSignalFacts(
@@ -167,8 +201,8 @@ function getContactFingerprint(contact: Partial<RankedContactEntry>) {
     contact.name,
     contact.role,
     contact.clinic,
-    contact.phone,
-    contact.email,
+    sanitizePhone(contact.phone),
+    sanitizeEmail(contact.email),
     contact.linkedin,
   ]
     .map((value) => String(value || "").trim().toLowerCase())
@@ -205,7 +239,15 @@ function formatRankedContact(contact: RankedContactEntry) {
     contact.linkedin ? `linkedin: ${contact.linkedin}` : null,
     contact.channel ? `channel: ${contact.channel}` : null,
     contact.source ? `source: ${contact.source}` : null,
-    contact.score != null ? `score: ${contact.score}` : null,
+    contact.contactType ? `type: ${contact.contactType}` : null,
+    contact.ownerScope ? `owner: ${contact.ownerScope}` : null,
+    contact.confidence != null
+      ? `confidence: ${formatConfidence(contact.confidence)}`
+      : contact.score != null
+        ? `score: ${contact.score}`
+        : null,
+    contact.isDirect != null ? `direct: ${contact.isDirect ? "yes" : "no"}` : null,
+    contact.isPublic != null ? `public: ${contact.isPublic ? "yes" : "no"}` : null,
     contact.reason ? `reason: ${contact.reason}` : null,
   ]
     .filter(Boolean)
@@ -243,6 +285,16 @@ export function buildLeadScoreNarrative(
         signalFacts?.rating != null ? `${signalFacts.rating} rating` : null,
         signalFacts?.branch_count ? `${signalFacts.branch_count} locations` : null,
         signalFacts?.doctor_count ? `${signalFacts.doctor_count} doctors` : null,
+        signalFacts?.contact_intelligence?.top_contact?.name
+          ? `${signalFacts.contact_intelligence.top_contact.name} (${
+              signalFacts.contact_intelligence.top_contact.contact_type ||
+              signalFacts.contact_intelligence.top_contact.owner_scope ||
+              "contact"
+            })`
+          : null,
+        signalFacts?.contact_quality_score != null
+          ? `contact quality ${signalFacts.contact_quality_score}/100`
+          : null,
         signalFacts?.content_ready_score != null
           ? `content readiness ${signalFacts.content_ready_score}/100`
           : null,
@@ -308,61 +360,157 @@ export function buildRankedContactModel(
 ): RankedContactModel {
   const signalFacts = getSignalFacts(lead, processedDetails);
   const agentContext = getAgentContext(lead, processedDetails);
+  const canonicalContactIntelligence =
+    getAnalysisBundle(lead, processedDetails)?.contact_intelligence ||
+    signalFacts?.contact_intelligence ||
+    null;
+  const canonicalTopContact = canonicalContactIntelligence?.top_contact || null;
+  const canonicalAlternateContacts = canonicalContactIntelligence?.alternate_contacts || [];
   const decisionMakerName = sanitizeDecisionMakerName(
-    signalFacts?.decision_maker_name || agentContext.decision_maker_name || null
+    canonicalContactIntelligence?.decision_maker_name ||
+      signalFacts?.decision_maker_name ||
+      agentContext.decision_maker_name ||
+      canonicalTopContact?.name ||
+      null
   );
   const decisionMakerLinkedin =
+    canonicalContactIntelligence?.decision_maker_linkedin ||
     signalFacts?.decision_maker_linkedin ||
     signalFacts?.best_contact_linkedin ||
     agentContext.decision_maker_linkedin ||
     agentContext.best_contact_linkedin ||
+    canonicalTopContact?.linkedin ||
     null;
   const decisionMakerRole = decisionMakerName
-    ? signalFacts?.decision_maker_role || agentContext.decision_maker_role || null
-    : null;
+    ? canonicalContactIntelligence?.decision_maker_role ||
+      signalFacts?.decision_maker_role ||
+      agentContext.decision_maker_role ||
+      canonicalTopContact?.role ||
+      null
+    : canonicalTopContact?.role || null;
   const decisionMakerSource = decisionMakerName
-    ? signalFacts?.decision_maker_source || agentContext.decision_maker_source || null
-    : null;
+    ? canonicalContactIntelligence?.decision_maker_source ||
+      signalFacts?.decision_maker_source ||
+      agentContext.decision_maker_source ||
+      canonicalTopContact?.source ||
+      null
+    : canonicalTopContact?.source || null;
   const decisionMakerConfidence = decisionMakerName
-    ? signalFacts?.decision_maker_confidence ?? agentContext.decision_maker_confidence ?? null
-    : null;
-  const bestContactPhone = signalFacts?.best_contact_phone || agentContext.best_contact_phone || null;
-  const bestContactEmail = signalFacts?.best_contact_email || agentContext.best_contact_email || null;
+    ? canonicalContactIntelligence?.decision_maker_confidence ??
+      signalFacts?.decision_maker_confidence ??
+      agentContext.decision_maker_confidence ??
+      canonicalTopContact?.confidence ??
+      null
+    : canonicalTopContact?.confidence || null;
+  const bestContactPhone =
+    canonicalContactIntelligence?.best_contact_phone ||
+    signalFacts?.best_contact_phone ||
+    agentContext.best_contact_phone ||
+    canonicalTopContact?.phone ||
+    null;
+  const bestContactEmailRaw =
+    canonicalContactIntelligence?.best_contact_email ||
+    signalFacts?.best_contact_email ||
+    agentContext.best_contact_email ||
+    canonicalTopContact?.email ||
+    null;
+  const bestContactEmail = sanitizeEmail(bestContactEmailRaw);
   const bestContactChannel =
-    signalFacts?.best_contact_channel || agentContext.best_contact_channel || null;
+    canonicalContactIntelligence?.best_contact_channel ||
+    signalFacts?.best_contact_channel ||
+    agentContext.best_contact_channel ||
+    canonicalTopContact?.channel ||
+    null;
   const bestContactReason =
-    signalFacts?.best_contact_reason || agentContext.best_contact_reason || null;
+    canonicalContactIntelligence?.best_contact_reason ||
+    signalFacts?.best_contact_reason ||
+    agentContext.best_contact_reason ||
+    canonicalTopContact?.reason ||
+    null;
   const recommendedOffer = agentContext.recommended_offer || null;
-  const contactEvidence = signalFacts?.contact_evidence || agentContext.contact_evidence || [];
+  const contactEvidence =
+    canonicalContactIntelligence?.contact_evidence ||
+    signalFacts?.contact_evidence ||
+    agentContext.contact_evidence ||
+    [];
   const rawCandidates =
-    signalFacts?.decision_maker_candidates || agentContext.decision_maker_candidates || [];
-  const candidates = [...rawCandidates].sort((a, b) => (b.score || 0) - (a.score || 0));
+    canonicalContactIntelligence?.contact_points ||
+    signalFacts?.decision_maker_candidates ||
+    agentContext.decision_maker_candidates ||
+    [];
+  const candidates = [...rawCandidates].sort((a, b) => {
+    const aScore = Number((a as { score?: number; confidence?: number }).score ?? (a as { confidence?: number }).confidence ?? 0);
+    const bScore = Number((b as { score?: number; confidence?: number }).score ?? (b as { confidence?: number }).confidence ?? 0);
+    return bScore - aScore;
+  });
   const branchContacts = signalFacts?.branch_contacts || agentContext.branch_contacts || [];
 
-  const topContact: Omit<RankedContactEntry, "rank"> | null =
-    decisionMakerName || decisionMakerLinkedin || bestContactPhone || bestContactEmail
-      ? {
-          name: decisionMakerName || "Best contact",
-          role: decisionMakerRole || bestContactChannel || null,
-          clinic: null,
-          phone: bestContactPhone || null,
-          email: bestContactEmail || null,
-          linkedin: decisionMakerLinkedin || null,
-          source: decisionMakerSource || bestContactReason || "best contact",
-          score: decisionMakerConfidence,
-          reason: bestContactReason || null,
-          channel: bestContactChannel || null,
-          isPrimary: true,
-        }
+  const canonicalPointToEntry = (
+    point: ContactPoint & {
+      contact_type?: string | null;
+      owner_scope?: string | null;
+      confidence?: number | null;
+    },
+    kind: RankedContactEntry["kind"],
+    rank: number
+  ): RankedContactEntry => ({
+    rank,
+    name: point.name || "Contact",
+    role: point.role || point.channel || null,
+    clinic: point.clinic || null,
+    phone: sanitizePhone(point.phone),
+    email: sanitizeEmail(point.email),
+    linkedin: point.linkedin || null,
+    source: point.source || null,
+    score: point.confidence ?? null,
+    confidence: point.confidence ?? null,
+    reason: point.reason || null,
+    channel: point.channel || null,
+    contactType: point.contact_type || null,
+    ownerScope: point.owner_scope || null,
+    isDirect: point.is_direct,
+    isPublic: point.is_public,
+    kind,
+    isPrimary: Boolean(point.is_primary),
+  });
+
+  const canonicalTopEntry =
+    canonicalTopContact && (canonicalTopContact.name || canonicalTopContact.phone || canonicalTopContact.email || canonicalTopContact.linkedin)
+      ? canonicalPointToEntry(canonicalTopContact as ContactPoint, "primary", 1)
       : null;
+  const canonicalAlternateEntries = canonicalAlternateContacts
+    .map((point: ContactPoint, index: number) =>
+      canonicalPointToEntry(
+        point,
+        point.contact_type === "branch_public"
+          ? "branch"
+          : point.contact_type === "actual_contact"
+            ? "actual"
+            : "alternate",
+        index + 2
+      )
+    )
+    .filter(Boolean) as RankedContactEntry[];
 
   const rankedContacts: RankedContactEntry[] = [];
   const seen = new Set<string>();
   let rank = 1;
 
-  if (topContact) {
-    addRankedContact(rankedContacts, seen, topContact, "primary", rank);
-    rank += 1;
+  if (canonicalTopEntry || canonicalAlternateEntries.length) {
+    if (canonicalTopEntry) {
+      addRankedContact(rankedContacts, seen, canonicalTopEntry, "primary", rank);
+      rank += 1;
+    }
+    for (const contact of canonicalAlternateEntries) {
+      addRankedContact(
+        rankedContacts,
+        seen,
+        { ...contact, score: contact.score ?? contact.confidence ?? null },
+        contact.kind || "alternate",
+        rank
+      );
+      rank += 1;
+    }
   } else if (lead?.contacts?.length) {
     const primaryContact =
       lead.contacts.find((contact) => contact.is_primary) || lead.contacts[0];
@@ -371,16 +519,21 @@ export function buildRankedContactModel(
         rankedContacts,
         seen,
         {
-          name: primaryContact.name || "Primary contact",
-          role: primaryContact.title || null,
-          clinic: null,
-          phone: primaryContact.phone || null,
-          email: primaryContact.email || null,
-          linkedin: primaryContact.linkedin_url || null,
+        name: primaryContact.name || "Primary contact",
+        role: primaryContact.title || null,
+        clinic: null,
+        phone: sanitizePhone(primaryContact.phone),
+        email: sanitizeEmail(primaryContact.email),
+        linkedin: primaryContact.linkedin_url || null,
           source: "actual lead contact",
           score: null,
+          confidence: null,
           reason: null,
           channel: null,
+          contactType: "actual_contact",
+          ownerScope: "clinic",
+          isDirect: true,
+          isPublic: false,
           isPrimary: true,
         },
         "actual",
@@ -398,13 +551,18 @@ export function buildRankedContactModel(
         name: contact.name || "Contact",
         role: contact.title || null,
         clinic: null,
-        phone: contact.phone || null,
-        email: contact.email || null,
+        phone: sanitizePhone(contact.phone),
+        email: sanitizeEmail(contact.email),
         linkedin: contact.linkedin_url || null,
         source: contact.is_primary ? "actual lead contact" : "actual lead contact",
         score: null,
+        confidence: null,
         reason: null,
         channel: null,
+        contactType: "actual_contact",
+        ownerScope: "clinic",
+        isDirect: true,
+        isPublic: false,
         isPrimary: contact.is_primary,
       },
       "actual",
@@ -414,20 +572,51 @@ export function buildRankedContactModel(
   }
 
   for (const candidate of candidates) {
+    const candidateRecord = candidate as {
+      name?: string;
+      role?: string;
+      clinic?: string;
+      phones?: string[];
+      emails?: string[];
+      linkedin?: string;
+      source?: string;
+      score?: number;
+      confidence?: number;
+      contact_type?: string;
+      owner_scope?: string;
+      is_direct?: boolean;
+      is_public?: boolean;
+      phone?: string | null;
+      email?: string | null;
+    };
+    const candidateRole = String(candidateRecord.role || "").toLowerCase();
     addRankedContact(
       rankedContacts,
       seen,
       {
-        name: candidate.name || "Unknown contact",
-        role: candidate.role || null,
-        clinic: candidate.clinic || null,
-        phone: candidate.phones?.[0] || null,
-        email: candidate.emails?.[0] || null,
-        linkedin: candidate.linkedin || null,
-        source: candidate.source || "decision-maker candidate",
-        score: candidate.score ?? null,
+        name: candidateRecord.name || "Unknown contact",
+        role: candidateRecord.role || null,
+        clinic: candidateRecord.clinic || null,
+        phone: sanitizePhone(candidateRecord.phones?.[0] || candidateRecord.phone || null),
+        email: sanitizeEmail(candidateRecord.emails?.[0] || candidateRecord.email || null),
+        linkedin: candidateRecord.linkedin || null,
+        source: candidateRecord.source || "decision-maker candidate",
+        score: candidateRecord.score ?? candidateRecord.confidence ?? null,
+        confidence: candidateRecord.score ?? candidateRecord.confidence ?? null,
         reason: null,
         channel: null,
+        contactType: candidateRole.includes("doctor")
+          ? "doctor_direct"
+          : candidateRole.includes("founder") || candidateRole.includes("director")
+            ? "founder_direct"
+            : "decision_maker_candidate",
+        ownerScope: "person",
+        isDirect: Boolean(
+          candidateRole.includes("doctor") ||
+            candidateRole.includes("founder") ||
+            candidateRole.includes("director")
+        ),
+        isPublic: Boolean(candidateRecord.is_public),
         isPrimary: false,
       },
       "alternate",
@@ -444,13 +633,18 @@ export function buildRankedContactModel(
         name: contact.name || "Clinic branch",
         role: "branch contact",
         clinic: null,
-        phone: contact.phone || null,
+        phone: sanitizePhone(contact.phone),
         email: null,
         linkedin: null,
         source: contact.source || "branch phone",
         score: null,
+        confidence: null,
         reason: null,
         channel: null,
+        contactType: "branch_public",
+        ownerScope: "branch",
+        isDirect: false,
+        isPublic: true,
         isPrimary: false,
       },
       "branch",
