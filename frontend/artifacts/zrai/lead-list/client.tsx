@@ -838,17 +838,47 @@ function resolveSelectedLeadId(
     return null;
   }
 
-  const remappedLead = findLeadByEntity(mergedLeads, sourceLead);
+  const remappedLead = findBestLeadByEntity(mergedLeads, sourceLead);
 
   return remappedLead?.id || null;
 }
 
-function findLeadByEntity(leads: Lead[], target: Lead | null | undefined) {
+function findBestLeadByEntity(leads: Lead[], target: Lead | null | undefined) {
   if (!target) {
     return null;
   }
 
-  return leads.find((lead) => isSameLeadEntity(lead, target)) || null;
+  const matches = leads.filter((lead) => isSameLeadEntity(lead, target));
+  if (!matches.length) {
+    return null;
+  }
+
+  return (
+    matches.sort((a, b) => {
+      const priorityDelta = getLeadRowPriority(b) - getLeadRowPriority(a);
+      if (priorityDelta !== 0) {
+        return priorityDelta;
+      }
+
+      const aAnalyzed =
+        a.score_kind === "final_score" || a.analysis_state === "analyzed" ? 1 : 0;
+      const bAnalyzed =
+        b.score_kind === "final_score" || b.analysis_state === "analyzed" ? 1 : 0;
+      if (aAnalyzed !== bAnalyzed) {
+        return bAnalyzed - aAnalyzed;
+      }
+
+      return (
+        (b.updated_at || "").localeCompare(a.updated_at || "") ||
+        (b.created_at || "").localeCompare(a.created_at || "") ||
+        (a.id || "").localeCompare(b.id || "")
+      );
+    })[0] || null
+  );
+}
+
+function findLeadByEntity(leads: Lead[], target: Lead | null | undefined) {
+  return findBestLeadByEntity(leads, target);
 }
 
 function findProcessedDetailsByEntity(
@@ -944,12 +974,12 @@ function mergeProcessedLeadDetailsRecords(
       ...(existing.scoring || {}),
       ...(incoming.scoring || {}),
     },
-    signal_facts: incoming.signal_facts || existing.signal_facts || null,
-    analysis_bundle: incoming.analysis_bundle || existing.analysis_bundle || null,
-    analysis_state: incoming.analysis_state || existing.analysis_state || null,
-    analysis_updated_at: incoming.analysis_updated_at || existing.analysis_updated_at || null,
-    signals_version: incoming.signals_version || existing.signals_version || null,
-    outreach: incoming.outreach || existing.outreach || [],
+    signal_facts: incoming.signal_facts ?? existing.signal_facts,
+    analysis_bundle: incoming.analysis_bundle ?? existing.analysis_bundle,
+    analysis_state: incoming.analysis_state ?? existing.analysis_state,
+    analysis_updated_at: incoming.analysis_updated_at ?? existing.analysis_updated_at,
+    signals_version: incoming.signals_version ?? existing.signals_version,
+    outreach: incoming.outreach ?? existing.outreach ?? [],
   };
 }
 
@@ -1055,6 +1085,34 @@ function getLeadListSnapshotKey(documentId: string | null | undefined) {
   }
 
   return `${LEAD_LIST_SNAPSHOT_PREFIX}${documentId}`;
+}
+
+function persistLeadListDocument(
+  artifact: { documentId?: string | null; title?: string | null; kind?: string | null } | null | undefined,
+  nextContent: string
+) {
+  const snapshotKey = getLeadListSnapshotKey(artifact?.documentId);
+  if (snapshotKey) {
+    try {
+      window.localStorage.setItem(snapshotKey, nextContent);
+    } catch {}
+  }
+
+  if (!artifact?.documentId || artifact.documentId === "init") {
+    return;
+  }
+
+  void fetch(`/api/document?id=${artifact.documentId}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      title: artifact.title || "Lead List",
+      content: nextContent,
+      kind: artifact.kind || "lead-list",
+    }),
+  }).catch(() => {});
 }
 
 function getLeadAnalysisStrength(
@@ -1341,33 +1399,12 @@ function LeadListContent({
   const persistedSelectedLeadId = canonicalState.selectedLeadId || null;
 
   const queueLeadListDocumentSave = (nextContent: string) => {
-    const snapshotKey = getLeadListSnapshotKey(artifact?.documentId);
-    if (snapshotKey) {
-      try {
-        window.localStorage.setItem(snapshotKey, nextContent);
-      } catch {}
-    }
-
-    if (!artifact?.documentId || artifact.documentId === "init") {
-      return;
-    }
-
     if (persistTimeoutRef.current) {
       window.clearTimeout(persistTimeoutRef.current);
       persistTimeoutRef.current = null;
     }
 
-    void fetch(`/api/document?id=${artifact.documentId}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        title: artifact.title || "Lead List",
-        content: nextContent,
-        kind: artifact.kind || "lead-list",
-      }),
-    }).catch(() => {});
+    persistLeadListDocument(artifact, nextContent);
   };
 
   useEffect(() => {
@@ -3490,14 +3527,15 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
 
           setMetadata((prev: LeadListMetadata) => {
             const nextLeads = mergeLeadRows(prev.leads, enrichedLeads);
+            const nextContent = serializeLeadListPayload(nextLeads, {
+              filter: prev.filter,
+              processedDetails: prev.processedDetails,
+              sortBy: prev.sortBy,
+              sortOrder: prev.sortOrder,
+            });
             setArtifact((draft) => ({
               ...draft,
-              content: serializeLeadListPayload(nextLeads, {
-                filter: prev.filter,
-                processedDetails: prev.processedDetails,
-                sortBy: prev.sortBy,
-                sortOrder: prev.sortOrder,
-              }),
+              content: nextContent,
             }));
             return {
               ...prev,
@@ -3570,14 +3608,15 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
 
           setMetadata((prev: LeadListMetadata) => {
             const nextLeads = mergeLeadRows(prev.leads, scoredLeads);
+            const nextContent = serializeLeadListPayload(nextLeads, {
+              filter: prev.filter,
+              processedDetails: prev.processedDetails,
+              sortBy: prev.sortBy,
+              sortOrder: prev.sortOrder,
+            });
             setArtifact((draft) => ({
               ...draft,
-              content: serializeLeadListPayload(nextLeads, {
-                filter: prev.filter,
-                processedDetails: prev.processedDetails,
-                sortBy: prev.sortBy,
-                sortOrder: prev.sortOrder,
-              }),
+              content: nextContent,
             }));
             return {
               ...prev,
