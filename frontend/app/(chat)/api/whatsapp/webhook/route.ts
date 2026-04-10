@@ -12,7 +12,6 @@ import {
 } from "@/lib/db/queries";
 import { markWhatsAppCampaignRecipientReplied } from "@/lib/db/whatsapp-campaigns";
 import { generateWhatsAppReplyPlan } from "@/lib/whatsapp/agent";
-import { deriveWhatsAppOpsStatePatch } from "@/lib/whatsapp/sales-playbook";
 import {
   resolveLeadContextForWhatsAppThread,
   syncWhatsAppMessageToLeadMemory,
@@ -206,13 +205,7 @@ async function processInboundWhatsAppMessage({
 
     await updateWhatsAppConversationOpsState({
       id: latestConversation.id,
-      patch: deriveWhatsAppOpsStatePatch({
-        currentOpsState: normalizeWhatsAppOpsState(latestConversation.opsState),
-        nextState: replyPlan.nextState,
-        leadContext:
-          conversationWithState?.leadContext ?? latestConversation.leadContext,
-        shouldRespondWithinMinutes: replyPlan.shouldSwitchToHuman,
-      }),
+      patch: {},
     });
 
     if (replyPlan.nextState.optOut) {

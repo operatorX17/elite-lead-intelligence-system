@@ -46,6 +46,7 @@ export const ZRAI_BACKEND_ENDPOINTS = {
   abTest: `${ZRAI_BACKEND_URL}/api/v1/ab-test`,
   run: `${ZRAI_BACKEND_URL}/api/v1/run`,
   import: `${ZRAI_BACKEND_URL}/api/v1/import`,
+  whatsappPolicyGuard: `${ZRAI_BACKEND_URL}/api/v1/whatsapp/policy/guard`,
 } as const;
 
 export function getZRAILeadByIdEndpoint(leadId: string) {

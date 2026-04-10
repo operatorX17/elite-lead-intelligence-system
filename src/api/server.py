@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeou
 from typing import Optional, List, Dict, Any, Callable
 from contextlib import asynccontextmanager
 from uuid import uuid4, UUID
-from datetime import datetime
+from datetime import datetime, timedelta
 from urllib.parse import urlparse, parse_qs, unquote
 import re
 from functools import lru_cache
@@ -50,6 +50,32 @@ FAST_ANALYZE_AGENT_TIMEOUTS = {
     "scoring": 15,
     "outreach": 20,
 }
+
+WHATSAPP_POLICY_LIMITS = {
+    "per_user_hour": 3,
+    "global_per_minute": 20,
+    "freeform_window_ms": 24 * 60 * 60 * 1000,
+    "duplicate_window_ms": 10 * 60 * 1000,
+    "runtime_kill_switch_ms": 15 * 60 * 1000,
+}
+
+_whatsapp_policy_runtime_state = {
+    "kill_switch_until": None,
+    "last_reason": None,
+}
+
+WHATSAPP_AUTOMATION_DISCLOSURE_PATTERNS = [
+    re.compile(r"\bzrai\b", re.IGNORECASE),
+    re.compile(r"\bautomated\b", re.IGNORECASE),
+    re.compile(r"\bassistant\b", re.IGNORECASE),
+]
+
+WHATSAPP_AUTOMATION_IMPERSONATION_PATTERNS = [
+    re.compile(r"\breal operator\b", re.IGNORECASE),
+    re.compile(r"\bhuman[- ]?sounding\b", re.IGNORECASE),
+    re.compile(r"\bi(?:'m| am)\s+(?:the\s+)?(?:owner|founder|doctor|receptionist|front desk|staff)\b", re.IGNORECASE),
+    re.compile(r"\bfrom (?:the )?(?:clinic|front desk|reception|doctor(?:'s)? office)\b", re.IGNORECASE),
+]
 
 
 def _build_cors_origins() -> List[str]:
@@ -355,6 +381,15 @@ class ConversationSyncRequest(BaseModel):
     channel: Optional[str] = "whatsapp"
     conversation_id: Optional[str] = None
 
+
+class WhatsAppPolicyGuardRequest(BaseModel):
+    conversation_id: Optional[str] = None
+    contact_phone: Optional[str] = None
+    business_phone: Optional[str] = None
+    body: str
+    message_style: str = Field(default="freeform", pattern="^(freeform|template)$")
+    automation_kind: str = Field(default="manual", pattern="^(manual|bot_reply|campaign)$")
+
 class RunPipelineRequest(BaseModel):
     mode: str = "full"
     config: Optional[dict] = None
@@ -469,6 +504,148 @@ def get_db():
             logger.error(f"Failed to initialize database: {e}")
             raise HTTPException(status_code=503, detail=f"Database not initialized: {e}")
     return app.state.db
+
+
+def _normalize_whatsapp_body(body: str) -> str:
+    return re.sub(r"\s+", " ", (body or "").strip())
+
+
+def _whatsapp_manual_kill_switch_enabled() -> bool:
+    value = str(os.getenv("WHATSAPP_OUTBOUND_KILL_SWITCH", "")).strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
+def _whatsapp_cold_outbound_override_enabled() -> bool:
+    value = str(os.getenv("WHATSAPP_ALLOW_COLD_OUTBOUND", "")).strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
+def _whatsapp_trip_runtime_kill_switch(reason: str) -> None:
+    _whatsapp_policy_runtime_state["kill_switch_until"] = (
+        datetime.utcnow().timestamp()
+        + (WHATSAPP_POLICY_LIMITS["runtime_kill_switch_ms"] / 1000)
+    )
+    _whatsapp_policy_runtime_state["last_reason"] = reason
+
+
+def _whatsapp_get_runtime_kill_switch_reason() -> Optional[str]:
+    kill_until = _whatsapp_policy_runtime_state.get("kill_switch_until")
+    if not kill_until:
+        return None
+    if datetime.utcnow().timestamp() >= kill_until:
+        _whatsapp_policy_runtime_state["kill_switch_until"] = None
+        _whatsapp_policy_runtime_state["last_reason"] = None
+        return None
+    return _whatsapp_policy_runtime_state.get("last_reason") or "runtime_kill_switch_active"
+
+
+def _whatsapp_has_disclosure(body: str) -> bool:
+    return all(pattern.search(body) for pattern in WHATSAPP_AUTOMATION_DISCLOSURE_PATTERNS)
+
+
+def _whatsapp_has_impersonation_risk(body: str) -> bool:
+    return any(pattern.search(body) for pattern in WHATSAPP_AUTOMATION_IMPERSONATION_PATTERNS)
+
+
+def _whatsapp_get_conversation(db, *, conversation_id: Optional[str], contact_phone: Optional[str], business_phone: Optional[str]) -> Optional[Dict[str, Any]]:
+    if conversation_id:
+        result = (
+            db.client.table("WhatsAppConversation")
+            .select("*")
+            .eq("id", conversation_id)
+            .limit(1)
+            .execute()
+        )
+        if result.data:
+            return result.data[0]
+
+    if contact_phone:
+        query = (
+            db.client.table("WhatsAppConversation")
+            .select("*")
+            .eq("contactPhone", contact_phone)
+        )
+        if business_phone:
+            query = query.eq("businessPhone", business_phone)
+        result = query.limit(1).execute()
+        if result.data:
+            return result.data[0]
+
+    return None
+
+
+def _whatsapp_count_recent_outbound_global(db, *, since: datetime) -> int:
+    response = (
+        db.client.table("WhatsAppMessage")
+        .select("id", count="exact")
+        .eq("direction", "outgoing")
+        .gte("createdAt", since.isoformat())
+        .execute()
+    )
+    if response.count is not None:
+        return int(response.count)
+    return len(response.data or [])
+
+
+def _whatsapp_count_recent_outbound_for_contact(db, *, contact_phone: str, since: datetime) -> int:
+    conversations = (
+        db.client.table("WhatsAppConversation")
+        .select("id")
+        .eq("contactPhone", contact_phone)
+        .execute()
+    ).data or []
+    conversation_ids = [row.get("id") for row in conversations if row.get("id")]
+    if not conversation_ids:
+        return 0
+    response = (
+        db.client.table("WhatsAppMessage")
+        .select("id", count="exact")
+        .in_("conversationId", conversation_ids)
+        .eq("direction", "outgoing")
+        .gte("createdAt", since.isoformat())
+        .execute()
+    )
+    if response.count is not None:
+        return int(response.count)
+    return len(response.data or [])
+
+
+def _whatsapp_find_recent_duplicate(db, *, conversation_id: str, body: str, since: datetime) -> Optional[Dict[str, Any]]:
+    response = (
+        db.client.table("WhatsAppMessage")
+        .select("*")
+        .eq("conversationId", conversation_id)
+        .eq("direction", "outgoing")
+        .eq("body", body)
+        .gte("createdAt", since.isoformat())
+        .order("createdAt", desc=True)
+        .limit(1)
+        .execute()
+    )
+    if response.data:
+        return response.data[0]
+    return None
+
+
+def _whatsapp_latest_inbound_at(db, *, conversation_id: str) -> Optional[datetime]:
+    response = (
+        db.client.table("WhatsAppMessage")
+        .select("createdAt")
+        .eq("conversationId", conversation_id)
+        .eq("direction", "incoming")
+        .order("createdAt", desc=True)
+        .limit(1)
+        .execute()
+    )
+    if not response.data:
+        return None
+    raw_value = response.data[0].get("createdAt")
+    if not raw_value:
+        return None
+    try:
+        return datetime.fromisoformat(str(raw_value).replace("Z", "+00:00"))
+    except Exception:
+        return None
 
 def get_discovery_agent():
     """Get the discovery agent with lazy initialization for test mode."""
@@ -5319,6 +5496,153 @@ async def resolve_contact(
     except Exception as e:
         logger.error(f"Resolve contact error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/whatsapp/policy/guard")
+async def guard_whatsapp_policy(
+    request: WhatsAppPolicyGuardRequest,
+    user_id: Optional[str] = Depends(get_user_id),
+):
+    """Railway-first WhatsApp outbound policy guard."""
+    normalized_body = _normalize_whatsapp_body(request.body)
+    if not normalized_body:
+        return {
+            "allowed": False,
+            "reason": "message_body_required",
+            "detail": "Message body is required",
+            "status": 400,
+        }
+
+    if _whatsapp_manual_kill_switch_enabled():
+        return {
+            "allowed": False,
+            "reason": "manual_kill_switch_active",
+            "detail": "WhatsApp outbound kill switch is enabled",
+            "status": 503,
+        }
+
+    runtime_block = _whatsapp_get_runtime_kill_switch_reason()
+    if runtime_block:
+        return {
+            "allowed": False,
+            "reason": "runtime_kill_switch_active",
+            "detail": f"WhatsApp outbound runtime kill switch is active ({runtime_block})",
+            "status": 503,
+        }
+
+    db = get_db()
+    conversation = _whatsapp_get_conversation(
+        db,
+        conversation_id=request.conversation_id,
+        contact_phone=request.contact_phone,
+        business_phone=request.business_phone,
+    )
+    if not conversation:
+        return {
+            "allowed": False,
+            "reason": "conversation_not_found",
+            "detail": "WhatsApp conversation not found for outbound policy check",
+            "status": 404,
+        }
+
+    automation_kind = request.automation_kind or "manual"
+    if automation_kind != "manual":
+        if _whatsapp_has_impersonation_risk(normalized_body):
+            return {
+                "allowed": False,
+                "reason": "automation_impersonation_risk",
+                "detail": "Automated WhatsApp messages cannot imitate a human operator or clinic staff",
+                "status": 409,
+            }
+
+        prior_messages = (
+            db.client.table("WhatsAppMessage")
+            .select("id, direction, authorType")
+            .eq("conversationId", conversation.get("id"))
+            .execute()
+        ).data or []
+        has_prior_automated = any(
+            msg.get("direction") == "outgoing" and msg.get("authorType") == "bot"
+            for msg in prior_messages
+        )
+        if not has_prior_automated and not _whatsapp_has_disclosure(normalized_body):
+            return {
+                "allowed": False,
+                "reason": "automation_disclosure_required",
+                "detail": "The first automated WhatsApp message must identify ZRAI as an automated assistant",
+                "status": 409,
+            }
+
+    now = datetime.utcnow()
+    global_outbound = _whatsapp_count_recent_outbound_global(
+        db, since=now - timedelta(seconds=60)
+    )
+    if global_outbound >= WHATSAPP_POLICY_LIMITS["global_per_minute"]:
+        _whatsapp_trip_runtime_kill_switch("global_minute_limit")
+        return {
+            "allowed": False,
+            "reason": "global_minute_limit",
+            "detail": "Global outbound rate limit reached",
+            "status": 429,
+        }
+
+    contact_phone = conversation.get("contactPhone") or request.contact_phone
+    if contact_phone:
+        per_user_outbound = _whatsapp_count_recent_outbound_for_contact(
+            db, contact_phone=contact_phone, since=now - timedelta(hours=1)
+        )
+        if per_user_outbound >= WHATSAPP_POLICY_LIMITS["per_user_hour"]:
+            return {
+                "allowed": False,
+                "reason": "per_user_hour_limit",
+                "detail": "This contact already received the hourly message limit",
+                "status": 429,
+            }
+
+    recent_duplicate = _whatsapp_find_recent_duplicate(
+        db,
+        conversation_id=conversation.get("id"),
+        body=normalized_body,
+        since=now - timedelta(milliseconds=WHATSAPP_POLICY_LIMITS["duplicate_window_ms"]),
+    )
+    if recent_duplicate:
+        return {
+            "allowed": False,
+            "reason": "duplicate_recently_sent",
+            "detail": "Duplicate WhatsApp message blocked in short interval",
+            "status": 409,
+        }
+
+    if request.message_style == "freeform":
+        latest_inbound = _whatsapp_latest_inbound_at(
+            db, conversation_id=conversation.get("id")
+        )
+        if not latest_inbound or (now - latest_inbound).total_seconds() * 1000 > WHATSAPP_POLICY_LIMITS["freeform_window_ms"]:
+            return {
+                "allowed": False,
+                "reason": "customer_service_window_closed",
+                "detail": "Free-form WhatsApp messages are only allowed inside the 24-hour customer service window",
+                "status": 409,
+            }
+
+    if automation_kind == "campaign" and not _whatsapp_cold_outbound_override_enabled():
+        latest_inbound = _whatsapp_latest_inbound_at(
+            db, conversation_id=conversation.get("id")
+        )
+        if not latest_inbound:
+            return {
+                "allowed": False,
+                "reason": "campaign_opt_in_required",
+                "detail": "Automated WhatsApp campaigns require a prior inbound message or explicit policy override",
+                "status": 409,
+            }
+
+    return {
+        "allowed": True,
+        "conversationId": conversation.get("id"),
+        "contactPhone": conversation.get("contactPhone"),
+        "businessPhone": conversation.get("businessPhone") or None,
+    }
 
 # ============================================================================
 # Governance Endpoint

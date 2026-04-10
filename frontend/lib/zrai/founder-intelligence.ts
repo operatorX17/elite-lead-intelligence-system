@@ -66,20 +66,63 @@ function dedupeByName<T extends { name?: string | null }>(values: T[]) {
   return deduped;
 }
 
+function normalizeContactKey(value: {
+  name?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  linkedin?: string | null;
+}) {
+  const phone = String(value.phone || "").replace(/\D/g, "");
+  if (phone.length >= 7) {
+    return `phone:${phone}`;
+  }
+  const linkedin = String(value.linkedin || "").trim().toLowerCase();
+  if (linkedin) {
+    return `linkedin:${linkedin}`;
+  }
+  const email = String(value.email || "").trim().toLowerCase();
+  if (email && !email.startsWith("frame-") && !email.endsWith("@example.com")) {
+    return `email:${email}`;
+  }
+  const name = String(value.name || "").trim().toLowerCase();
+  return name ? `name:${name}` : "";
+}
+
+function dedupeByIdentity<T extends { name?: string | null; phone?: string | null; email?: string | null; linkedin?: string | null }>(
+  values: T[]
+) {
+  const seen = new Set<string>();
+  const deduped: T[] = [];
+
+  for (const value of values) {
+    const key = normalizeContactKey(value);
+    if (!key) {
+      continue;
+    }
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    deduped.push(value);
+  }
+
+  return deduped;
+}
+
 function mergeSignalFacts(
   signalFacts: SignalFacts | null | undefined,
   founderIntel: FounderIntelPayload
 ): SignalFacts {
   const existing = (signalFacts || {}) as SignalFacts;
-  const doctorProfiles = dedupeByName([
+  const doctorProfiles = dedupeByIdentity([
     ...(founderIntel.doctor_profiles || []),
     ...(existing.doctor_profiles || []),
   ]);
-  const decisionMakerCandidates = dedupeByName([
+  const decisionMakerCandidates = dedupeByIdentity([
     ...(founderIntel.decision_maker_candidates || []),
     ...(existing.decision_maker_candidates || []),
   ]);
-  const branchContacts = dedupeByName([
+  const branchContacts = dedupeByIdentity([
     ...(founderIntel.branch_contacts || []),
     ...(existing.branch_contacts || []),
   ]);
@@ -141,11 +184,9 @@ function mergeSignalFacts(
     ...existing,
     phone_numbers: phoneNumbers.length ? phoneNumbers : existing.phone_numbers,
     branch_names: branchNames.length ? branchNames : existing.branch_names,
-    branch_count:
-      Math.max(existing.branch_count || 0, founderIntel.branch_names?.length || 0, branchContacts.length) || 0,
+    branch_count: branchNames.length || 0,
     doctor_names: doctorNames.length ? doctorNames : existing.doctor_names,
-    doctor_count:
-      Math.max(existing.doctor_count || 0, founderIntel.doctor_names?.length || 0, doctorProfiles.length) || 0,
+    doctor_count: doctorNames.length || 0,
     doctor_profiles: doctorProfiles.length ? doctorProfiles : existing.doctor_profiles,
     decision_maker_name: decisionMakerName,
     decision_maker_role: decisionMakerRole,

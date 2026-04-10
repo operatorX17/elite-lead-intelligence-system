@@ -396,11 +396,8 @@ class AuditAgent(BaseAgent, CircuitBreakerMixin):
             merged["social_profiles"] = merged_social_profiles
 
         for key in [
-            "branch_count",
-            "doctor_count",
             "content_ready_score",
             "form_field_count",
-            "detected_phone_count",
         ]:
             primary_value = merged.get(key)
             secondary_value = secondary.get(key)
@@ -432,6 +429,10 @@ class AuditAgent(BaseAgent, CircuitBreakerMixin):
             merged["phone_visibility"] = "visible"
         elif not merged.get("phone_visibility") and secondary.get("phone_visibility"):
             merged["phone_visibility"] = secondary["phone_visibility"]
+
+        merged["branch_count"] = len(merged.get("branch_names") or [])
+        merged["doctor_count"] = len(merged.get("doctor_names") or [])
+        merged["detected_phone_count"] = len(merged.get("phone_numbers") or [])
 
         return merged
 
@@ -596,8 +597,8 @@ class AuditAgent(BaseAgent, CircuitBreakerMixin):
             token in lowered for token in ["submit", "book", "appointment", "consultation"]
         )
         whatsapp_target = self._extract_whatsapp_target(ocr_text)
-        whatsapp_detected = bool(whatsapp_target or "whatsapp" in lowered)
-        chat_widget = "whatsapp" if whatsapp_detected else None
+        whatsapp_detected = bool(whatsapp_target)
+        chat_widget = "whatsapp" if whatsapp_target else None
         hours_present = self._detect_business_hours_text(lowered)
         after_hours_capture = self._determine_after_hours_capture(
             booking_detected=booking_detected,
@@ -743,13 +744,6 @@ class AuditAgent(BaseAgent, CircuitBreakerMixin):
                 ).strip(" -,:")
                 if suffix_clean:
                     matches.append(f"iSkin {suffix_clean}")
-        if not matches:
-            neighborhood_matches = re.findall(
-                r"\b(?:Nagawara|Bilekahalli|Uttarahalli|Indiranagar|Jayanagar|HSR|Bellandur|Marathahalli)\b",
-                text,
-                re.IGNORECASE,
-            )
-            matches = [f"Clinic {name.title()}" for name in neighborhood_matches]
         return self._dedupe_list(matches)[:12]
 
     def _extract_services_from_text(self, text: str) -> List[str]:
@@ -785,12 +779,12 @@ class AuditAgent(BaseAgent, CircuitBreakerMixin):
                 "schedule now",
             ]
         )
+        whatsapp_target = self._extract_whatsapp_target(html)
         chat_widget = None
-        if any(token in lowered for token in ["whatsapp", "wa.me", "api.whatsapp.com"]):
+        if whatsapp_target:
             chat_widget = "whatsapp"
         elif any(token in lowered for token in ["intercom", "drift", "tawk.to", "crisp.chat"]):
             chat_widget = "chat_widget"
-        whatsapp_target = self._extract_whatsapp_target(html)
         social_profiles = self._extract_social_profiles(soup)
         services = self._extract_service_categories(soup)
         doctor_names = self._extract_doctor_names(soup)
@@ -801,9 +795,7 @@ class AuditAgent(BaseAgent, CircuitBreakerMixin):
         instagram_present = bool(social_profiles.get("instagram"))
         youtube_present = bool(social_profiles.get("youtube"))
         facebook_present = bool(social_profiles.get("facebook"))
-        multi_clinic = len(branch_names) > 1 or any(
-            token in lowered for token in ["our locations", "locations", "our clinics", "branches"]
-        )
+        multi_clinic = len(branch_names) > 1
         booking_flow_quality = self._determine_booking_flow_quality(
             booking_link=booking_link,
             phone_numbers=phones,

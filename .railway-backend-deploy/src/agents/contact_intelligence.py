@@ -114,6 +114,55 @@ def _dedupe_strings(values: Iterable[Any]) -> List[str]:
     return deduped
 
 
+def _normalize_phone(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    digits = re.sub(r"\D", "", str(value))
+    if len(digits) < 7:
+        return None
+    return digits
+
+
+def _normalize_email(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    return str(value).strip().lower()
+
+
+def _normalize_linkedin(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    return str(value).strip().lower()
+
+
+def _is_junk_email(value: Optional[str]) -> bool:
+    if not value:
+        return True
+    lowered = value.strip().lower()
+    if lowered.startswith("frame-"):
+        return True
+    if lowered.endswith("@example.com") or lowered.endswith("@example.org"):
+        return True
+    if "frame-" in lowered and "@mht" in lowered:
+        return True
+    return False
+
+
+def _contact_identity_key(contact: Dict[str, Any]) -> str:
+    phone = _normalize_phone(contact.get("phone"))
+    if phone:
+        return f"phone:{phone}"
+    linkedin = _normalize_linkedin(contact.get("linkedin"))
+    if linkedin:
+        return f"linkedin:{linkedin}"
+    email = _normalize_email(contact.get("email"))
+    if email and not _is_junk_email(email):
+        return f"email:{email}"
+    name = str(contact.get("name") or "").strip().lower()
+    role = str(contact.get("role") or "").strip().lower()
+    return f"name:{name}|role:{role}"
+
+
 def _contact_type_for(role: Optional[str], *, is_branch: bool = False) -> str:
     if is_branch:
         return "branch_public"
@@ -131,11 +180,7 @@ def _contact_type_for(role: Optional[str], *, is_branch: bool = False) -> str:
 def _fingerprint_contact(contact: Dict[str, Any]) -> str:
     return "|".join(
         [
-            str(contact.get("name") or "").strip().lower(),
-            str(contact.get("role") or "").strip().lower(),
-            str(contact.get("phone") or "").strip(),
-            str(contact.get("email") or "").strip().lower(),
-            str(contact.get("linkedin") or "").strip().lower(),
+            _contact_identity_key(contact),
             str(contact.get("contact_type") or "").strip().lower(),
             str(contact.get("owner_scope") or "").strip().lower(),
         ]
@@ -171,7 +216,12 @@ def _build_contact_point(
     is_public: Optional[bool] = None,
 ) -> Optional[Dict[str, Any]]:
     normalized_name = _normalize_person_candidate(name)
-    if not normalized_name and not any([phone, email, linkedin]):
+    normalized_phone = _normalize_phone(phone)
+    normalized_email = _normalize_email(email)
+    normalized_linkedin = _normalize_linkedin(linkedin)
+    if normalized_email and _is_junk_email(normalized_email):
+        normalized_email = None
+    if not normalized_name and not any([normalized_phone, normalized_email, normalized_linkedin]):
         return None
 
     effective_contact_type = contact_type or _contact_type_for(role)
@@ -182,9 +232,9 @@ def _build_contact_point(
         "name": normalized_name or "Best contact",
         "role": role or None,
         "clinic": clinic or None,
-        "phone": phone or None,
-        "email": email or None,
-        "linkedin": linkedin or None,
+        "phone": normalized_phone,
+        "email": normalized_email,
+        "linkedin": normalized_linkedin,
         "source": source or None,
         "confidence": _normalize_confidence(confidence),
         "reason": reason or None,

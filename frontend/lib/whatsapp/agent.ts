@@ -2,9 +2,7 @@ import type {
   WhatsAppConversation,
   WhatsAppMessage,
 } from "@/lib/db/schema";
-import { classifyInboundLeadMessage } from "@/lib/whatsapp/sales-playbook";
 import {
-  buildLeadAwareAgentStatePatch,
   requestLeadAwareWhatsAppReply,
   requestProspectAwareWhatsAppReply,
 } from "@/lib/whatsapp/lead-context";
@@ -56,14 +54,31 @@ function extractBackendReplyText(
 }
 
 export type WhatsAppReplyPlan = {
-  classification: ReturnType<typeof classifyInboundLeadMessage>;
   nextState: WhatsAppAgentState;
   replyText: string;
   shouldSendReply: boolean;
   shouldSwitchToHuman: boolean;
 };
 
-export { classifyInboundLeadMessage };
+function buildRailwayAgentStatePatch({
+  currentState,
+  replyText,
+  needsEscalation,
+  escalationReason,
+}: {
+  currentState: WhatsAppAgentState;
+  replyText: string;
+  needsEscalation?: boolean | null;
+  escalationReason?: string | null;
+}) {
+  return normalizeWhatsAppAgentState({
+    ...currentState,
+    lastSuggestedReply: replyText,
+    handoffRecommended: Boolean(needsEscalation),
+    handoffReason: escalationReason || (needsEscalation ? "Railway escalation requested" : null),
+    updatedAt: new Date().toISOString(),
+  });
+}
 
 export async function generateWhatsAppReplyPlan({
   conversation,
@@ -76,7 +91,6 @@ export async function generateWhatsAppReplyPlan({
   abortSignal?: AbortSignal | null;
 }): Promise<WhatsAppReplyPlan> {
   const currentState = normalizeWhatsAppAgentState(conversation.agentState);
-  const classification = classifyInboundLeadMessage(incomingText);
   const backendAbortController = new AbortController();
   const backendTimeoutMs = conversation.linkedLeadId
     ? WHATSAPP_BACKEND_REPLY_TIMEOUT_MS
@@ -117,7 +131,6 @@ export async function generateWhatsAppReplyPlan({
       });
 
       return {
-        classification,
         nextState: emptyReplyState,
         replyText: "",
         shouldSendReply: false,
@@ -125,21 +138,14 @@ export async function generateWhatsAppReplyPlan({
       };
     }
 
-    const nextState = buildLeadAwareAgentStatePatch({
+    const finalState = buildRailwayAgentStatePatch({
       currentState,
-      leadContext: conversation.leadContext ?? null,
-      aiResponse: replyText,
-      conversation: backendResponse.conversation ?? null,
+      replyText,
       needsEscalation: backendResponse.needs_escalation,
       escalationReason: backendResponse.escalation_reason || null,
     });
-    const finalState = normalizeWhatsAppAgentState({
-      ...nextState,
-      lastSuggestedReply: replyText,
-    });
 
     return {
-      classification,
       nextState: finalState,
       replyText,
       shouldSendReply: conversation.mode === "bot",
@@ -159,7 +165,6 @@ export async function generateWhatsAppReplyPlan({
     });
 
     return {
-      classification,
       nextState: unavailableState,
       replyText: "",
       shouldSendReply: false,

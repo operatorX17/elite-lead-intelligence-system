@@ -1,71 +1,13 @@
 import "server-only";
 
-import {
-  countRecentOutgoingWhatsAppMessagesForContact,
-  countRecentOutgoingWhatsAppMessagesGlobal,
-  findRecentDuplicateOutgoingWhatsAppMessage,
-  getLatestIncomingWhatsAppMessageAt,
-  getWhatsAppConversationById,
-  getWhatsAppConversationByPhone,
-} from "@/lib/db/queries";
-
-const MAX_MESSAGES_PER_USER_PER_HOUR = 3;
-const MAX_GLOBAL_OUTBOUND_PER_MINUTE = 20;
-const FREEFORM_WINDOW_MS = 24 * 60 * 60 * 1000;
-const DUPLICATE_WINDOW_MS = 10 * 60 * 1000;
-const RUNTIME_KILL_SWITCH_MS = 15 * 60 * 1000;
-
-type RuntimeWhatsAppPolicyState = {
-  killSwitchUntil: number | null;
-  lastReason: string | null;
-};
-
-const runtimeState = globalThis as typeof globalThis & {
-  __zraiWhatsAppPolicyState?: RuntimeWhatsAppPolicyState;
-};
-
-function getRuntimePolicyState() {
-  if (!runtimeState.__zraiWhatsAppPolicyState) {
-    runtimeState.__zraiWhatsAppPolicyState = {
-      killSwitchUntil: null,
-      lastReason: null,
-    };
-  }
-
-  return runtimeState.__zraiWhatsAppPolicyState;
-}
+import { ZRAI_BACKEND_ENDPOINTS } from "@/lib/zrai/constants";
 
 function normalizeBody(body: string) {
   return body.trim().replace(/\s+/g, " ");
 }
 
-function isManualKillSwitchEnabled() {
-  const value = String(process.env.WHATSAPP_OUTBOUND_KILL_SWITCH ?? "").trim();
-  return ["1", "true", "yes", "on"].includes(value.toLowerCase());
-}
-
-function tripRuntimeKillSwitch(reason: string) {
-  const state = getRuntimePolicyState();
-  state.killSwitchUntil = Date.now() + RUNTIME_KILL_SWITCH_MS;
-  state.lastReason = reason;
-}
-
-function getRuntimeKillSwitchBlockReason() {
-  const state = getRuntimePolicyState();
-  if (!state.killSwitchUntil) {
-    return null;
-  }
-
-  if (Date.now() >= state.killSwitchUntil) {
-    state.killSwitchUntil = null;
-    state.lastReason = null;
-    return null;
-  }
-
-  return state.lastReason ?? "runtime_kill_switch_active";
-}
-
 export type GuardedWhatsAppMessageStyle = "freeform" | "template";
+export type GuardedWhatsAppAutomationKind = "manual" | "bot_reply" | "campaign";
 
 export type GuardedWhatsAppMessageDecision =
   | {
@@ -84,7 +26,10 @@ export type GuardedWhatsAppMessageDecision =
         | "duplicate_recently_sent"
         | "per_user_hour_limit"
         | "global_minute_limit"
-        | "customer_service_window_closed";
+        | "customer_service_window_closed"
+        | "campaign_opt_in_required"
+        | "automation_disclosure_required"
+        | "automation_impersonation_risk";
       detail: string;
       status: number;
     };
@@ -95,6 +40,7 @@ export async function guardWhatsAppOutboundMessage(input: {
   businessPhone?: string | null;
   body: string;
   messageStyle: GuardedWhatsAppMessageStyle;
+  automationKind?: GuardedWhatsAppAutomationKind;
 }): Promise<GuardedWhatsAppMessageDecision> {
   const normalizedBody = normalizeBody(input.body);
 
@@ -107,110 +53,33 @@ export async function guardWhatsAppOutboundMessage(input: {
     };
   }
 
-  if (isManualKillSwitchEnabled()) {
-    return {
-      allowed: false,
-      reason: "manual_kill_switch_active",
-      detail: "WhatsApp outbound kill switch is enabled",
-      status: 503,
-    };
-  }
-
-  const runtimeKillReason = getRuntimeKillSwitchBlockReason();
-  if (runtimeKillReason) {
-    return {
-      allowed: false,
-      reason: "runtime_kill_switch_active",
-      detail: `WhatsApp outbound runtime kill switch is active (${runtimeKillReason})`,
-      status: 503,
-    };
-  }
-
-  const conversation =
-    (input.conversationId
-      ? await getWhatsAppConversationById({ id: input.conversationId })
-      : null) ||
-    (input.contactPhone
-      ? await getWhatsAppConversationByPhone({
-          contactPhone: input.contactPhone,
-          businessPhone: input.businessPhone,
-        })
-      : null);
-
-  if (!conversation) {
-    return {
-      allowed: false,
-      reason: "conversation_not_found",
-      detail: "WhatsApp conversation not found for outbound policy check",
-      status: 404,
-    };
-  }
-
-  const now = new Date();
-  const globalMessagesInLastMinute = await countRecentOutgoingWhatsAppMessagesGlobal({
-    since: new Date(now.getTime() - 60_000),
-  });
-
-  if (globalMessagesInLastMinute >= MAX_GLOBAL_OUTBOUND_PER_MINUTE) {
-    tripRuntimeKillSwitch("global_minute_limit");
-    return {
-      allowed: false,
-      reason: "global_minute_limit",
-      detail: "Global outbound rate limit reached",
-      status: 429,
-    };
-  }
-
-  const messagesForContactInLastHour =
-    await countRecentOutgoingWhatsAppMessagesForContact({
-      contactPhone: conversation.contactPhone,
-      since: new Date(now.getTime() - 60 * 60_000),
+  try {
+    const response = await fetch(ZRAI_BACKEND_ENDPOINTS.whatsappPolicyGuard, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        conversation_id: input.conversationId,
+        contact_phone: input.contactPhone,
+        business_phone: input.businessPhone,
+        body: normalizedBody,
+        message_style: input.messageStyle,
+        automation_kind: input.automationKind ?? "manual",
+      }),
     });
 
-  if (messagesForContactInLastHour >= MAX_MESSAGES_PER_USER_PER_HOUR) {
-    return {
-      allowed: false,
-      reason: "per_user_hour_limit",
-      detail: "This contact already received the hourly message limit",
-      status: 429,
-    };
-  }
-
-  const recentDuplicate = await findRecentDuplicateOutgoingWhatsAppMessage({
-    conversationId: conversation.id,
-    body: normalizedBody,
-    since: new Date(now.getTime() - DUPLICATE_WINDOW_MS),
-  });
-
-  if (recentDuplicate) {
-    return {
-      allowed: false,
-      reason: "duplicate_recently_sent",
-      detail: "Duplicate WhatsApp message blocked in short interval",
-      status: 409,
-    };
-  }
-
-  if (input.messageStyle === "freeform") {
-    const latestInboundAt = await getLatestIncomingWhatsAppMessageAt({
-      conversationId: conversation.id,
-    });
-
-    if (!latestInboundAt || now.getTime() - latestInboundAt.getTime() > FREEFORM_WINDOW_MS) {
-      return {
-        allowed: false,
-        reason: "customer_service_window_closed",
-        detail:
-          "Free-form WhatsApp messages are only allowed inside the 24-hour customer service window",
-        status: 409,
-      };
+    const payload = (await response.json()) as GuardedWhatsAppMessageDecision;
+    if (payload && "allowed" in payload) {
+      return payload;
     }
+  } catch (error) {
+    console.error("[whatsapp:policy] Railway policy guard failed", error);
   }
 
   return {
-    allowed: true,
-    conversationId: conversation.id,
-    contactPhone: conversation.contactPhone,
-    businessPhone: conversation.businessPhone || null,
+    allowed: false,
+    reason: "runtime_kill_switch_active",
+    detail:
+      "Railway WhatsApp policy guard is unavailable; outbound message blocked",
+    status: 503,
   };
 }
