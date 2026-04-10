@@ -151,6 +151,47 @@ async function processInboundWhatsAppMessage({
       conversationId: latestConversation.id,
     });
 
+    if (latestConversation.mode === "human") {
+      if (
+        latestConversation.linkedLeadId &&
+        !isWhatsAppSandboxLead({
+          linkedLeadId: latestConversation.linkedLeadId,
+          leadContext: latestConversation.leadContext,
+        })
+      ) {
+        try {
+          const inboundSync = await syncWhatsAppMessageToLeadMemory({
+            leadId: latestConversation.linkedLeadId,
+            role: "prospect",
+            message: inboundMessage.body,
+            conversationId: latestConversation.backendConversationId,
+            abortSignal: replyAbortController.signal,
+          });
+
+          const backendConversationId =
+            inboundSync.conversation?.conversation_id ||
+            latestConversation.backendConversationId ||
+            null;
+
+          if (backendConversationId) {
+            await updateWhatsAppConversationLeadLink({
+              id: latestConversation.id,
+              linkedLeadId: latestConversation.linkedLeadId,
+              backendConversationId,
+              leadContext: latestConversation.leadContext,
+            });
+          }
+        } catch (error) {
+          console.error(
+            "[whatsapp:webhook] Failed to sync human-mode WhatsApp memory",
+            error
+          );
+        }
+      }
+
+      return;
+    }
+
     const replyPlan = await generateWhatsAppReplyPlan({
       conversation: latestConversation,
       messages: conversationMessages,
@@ -202,6 +243,7 @@ async function processInboundWhatsAppMessage({
         conversationId: latestConversation.id,
         body,
         messageStyle: "freeform",
+        automationKind: "bot_reply",
       });
 
       if (!policyDecision.allowed) {

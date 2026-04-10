@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import test from "node:test";
 
-test("unlinked clinic-sales threads use backend prospect reasoning before local fallback", async () => {
+test("unlinked clinic-sales threads use backend prospect reasoning from Railway", async () => {
   process.env.ZRAI_BACKEND_URL = "https://backend.test";
   const require = createRequire(import.meta.url);
   const serverOnlyPath = require.resolve("server-only");
@@ -80,6 +80,60 @@ test("unlinked clinic-sales threads use backend prospect reasoning before local 
     assert.match(plan.replyText, /zrai/i);
     assert.match(plan.replyText, /clinic|branches|booking/i);
     assert.equal(plan.nextState.leadChannels.includes("clinic_sales"), true);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("Railway conversation failure forces human takeover instead of local reply generation", async () => {
+  process.env.ZRAI_BACKEND_URL = "https://backend.test";
+  const require = createRequire(import.meta.url);
+  const serverOnlyPath = require.resolve("server-only");
+  require.cache[serverOnlyPath] = {
+    exports: {},
+    filename: serverOnlyPath,
+    id: serverOnlyPath,
+    loaded: true,
+    path: serverOnlyPath,
+  } as any;
+
+  const originalFetch = global.fetch;
+  global.fetch = (async () => {
+    throw new Error("backend unavailable");
+  }) as typeof fetch;
+
+  try {
+    const { generateWhatsAppReplyPlan } = await import("@/lib/whatsapp/agent");
+    const { createWhatsAppInboundSalesProspectState } = await import(
+      "@/lib/whatsapp/state"
+    );
+
+    const conversation = {
+      id: "conv_backend_down",
+      linkedLeadId: null,
+      leadContext: null,
+      opsState: {
+        niche: "Derm & Aesthetic",
+        city: "Bangalore",
+      },
+      contactName: "Self Test",
+      contactPhone: "+918310002656",
+      businessPhone: "+16623986774",
+      mode: "bot",
+      agentState: createWhatsAppInboundSalesProspectState(),
+    } as any;
+
+    const plan = await generateWhatsAppReplyPlan({
+      conversation,
+      messages: [],
+      incomingText: "Hi",
+    });
+
+    assert.equal(plan.replyText, "");
+    assert.equal(plan.shouldSendReply, false);
+    assert.equal(plan.shouldSwitchToHuman, true);
+    assert.equal(plan.nextState.handoffRecommended, true);
+    assert.match(plan.nextState.handoffReason || "", /railway conversation service/i);
   } finally {
     global.fetch = originalFetch;
   }
