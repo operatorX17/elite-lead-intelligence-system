@@ -3080,7 +3080,9 @@ def should_use_osint_discovery(raw_niche: str) -> bool:
     niche = (raw_niche or "").strip().lower()
     if niche in OSINT_FIRST_NICHES:
         return True
-    return is_clinic_style_niche(niche)
+    if niche in {"saas", "fintech"}:
+        return True
+    return False
 
 
 def build_osint_queries(raw_niche: str, raw_geo: str, requested_limit: int) -> List[str]:
@@ -3612,6 +3614,49 @@ def extract_official_website_from_tracxn_company_page(profile_url: str) -> Optio
     return None
 
 
+def _domain_brand_hint(website: Optional[str]) -> Optional[str]:
+    domain = (extract_domain(website) or "").lower().replace("www.", "")
+    if not domain:
+        return None
+    root = domain.split(".")[0].strip()
+    if not root:
+        return None
+    cleaned = re.sub(r"[-_]+", " ", root).strip()
+    return cleaned.title() if cleaned else None
+
+
+def _is_generic_company_title(title: str, *, raw_geo: str, brand_hint: Optional[str]) -> bool:
+    lowered = (title or "").strip().lower()
+    if not lowered:
+        return True
+    if brand_hint and brand_hint.lower() in lowered:
+        return False
+
+    geo = (raw_geo or "").strip().lower()
+    geo_tokens = [geo] if geo else []
+    geo_tokens.extend([token for token in geo.split() if token])
+    geo_hit = any(token in lowered for token in geo_tokens) if geo_tokens else False
+
+    generic_tokens = [
+        "best",
+        "top",
+        "near me",
+        "in ",
+        "clinic",
+        "dermatologist",
+        "skin",
+        "aesthetic",
+        "hair",
+        "doctor",
+        "specialist",
+        "center",
+        "centre",
+    ]
+    generic_hit = any(token in lowered for token in generic_tokens)
+
+    return geo_hit and generic_hit
+
+
 def discover_company_candidates_osint(raw_niche: str, raw_geo: str, limit: int) -> List[Lead]:
     """Discover company candidates from public-web search results."""
     queries = build_osint_queries(raw_niche, raw_geo, limit)
@@ -3665,9 +3710,13 @@ def discover_company_candidates_osint(raw_niche: str, raw_geo: str, limit: int) 
                 continue
             seen_domains.add(domain)
 
-            company_name = result["title"].split("|")[0].split("-")[0].strip()
+            title = str(result.get("title") or "")
+            company_name = title.split("|")[0].split("-")[0].strip()
+            brand_hint = _domain_brand_hint(website) or infer_company_name_from_url(website)
+            if _is_generic_company_title(company_name, raw_geo=raw_geo, brand_hint=brand_hint):
+                company_name = brand_hint or company_name
             if not company_name or len(company_name) < 3:
-                company_name = infer_company_name_from_url(website)
+                company_name = brand_hint or infer_company_name_from_url(website)
 
             leads.append(
                 Lead(
@@ -3710,11 +3759,14 @@ def dedupe_discovered_leads(leads: List[Lead]) -> List[Lead]:
     seen = set()
 
     for lead in leads:
-        dedupe_key = (
-            (lead.business_name or "").strip().lower(),
-            (extract_domain(lead.website) or "").strip().lower(),
-            (lead.location or "").strip().lower(),
-        )
+        domain = (extract_domain(lead.website) or "").strip().lower()
+        if domain:
+            dedupe_key = (domain,)
+        else:
+            dedupe_key = (
+                (lead.business_name or "").strip().lower(),
+                (lead.location or "").strip().lower(),
+            )
         if dedupe_key in seen:
             continue
         seen.add(dedupe_key)
@@ -4276,6 +4328,7 @@ async def discover_leads(
         else:
             geo_filter = build_discovery_geo(request.geo)
             keywords = build_discovery_keywords(request.niche, query_limit)
+            detailed_scrape = is_clinic_style_niche(request.niche)
             try:
                 leads = await loop.run_in_executor(
                     None,
@@ -4285,7 +4338,7 @@ async def discover_leads(
                         limit=query_limit,
                         auto_process=False,
                         skip_duplicate_check=True,
-                        detailed_scrape=False,
+                        detailed_scrape=detailed_scrape,
                     )
                 )
             except Exception as exc:

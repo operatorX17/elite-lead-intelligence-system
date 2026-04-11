@@ -95,7 +95,10 @@ function sanitizeEmail(value: string | null | undefined) {
   if (!email) {
     return null;
   }
-  if (email.startsWith("frame-") || email.includes("@mht")) {
+  if (email.startsWith("frame-") || email.includes("@mht") || email.includes("@mhtml")) {
+    return null;
+  }
+  if (email.length > 120) {
     return null;
   }
   if (email.endsWith("@example.com") || email.endsWith("@example.org")) {
@@ -212,16 +215,24 @@ function getContactFingerprint(contact: Partial<RankedContactEntry>) {
 function addRankedContact(
   entries: RankedContactEntry[],
   seen: Set<string>,
+  seenPhones: Set<string>,
   contact: Omit<RankedContactEntry, "rank">,
   kind: RankedContactEntry["kind"],
   rankHint: number
 ) {
+  const normalizedPhone = sanitizePhone(contact.phone);
+  if (normalizedPhone && seenPhones.has(normalizedPhone)) {
+    return;
+  }
   const fingerprint = getContactFingerprint(contact);
   if (!fingerprint.replace(/\|/g, "").trim() || seen.has(fingerprint)) {
     return;
   }
 
   seen.add(fingerprint);
+  if (normalizedPhone) {
+    seenPhones.add(normalizedPhone);
+  }
   entries.push({
     rank: rankHint,
     kind,
@@ -494,17 +505,19 @@ export function buildRankedContactModel(
 
   const rankedContacts: RankedContactEntry[] = [];
   const seen = new Set<string>();
+  const seenPhones = new Set<string>();
   let rank = 1;
 
   if (canonicalTopEntry || canonicalAlternateEntries.length) {
     if (canonicalTopEntry) {
-      addRankedContact(rankedContacts, seen, canonicalTopEntry, "primary", rank);
+      addRankedContact(rankedContacts, seen, seenPhones, canonicalTopEntry, "primary", rank);
       rank += 1;
     }
     for (const contact of canonicalAlternateEntries) {
       addRankedContact(
         rankedContacts,
         seen,
+        seenPhones,
         { ...contact, score: contact.score ?? contact.confidence ?? null },
         contact.kind || "alternate",
         rank
@@ -518,6 +531,7 @@ export function buildRankedContactModel(
       addRankedContact(
         rankedContacts,
         seen,
+        seenPhones,
         {
         name: primaryContact.name || "Primary contact",
         role: primaryContact.title || null,
@@ -547,6 +561,7 @@ export function buildRankedContactModel(
     addRankedContact(
       rankedContacts,
       seen,
+      seenPhones,
       {
         name: contact.name || "Contact",
         role: contact.title || null,
@@ -593,6 +608,7 @@ export function buildRankedContactModel(
     addRankedContact(
       rankedContacts,
       seen,
+      seenPhones,
       {
         name: candidateRecord.name || "Unknown contact",
         role: candidateRecord.role || null,
@@ -629,6 +645,7 @@ export function buildRankedContactModel(
     addRankedContact(
       rankedContacts,
       seen,
+      seenPhones,
       {
         name: contact.name || "Clinic branch",
         role: "branch contact",

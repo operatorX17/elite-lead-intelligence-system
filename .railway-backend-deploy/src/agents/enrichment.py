@@ -70,7 +70,6 @@ CHAT_WIDGETS = {
     "tawk": r"tawk\.to",
     "livechat": r"livechatinc",
     "freshchat": r"freshchat",
-    "whatsapp": r"wa\.me|api\.whatsapp\.com|whatsapp",
 }
 
 FORM_TOOLS = {
@@ -255,6 +254,7 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             "booking_link": None,
             "contact_form": False,
             "whatsapp": False,
+            "whatsapp_target": None,
         }
 
         if not website:
@@ -302,9 +302,11 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             contact_paths.append("email")
         if context["phones"]:
             contact_paths.append("phone")
-        if any(token in lower_content for token in ["whatsapp", "wa.me", "api.whatsapp.com"]):
+        whatsapp_target = self._extract_whatsapp_target(raw_content)
+        if whatsapp_target:
             contact_paths.append("whatsapp")
             context["whatsapp"] = True
+            context["whatsapp_target"] = whatsapp_target
         if any(
             token in lower_content
             for token in [
@@ -1353,6 +1355,28 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             if any(keyword in lowered_href for keyword in lowered_keywords):
                 return href
         return None
+
+    def _extract_whatsapp_target(self, html: str) -> Optional[str]:
+        """Return a strong WhatsApp target, not just a loose text mention."""
+        href_matches = re.findall(r'href=["\']([^"\']+)["\']', html, re.IGNORECASE)
+        for href in href_matches:
+            lowered = href.lower()
+            if (
+                "wa.me/" in lowered
+                or "api.whatsapp.com" in lowered
+                or "whatsapp://send" in lowered
+                or "web.whatsapp.com/send" in lowered
+            ):
+                phone_match = re.search(
+                    r"(?:phone=|wa\.me/|send\?phone=)(\+?\d{7,15})",
+                    href,
+                    re.IGNORECASE,
+                )
+                if phone_match:
+                    return phone_match.group(1)
+                return href
+
+        return None
     
     def _extract_volume_signals(self, lead: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -1569,9 +1593,12 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         Requirements: 4.3
         """
         validated = []
-        
+
         email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-        
+        junk_prefixes = ("frame-",)
+        junk_domain_tokens = ("mht", "mhtml")
+        max_local_length = 64
+
         # Disposable email domains to filter out
         disposable_domains = {
             'tempmail.com', 'throwaway.com', 'mailinator.com',
@@ -1584,9 +1611,16 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             # Check format
             if not re.match(email_pattern, email):
                 continue
+
+            local_part, domain = email.split("@", 1)
+            if local_part.startswith(junk_prefixes):
+                continue
+            if len(local_part) > max_local_length:
+                continue
+            if any(token in domain for token in junk_domain_tokens):
+                continue
             
             # Check for disposable domains
-            domain = email.split('@')[1]
             if domain in disposable_domains:
                 continue
             
