@@ -2468,27 +2468,25 @@ function LeadListContent({
   };
 
   const resolvedSelectedLead = findLeadByEntity(leads, selectedLead) || selectedLead;
-  const resolvedLiveSelectedLead =
-    findLeadByEntity(leads, selectedLeadLive) || selectedLeadLive;
-  const resolvedMetadataLiveLead =
-    findLeadByEntity(leads, metadata?.liveSelectedLead) || metadata?.liveSelectedLead;
+  const liveInspectorLead = selectedLeadLive || metadata?.liveSelectedLead || null;
+  const liveInspectorDetails =
+    selectedLeadLiveDetails ||
+    metadata?.liveSelectedLeadDetails ||
+    (liveInspectorLead?.id ? processedDetails?.[liveInspectorLead.id] || null : null);
   const selectedLeadDetailsFromStore = findProcessedDetailsByEntity(
     processedDetails,
     leads,
     resolvedSelectedLead
   );
   const inspectorLead =
-    hydrateLeadFromStoredAnalysis(resolvedLiveSelectedLead, selectedLeadLiveDetails) ||
-    hydrateLeadFromStoredAnalysis(
-      resolvedMetadataLiveLead,
-      metadata?.liveSelectedLeadDetails || null
-    ) ||
+    hydrateLeadFromStoredAnalysis(liveInspectorLead, liveInspectorDetails) ||
+    liveInspectorLead ||
     hydrateLeadFromStoredAnalysis(resolvedSelectedLead, selectedLeadDetailsFromStore) ||
     resolvedSelectedLead;
   const selectedLeadDetails =
-    selectedLeadLiveDetails ||
-    metadata?.liveSelectedLeadDetails ||
-    findProcessedDetailsByEntity(processedDetails, leads, inspectorLead);
+    (inspectorLead?.id && liveInspectorLead?.id === inspectorLead.id
+      ? liveInspectorDetails
+      : null) || findProcessedDetailsByEntity(processedDetails, leads, inspectorLead);
   const selectedLeadEffectiveState = getResolvedAnalysisState(inspectorLead, selectedLeadDetails);
   const selectedLeadEntityIds = inspectorLead
     ? Array.from(
@@ -2499,8 +2497,7 @@ function LeadListContent({
               .map((lead) => lead.id),
             inspectorLead.id,
             resolvedSelectedLead?.id,
-            resolvedLiveSelectedLead?.id,
-            resolvedMetadataLiveLead?.id,
+            liveInspectorLead?.id,
           ].filter((leadId): leadId is string => Boolean(leadId))
         )
       )

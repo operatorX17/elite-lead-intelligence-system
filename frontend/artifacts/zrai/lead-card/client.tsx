@@ -461,13 +461,19 @@ function LeadCardContent({
   const payload = parseLeadCardPayload(content);
   const lead = metadata?.lead || payload?.lead || null;
   const processedDetails = metadata?.processedDetails || payload?.processed_details || null;
+  const liveDisplayLead = liveLead || metadata?.liveLead || null;
+  const liveDisplayDetails =
+    liveProcessedDetails ||
+    metadata?.liveProcessedDetails ||
+    (liveDisplayLead?.id === lead?.id ? processedDetails : null);
   const displayLead =
-    hydrateLeadFromStoredAnalysis(liveLead || null, liveProcessedDetails || null) ||
-    hydrateLeadFromStoredAnalysis(metadata?.liveLead || null, metadata?.liveProcessedDetails || null) ||
+    hydrateLeadFromStoredAnalysis(liveDisplayLead, liveDisplayDetails) ||
+    liveDisplayLead ||
     hydrateLeadFromStoredAnalysis(lead, processedDetails) ||
     lead;
   const displayProcessedDetails =
-    liveProcessedDetails || metadata?.liveProcessedDetails || processedDetails;
+    (displayLead?.id && liveDisplayLead?.id === displayLead.id ? liveDisplayDetails : null) ||
+    processedDetails;
 
   const hydrateFounderIntel = async (
     baseLead: Lead,
