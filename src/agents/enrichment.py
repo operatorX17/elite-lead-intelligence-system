@@ -366,9 +366,17 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         if not username:
             return {}
 
+        lightweight_profile: Dict[str, Any] = {
+            "username": username,
+            "profile_url": profile_url or f"https://www.instagram.com/{username}/",
+            "source": "website_instagram_link",
+        }
+        if os.getenv("ZRAI_ENABLE_INSTAGRAM_BIO_ACTOR", "").strip().lower() != "true":
+            return lightweight_profile
+
         profile = self._apify.run_instagram_bio_extractor(username)
         if not profile:
-            return {}
+            return lightweight_profile
 
         biography = (
             profile.get("biography")
@@ -389,8 +397,7 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         )
 
         normalized: Dict[str, Any] = {
-            "username": username,
-            "profile_url": profile_url or f"https://www.instagram.com/{username}/",
+            **lightweight_profile,
             "full_name": full_name,
             "bio": biography,
             "external_url": external_url,
@@ -675,9 +682,16 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
                             }
                         )
 
-        search_candidates = self._search_decision_maker_candidates(
-            business_name=business_name,
-            location=str(lead.get("location") or ""),
+        enable_external_people_search = (
+            os.getenv("ZRAI_ENABLE_EXTERNAL_PEOPLE_SEARCH", "").strip().lower() == "true"
+        )
+        search_candidates = (
+            self._search_decision_maker_candidates(
+                business_name=business_name,
+                location=str(lead.get("location") or ""),
+            )
+            if enable_external_people_search
+            else []
         )
         candidates.extend(search_candidates)
 
@@ -746,11 +760,18 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
 
         emails = self._validate_emails(list(website_context.get("emails", [])))
         social_profiles = website_context.get("social_profiles") or {}
-        external_profiles = self._search_people_profiles(
-            business_name=business_name,
-            location=location,
-            candidate_names=[item.get("name") for item in doctor_profiles],
-            website=website,
+        enable_external_people_search = (
+            os.getenv("ZRAI_ENABLE_EXTERNAL_PEOPLE_SEARCH", "").strip().lower() == "true"
+        )
+        external_profiles = (
+            self._search_people_profiles(
+                business_name=business_name,
+                location=location,
+                candidate_names=[item.get("name") for item in doctor_profiles],
+                website=website,
+            )
+            if enable_external_people_search
+            else {}
         )
 
         merged_doctors: List[Dict[str, Any]] = []
@@ -801,6 +822,24 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
 
         decision_maker_candidates.sort(key=lambda item: int(item.get("score") or 0), reverse=True)
         decision_maker_candidates = self._dedupe_candidates(decision_maker_candidates)
+        trusted_candidates: List[Dict[str, Any]] = []
+        for candidate in decision_maker_candidates:
+            candidate_name = self._normalize_person_name(candidate.get("name"))
+            if not candidate_name or not self._is_plausible_person_name(candidate_name):
+                continue
+            role = str(candidate.get("role") or "").strip().lower()
+            candidate_phones = self._dedupe_phones(candidate.get("phones") or [])
+            candidate_emails = self._validate_emails(candidate.get("emails") or [])
+            has_direct_evidence = bool(candidate_phones or candidate_emails or candidate.get("linkedin"))
+            has_strong_role = role in {"founder", "co_founder", "co-founder", "director", "senior_doctor", "senior doctor"}
+            if not has_direct_evidence and not has_strong_role:
+                continue
+            cleaned_candidate = dict(candidate)
+            cleaned_candidate["name"] = candidate_name
+            cleaned_candidate["phones"] = candidate_phones
+            cleaned_candidate["emails"] = candidate_emails
+            trusted_candidates.append(cleaned_candidate)
+        decision_maker_candidates = trusted_candidates
 
         best_candidate = decision_maker_candidates[0] if decision_maker_candidates else {}
         best_contact_phone = None
@@ -881,6 +920,55 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             if profile:
                 profiles.append(profile)
 
+        text_content = BeautifulSoup(raw_content, "html.parser").get_text("\n")
+        text_content = re.sub(r"\r", "\n", text_content)
+        text_content = re.sub(r"\n{2,}", "\n", text_content)
+        heading_pattern = re.compile(
+            r"(?P<name>Dr\.?[ \t]+[A-Z][A-Za-z.\-]+(?:[ \t]+[A-Z][A-Za-z.\-]+){1,3})",
+            flags=re.IGNORECASE,
+        )
+        for match in heading_pattern.finditer(text_content):
+            start, end = match.span()
+            before_window = text_content[max(0, start - 40) : start]
+            after_window = text_content[end : min(len(text_content), end + 260)]
+            window = f"{before_window}\n{match.group('name')}\n{after_window}"
+            lower_window = window.lower()
+            if not any(
+                token in lower_window
+                for token in ("our doctors", "dermatologist", "cosmetologist", "founder", "director", "doctor")
+            ):
+                continue
+
+            lines = [line.strip() for line in after_window.splitlines() if line.strip()]
+            specialty = next(
+                (
+                    line
+                    for line in lines
+                    if any(
+                        token in line.lower()
+                        for token in ("dermatologist", "cosmetologist", "founder", "director", "doctor")
+                    )
+                ),
+                None,
+            )
+            experience = next(
+                (
+                    line
+                    for line in lines
+                    if re.search(r"\b(?:mbbs|md|dvd|dnb|ms|mch)\b", line, flags=re.IGNORECASE)
+                ),
+                None,
+            )
+            profile = self._build_doctor_profile_from_match(
+                name=match.group("name"),
+                specialty=specialty,
+                experience=experience,
+                source="website_page",
+                raw_context=window,
+            )
+            if profile:
+                profiles.append(profile)
+
         deduped: List[Dict[str, Any]] = []
         seen = set()
         for profile in sorted(profiles, key=lambda item: int(item.get("score") or 0), reverse=True):
@@ -930,6 +1018,27 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             clinic = None
         phones = self._dedupe_phones(re.findall(r"\b\d{10}\b", raw_context or ""))
         emails = self._validate_emails(re.findall(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", raw_context or ""))
+        has_supporting_context = bool(
+            specialty
+            or experience
+            or phones
+            or emails
+            or any(
+                token in lower_context
+                for token in (
+                    "doctor",
+                    "dermat",
+                    "physician",
+                    "surgeon",
+                    "founder",
+                    "director",
+                    "consultant",
+                    "specialty",
+                )
+            )
+        )
+        if not has_supporting_context:
+            return None
 
         return {
             "name": normalized_name,
@@ -954,7 +1063,7 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         for match in branch_pattern.finditer(raw_content):
             name = re.sub(r"\s+", " ", str(match.group("name") or "")).strip()
             phone = self._normalize_phone(match.group("phone"))
-            if not name or not phone:
+            if not name or not phone or not self._is_plausible_branch_name(name):
                 continue
             contacts.append(
                 {
@@ -964,15 +1073,123 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
                 }
             )
 
+        text_content = BeautifulSoup(raw_content, "html.parser").get_text("\n")
+        text_content = re.sub(r"\r", "\n", text_content)
+        text_content = re.sub(r"\n{2,}", "\n", text_content)
+        lines = [line.strip() for line in text_content.splitlines() if line.strip()]
+        for index, line in enumerate(lines):
+            if not self._is_plausible_branch_name(line):
+                continue
+            window_lines = lines[index : index + 16]
+            window_text = "\n".join(window_lines)
+            phones = self._dedupe_phones(
+                re.findall(r"(?:\+?\d[\d\s().-]{7,16}\d)", window_text, flags=re.IGNORECASE)
+            )
+            if not phones:
+                continue
+            contacts.append(
+                {
+                    "name": line,
+                    "phone": phones[0],
+                    "source": "website_page",
+                }
+            )
+
         deduped: List[Dict[str, Any]] = []
         seen = set()
         for contact in contacts:
-            key = (str(contact.get("name") or "").lower(), str(contact.get("phone") or ""))
+            phone_key = str(contact.get("phone") or "")
+            name_key = str(contact.get("name") or "").lower()
+            key = ("phone", phone_key) if phone_key else ("name", name_key)
             if key in seen:
                 continue
             seen.add(key)
             deduped.append(contact)
-        return deduped
+        return deduped[:6]
+
+    def _is_plausible_branch_name(self, value: str) -> bool:
+        normalized = re.sub(r"\s+", " ", str(value or "")).strip(" -,:;")
+        if not normalized:
+            return False
+        lowered = normalized.lower()
+        if "@" in lowered or lowered.startswith("http"):
+            return False
+        if len(normalized) > 60 or re.search(r"\b\d{5,6}\b", lowered):
+            return False
+        if re.search(r"\b(?:bangalore|bengaluru)\b", lowered) and not any(
+            token in lowered
+            for token in (
+                "jp nagar",
+                "koramangala",
+                "jayanagar",
+                "indiranagar",
+                "whitefield",
+                "hsr",
+                "electronic city",
+                "sarjapur",
+            )
+        ):
+            return False
+        blocked_terms = {
+            "about us",
+            "contact us",
+            "book appointment",
+            "book your appointment",
+            "treatments",
+            "treatment",
+            "gallery",
+            "offers",
+            "offer",
+            "popular treatments",
+            "latest offers",
+            "photo facial",
+            "chemical peel",
+            "laser hair",
+            "microdermabrasion",
+            "success stories",
+            "testimonials",
+            "consultant",
+            "dermatologist",
+            "specialist",
+            "doctor",
+            "physician",
+            "surgeon",
+            "receptionist",
+            "manager",
+            "admin",
+            "book",
+            "appointment",
+            "call",
+            "email",
+            "phone",
+        }
+        if any(term in lowered for term in blocked_terms):
+            return False
+        location_tokens = (
+            "nagar",
+            "layout",
+            "road",
+            "rd",
+            "block",
+            "phase",
+            "cross",
+            "main",
+            "koramangala",
+            "jayanagar",
+            "indiranagar",
+            "whitefield",
+            "hsr",
+            "jp",
+            "bengaluru",
+            "bangalore",
+            "clinic",
+            "branch",
+        )
+        if not any(token in lowered for token in location_tokens):
+            return False
+        if any(token in lowered for token in ("road", "rd", "cross", "main", "block", "phase")):
+            return False
+        return True
 
     def _search_people_profiles(
         self,
@@ -1560,6 +1777,13 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
 
         # Remove all non-digit characters
         digits = re.sub(r'\D', '', phone)
+        core = digits[-10:]
+        if len(core) == 10 and core in {"0123456789", "1234567890", "0987654321", "9876543210"}:
+            return None
+        if core.endswith("123456789") or core.endswith("987654321"):
+            return None
+        if core and len(set(core)) == 1:
+            return None
         
         # Handle likely Indian mobile numbers first.
         if len(digits) == 10:

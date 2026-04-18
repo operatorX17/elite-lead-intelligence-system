@@ -24,8 +24,19 @@ from fastapi import FastAPI, HTTPException, Header, Depends, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from src.db.models import Lead, LeadLifecycleState
+from src.db.models import (
+    Conversation,
+    ConversationMessage,
+    Lead,
+    LeadLifecycleState,
+)
 from src.agents.contact_intelligence import build_contact_intelligence
+from src.agents.sales_playbook import (
+    build_sales_fallback_response,
+    classify_sales_signals,
+    infer_sales_stage,
+    normalize_channel,
+)
 from src.graph.state import LeadGraphState
 
 # Configure logging
@@ -129,6 +140,27 @@ COUNTRY_ALIASES = {
 CITY_ALIASES = {
     "bangalore": ["bangalore", "bengaluru"],
     "bengaluru": ["bangalore", "bengaluru"],
+}
+
+BRANCH_LOCALITY_ALIASES = {
+    "jp nagar": "JP Nagar",
+    "j.p. nagar": "JP Nagar",
+    "koramangala": "Koramangala",
+    "jayanagar": "Jayanagar",
+    "indiranagar": "Indiranagar",
+    "whitefield": "Whitefield",
+    "hsr layout": "HSR Layout",
+    "hsr": "HSR Layout",
+    "electronic city": "Electronic City",
+    "sarjapur": "Sarjapur",
+    "hebbal": "Hebbal",
+    "rajajinagar": "Rajajinagar",
+    "malleshwaram": "Malleshwaram",
+    "marathahalli": "Marathahalli",
+    "banashankari": "Banashankari",
+    "basavanagudi": "Basavanagudi",
+    "rt nagar": "RT Nagar",
+    "yelahanka": "Yelahanka",
 }
 
 DISCOVERY_KEYWORD_VARIANTS = {
@@ -294,11 +326,13 @@ class LeadResponse(BaseModel):
 class ProcessLeadsRequest(BaseModel):
     lead_ids: List[str] = Field(..., min_length=1, max_length=10)
     include_outreach: bool = True
+    force_refresh: bool = True
 
 
 class AnalyzeLeadRequest(BaseModel):
     lead_id: str = Field(..., description="Lead ID to analyze")
     include_outreach: bool = True
+    force_refresh: bool = True
 
 class DiscoverResponse(BaseModel):
     leads: List[LeadResponse]
@@ -338,6 +372,23 @@ class ConversationRequest(BaseModel):
     lead_id: str
     message: str
     channel: Optional[str] = "email"
+
+
+class ProspectConversationMessage(BaseModel):
+    role: str = Field(..., pattern="^(prospect|ai|assistant|human)$")
+    message: str = Field(..., min_length=1)
+
+
+class ProspectConversationRequest(BaseModel):
+    message: str = Field(..., min_length=1)
+    channel: Optional[str] = "whatsapp"
+    contact_name: Optional[str] = None
+    contact_phone: Optional[str] = None
+    business_phone: Optional[str] = None
+    transcript: List[ProspectConversationMessage] = Field(default_factory=list, max_length=8)
+    entities: Dict[str, Any] = Field(default_factory=dict)
+    lead_context: Dict[str, Any] = Field(default_factory=dict)
+    ops_state: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ResolveContactRequest(BaseModel):
@@ -763,14 +814,62 @@ def extract_domain(value: Optional[str]) -> Optional[str]:
 
 def build_contact_rows(lead_data: Dict[str, Any], enrichment: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Build lightweight frontend contact rows from lead/enrichment data."""
+    contact_intelligence = (enrichment or {}).get("contact_intelligence") or {}
+    contact_points = list(contact_intelligence.get("contact_points") or [])
+    contacts: List[Dict[str, Any]] = []
+    seen_contact_keys = set()
+    for index, point in enumerate(contact_points):
+        if not isinstance(point, dict):
+            continue
+        email = point.get("email")
+        if _is_junk_contact_email(email):
+            email = None
+        phone = _normalize_contact_phone(point.get("phone"))
+        linkedin_url = str(point.get("linkedin") or "").strip() or None
+        if not any([email, phone, linkedin_url]):
+            continue
+        contact_key = (email or "", phone or "", linkedin_url or "")
+        if contact_key in seen_contact_keys:
+            continue
+        seen_contact_keys.add(contact_key)
+        point_name = str(point.get("name") or "").strip()
+        point_role = str(point.get("role") or "").strip() or None
+        contacts.append(
+            {
+                "id": f"{lead_data.get('lead_id')}-ci-contact-{index}",
+                "lead_id": str(lead_data.get("lead_id")),
+                "name": point_name if _is_plausible_person_name(point_name) else (lead_data.get("business_name") or "Clinic contact"),
+                "title": point_role or ("Clinic contact" if not _is_plausible_person_name(point_name) else None),
+                "email": email,
+                "phone": phone,
+                "linkedin_url": linkedin_url,
+                "is_primary": index == 0,
+                "created_at": lead_data.get("created_at") or datetime.utcnow().isoformat(),
+            }
+        )
+    if contacts:
+        return contacts
+
     emails = []
     if enrichment:
         emails = enrichment.get("validated_emails") or []
     if not emails:
         emails = lead_data.get("emails_found") or []
+    emails = [email for email in _dedupe_strings(emails) if not _is_junk_contact_email(email)]
 
     contact_name = enrichment.get("decision_maker_name") if enrichment else None
-    phone = (enrichment or {}).get("normalized_phone") or lead_data.get("phone")
+    try:
+        decision_maker_confidence = float((enrichment or {}).get("decision_maker_confidence") or 0)
+    except (TypeError, ValueError):
+        decision_maker_confidence = 0.0
+    decision_maker_role = str((enrichment or {}).get("decision_maker_role") or "").strip() or None
+    fallback_contact_title = None
+    if contact_name:
+        if decision_maker_confidence >= 85:
+            fallback_contact_title = decision_maker_role or "Decision maker"
+        else:
+            fallback_contact_title = decision_maker_role or "Likely contact"
+    phone = _normalize_contact_phone((enrichment or {}).get("normalized_phone") or lead_data.get("phone"))
 
     contacts = []
     for index, email in enumerate(emails):
@@ -779,7 +878,7 @@ def build_contact_rows(lead_data: Dict[str, Any], enrichment: Optional[Dict[str,
                 "id": f"{lead_data.get('lead_id')}-contact-{index}",
                 "lead_id": str(lead_data.get("lead_id")),
                 "name": contact_name or lead_data.get("business_name") or "Primary contact",
-                "title": "Decision maker" if contact_name else None,
+                "title": fallback_contact_title,
                 "email": email,
                 "phone": phone,
                 "linkedin_url": (enrichment or {}).get("decision_maker_linkedin"),
@@ -929,8 +1028,208 @@ def _is_generic_email(email: str) -> bool:
     return email.split("@", 1)[1].strip().lower() in GENERIC_EMAIL_DOMAINS
 
 
+def _is_junk_contact_email(email: Optional[str]) -> bool:
+    lowered = str(email or "").strip().lower()
+    if not lowered or "@" not in lowered:
+        return True
+    if lowered.startswith("frame-"):
+        return True
+    if any(token in lowered for token in ("@mht", "@mhtml", ".mht", ".mhtml", "cid:", "content-id")):
+        return True
+    if lowered.endswith("@example.com") or lowered.endswith("@example.org"):
+        return True
+    local_part = lowered.split("@", 1)[0]
+    if len(local_part) > 48 and any(char.isdigit() for char in local_part):
+        return True
+    return False
+
+
+def _normalize_contact_phone(phone: Optional[str]) -> Optional[str]:
+    digits = re.sub(r"\D", "", str(phone or ""))
+    if len(digits) < 7:
+        return None
+    core = digits[-10:]
+    if len(set(core)) == 1:
+        return None
+    if core in {"0123456789", "1234567890", "0987654321", "9876543210"}:
+        return None
+    if core.endswith("123456789") or core.endswith("987654321"):
+        return None
+    return f"+{digits}" if str(phone or "").strip().startswith("+") else digits
+
+
+def _normalize_branch_label(value: Optional[str]) -> Optional[str]:
+    text = re.sub(r"\s+", " ", str(value or "")).strip(" -,:;")
+    if not text:
+        return None
+    if len(text) > 80:
+        return None
+    lowered = text.lower()
+    if re.search(r"\b\d{5,6}\b", lowered):
+        return None
+    if re.search(r"\b(?:bangalore|bengaluru)\b", lowered) and not any(
+        token in lowered for token in BRANCH_LOCALITY_ALIASES
+    ):
+        return None
+    for alias, canonical in BRANCH_LOCALITY_ALIASES.items():
+        if alias in lowered:
+            return canonical
+    blocked_terms = {
+        "about us",
+        "contact us",
+        "book appointment",
+        "book your appointment",
+        "treatments",
+        "treatment",
+        "gallery",
+        "offers",
+        "offer",
+        "popular treatments",
+        "latest offers",
+        "chemical peel",
+        "photo facial",
+        "microdermabrasion",
+        "laser hair",
+        "prp",
+        "consultant",
+        "dermatologist",
+        "specialist",
+        "doctor",
+        "physician",
+        "surgeon",
+        "receptionist",
+        "manager",
+        "admin",
+        "call",
+        "phone",
+        "email",
+    }
+    if "@" in lowered or lowered.startswith("http"):
+        return None
+    if ("," in text or "#" in text) and len(text) > 30:
+        return None
+    if any(term in lowered for term in blocked_terms):
+        return None
+    location_tokens = (
+        "nagar",
+        "layout",
+        "road",
+        "rd",
+        "block",
+        "phase",
+        "cross",
+        "main",
+        "koramangala",
+        "jayanagar",
+        "indiranagar",
+        "whitefield",
+        "hsr",
+        "jp",
+        "bengaluru",
+        "bangalore",
+        "branch",
+    )
+    if not any(token in lowered for token in location_tokens):
+        return None
+    if any(token in lowered for token in ("road", "rd", "cross", "main", "block", "phase")):
+        return None
+    return text
+
+
+def _sanitize_branch_contacts(values: List[Any]) -> List[Dict[str, Any]]:
+    deduped: List[Dict[str, Any]] = []
+    seen = set()
+    for value in values:
+        if not isinstance(value, dict):
+            continue
+        raw_name = str(value.get("name") or "").strip()
+        name = _normalize_branch_label(raw_name)
+        if raw_name and not name:
+            continue
+        phone = _normalize_contact_phone(value.get("phone"))
+        if not name and not phone:
+            continue
+        key = (str(name or "").lower(), phone or "")
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned = dict(value)
+        cleaned["name"] = name
+        cleaned["phone"] = phone
+        deduped.append(cleaned)
+    return deduped
+
+
+def _sanitize_doctor_profiles(values: List[Any]) -> List[Dict[str, Any]]:
+    deduped: List[Dict[str, Any]] = []
+    seen = set()
+    for value in values:
+        if not isinstance(value, dict):
+            continue
+        name = str(value.get("name") or "").strip()
+        if not _is_plausible_person_name(name):
+            continue
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned = dict(value)
+        cleaned["name"] = name
+        emails = [
+            email
+            for email in _dedupe_strings(list(value.get("emails") or []))
+            if not _is_junk_contact_email(email)
+        ]
+        phones = [
+            phone
+            for phone in (_normalize_contact_phone(item) for item in list(value.get("phones") or []))
+            if phone
+        ]
+        cleaned["emails"] = emails
+        cleaned["phones"] = _dedupe_strings(phones)
+        deduped.append(cleaned)
+    return deduped
+
+
+def _sanitize_decision_maker_candidates(values: List[Any]) -> List[Dict[str, Any]]:
+    cleaned_candidates: List[Dict[str, Any]] = []
+    seen = set()
+    strong_roles = {"founder", "co_founder", "co-founder", "director", "senior_doctor", "senior doctor"}
+    for value in values:
+        if not isinstance(value, dict):
+            continue
+        name = str(value.get("name") or "").strip()
+        if not _is_plausible_person_name(name):
+            continue
+        emails = [
+            email
+            for email in _dedupe_strings(list(value.get("emails") or []))
+            if not _is_junk_contact_email(email)
+        ]
+        phones = [
+            phone
+            for phone in (_normalize_contact_phone(item) for item in list(value.get("phones") or []))
+            if phone
+        ]
+        role = str(value.get("role") or "").strip().lower()
+        has_direct_evidence = bool(emails or phones or value.get("linkedin"))
+        if not has_direct_evidence and role not in strong_roles:
+            continue
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned = dict(value)
+        cleaned["name"] = name
+        cleaned["emails"] = emails
+        cleaned["phones"] = _dedupe_strings(phones)
+        cleaned_candidates.append(cleaned)
+    cleaned_candidates.sort(key=lambda item: int(item.get("score") or 0), reverse=True)
+    return cleaned_candidates
+
+
 def _pick_best_email(emails: List[Any], website: Optional[str]) -> Optional[str]:
-    deduped = _dedupe_strings(emails)
+    deduped = [email for email in _dedupe_strings(emails) if not _is_junk_contact_email(email)]
     if not deduped:
         return None
 
@@ -975,6 +1274,15 @@ def _is_plausible_person_name(value: Optional[str]) -> bool:
         "aesthetics",
         "cosmetic",
         "cosmetology",
+        "consultant",
+        "dermatologist",
+        "doctor",
+        "specialist",
+        "surgeon",
+        "physician",
+        "receptionist",
+        "admin",
+        "manager",
     }
     tokens = [token.lower() for token in re.findall(r"[A-Za-z]+", str(value))]
     significant_tokens = [token for token in tokens if len(token) > 1]
@@ -993,8 +1301,9 @@ def _derive_best_contact_channel(
     whatsapp_target: Optional[str],
     decision_maker_linkedin: Optional[str],
 ) -> tuple[Optional[str], Optional[str]]:
-    if whatsapp_target:
-        return "whatsapp", "An explicit WhatsApp entry path is visible and can be used as the fastest response route."
+    if whatsapp_detected:
+        if whatsapp_target:
+            return "whatsapp", "An explicit WhatsApp entry path is visible and can be used as the fastest response route."
     if best_contact_email:
         if _is_generic_email(best_contact_email):
             return "email", "Email is available, but it looks generic, so keep the opener tight and specific."
@@ -1072,7 +1381,14 @@ def derive_analysis_state(
     if any([enrichment, intent, proof, scoring, outreach]):
         return "analyzed"
 
-    if lead_state and lead_state.get("current_stage") in {"enrichment", "intent", "audit", "scoring", "outreach"}:
+    if lead_state and lead_state.get("current_stage") in {
+        "analysis",
+        "enrichment",
+        "intent",
+        "audit",
+        "scoring",
+        "outreach",
+    }:
         return "analyzing"
 
     return "preview"
@@ -1104,14 +1420,23 @@ def build_signal_facts(
     people_intelligence = dict(lead_state_metadata.get("people_intelligence") or {})
 
     phone_numbers = _dedupe_strings(
-        list(proof_extraction.get("phone_numbers") or [])
-        + ([enrichment_payload.get("normalized_phone")] if enrichment_payload.get("normalized_phone") else [])
-        + ([lead_data.get("phone")] if lead_data.get("phone") else [])
-        + list(people_intelligence.get("phone_numbers") or [])
-        + [
-            contact.get("phone")
-            for contact in list(people_intelligence.get("branch_contacts") or [])
-            if isinstance(contact, dict)
+        [
+            phone
+            for phone in (
+                _normalize_contact_phone(value)
+                for value in (
+                    list(proof_extraction.get("phone_numbers") or [])
+                    + ([enrichment_payload.get("normalized_phone")] if enrichment_payload.get("normalized_phone") else [])
+                    + ([lead_data.get("phone")] if lead_data.get("phone") else [])
+                    + list(people_intelligence.get("phone_numbers") or [])
+                    + [
+                        contact.get("phone")
+                        for contact in list(people_intelligence.get("branch_contacts") or [])
+                        if isinstance(contact, dict)
+                    ]
+                )
+            )
+            if phone
         ]
     )
     phone_visible = (
@@ -1174,40 +1499,120 @@ def build_signal_facts(
         people_intelligence.get("social_profiles") or {},
         stored_signal_facts.get("social_profiles") or {},
     )
-    doctor_profiles = list(people_intelligence.get("doctor_profiles") or []) or list(stored_signal_facts.get("doctor_profiles") or [])
-    decision_maker_candidates = list(people_intelligence.get("decision_maker_candidates") or []) or list(stored_signal_facts.get("decision_maker_candidates") or [])
-    branch_contacts = list(people_intelligence.get("branch_contacts") or []) or list(stored_signal_facts.get("branch_contacts") or [])
-    contact_evidence = _dedupe_strings(
-        list(people_intelligence.get("contact_evidence") or [])
-        + list(stored_signal_facts.get("contact_evidence") or [])
+    fresh_doctor_profiles = _sanitize_doctor_profiles(list(people_intelligence.get("doctor_profiles") or []))
+    fresh_decision_maker_candidates = _sanitize_decision_maker_candidates(
+        list(people_intelligence.get("decision_maker_candidates") or [])
     )
-    branch_names = _dedupe_strings(
+    fresh_branch_contacts = _sanitize_branch_contacts(list(people_intelligence.get("branch_contacts") or []))
+    fresh_contact_evidence = list(people_intelligence.get("contact_evidence") or [])
+    fresh_branch_name_values = (
         list(proof_extraction.get("branch_names") or [])
         + list(people_intelligence.get("branch_names") or [])
-        + list(stored_signal_facts.get("branch_names") or [])
-        + [
-            contact.get("name")
-            for contact in branch_contacts
-            if isinstance(contact, dict)
-        ]
     )
-    doctor_names = _dedupe_strings(
+    fresh_doctor_name_values = (
         list(proof_extraction.get("doctor_names") or [])
         + list(people_intelligence.get("doctor_names") or [])
-        + list(stored_signal_facts.get("doctor_names") or [])
-        + [
-            profile.get("name")
-            for profile in doctor_profiles
-            if isinstance(profile, dict)
+    )
+    sanitized_fresh_branch_names = _dedupe_strings(
+        [
+            normalized
+            for normalized in (_normalize_branch_label(name) for name in fresh_branch_name_values)
+            if normalized
         ]
     )
-    multi_clinic = bool(proof_extraction.get("multi_clinic") or len(branch_names) > 1)
-    branch_count = proof_extraction.get("branch_count")
-    if not isinstance(branch_count, int):
-        branch_count = len(branch_names)
-    doctor_count = proof_extraction.get("doctor_count")
-    if not isinstance(doctor_count, int):
-        doctor_count = len(doctor_names)
+    sanitized_fresh_doctor_names = _dedupe_strings(
+        [
+            str(name).strip()
+            for name in fresh_doctor_name_values
+            if _is_plausible_person_name(str(name).strip())
+        ]
+    )
+    has_fresh_branch_evidence = bool(fresh_branch_contacts or sanitized_fresh_branch_names)
+    has_fresh_doctor_evidence = bool(fresh_doctor_profiles or sanitized_fresh_doctor_names)
+    has_fresh_decision_maker_evidence = bool(
+        (
+            enrichment_payload.get("decision_maker_name")
+            if _is_plausible_person_name(str(enrichment_payload.get("decision_maker_name") or "").strip())
+            else None
+        )
+        or people_intelligence.get("decision_maker_name")
+        or people_intelligence.get("decision_maker_linkedin")
+        or people_intelligence.get("best_contact_linkedin")
+        or fresh_decision_maker_candidates
+    )
+    doctor_profiles = (
+        fresh_doctor_profiles
+        or ([] if has_fresh_doctor_evidence else list(stored_signal_facts.get("doctor_profiles") or []))
+    )
+    if doctor_profiles and doctor_profiles is not fresh_doctor_profiles:
+        doctor_profiles = _sanitize_doctor_profiles(doctor_profiles)
+    decision_maker_candidates = (
+        fresh_decision_maker_candidates
+        or (
+            []
+            if has_fresh_decision_maker_evidence
+            else list(stored_signal_facts.get("decision_maker_candidates") or [])
+        )
+    )
+    if decision_maker_candidates and decision_maker_candidates is not fresh_decision_maker_candidates:
+        decision_maker_candidates = _sanitize_decision_maker_candidates(decision_maker_candidates)
+    branch_contacts = (
+        fresh_branch_contacts
+        or ([] if has_fresh_branch_evidence else list(stored_signal_facts.get("branch_contacts") or []))
+    )
+    if branch_contacts and branch_contacts is not fresh_branch_contacts:
+        branch_contacts = _sanitize_branch_contacts(branch_contacts)
+    contact_evidence = _dedupe_strings(
+        fresh_contact_evidence
+        + (
+            []
+            if (has_fresh_branch_evidence or has_fresh_doctor_evidence or has_fresh_decision_maker_evidence)
+            else list(stored_signal_facts.get("contact_evidence") or [])
+        )
+    )
+    branch_contact_names = _dedupe_strings(
+        [
+            contact.get("name")
+            for contact in branch_contacts
+            if isinstance(contact, dict) and contact.get("name")
+        ]
+    )
+    branch_names = branch_contact_names or _dedupe_strings(
+        sanitized_fresh_branch_names
+        + (
+            []
+            if has_fresh_branch_evidence
+            else [
+                normalized
+                for normalized in (
+                    _normalize_branch_label(name)
+                    for name in list(stored_signal_facts.get("branch_names") or [])
+                )
+                if normalized
+            ]
+        )
+    )
+    doctor_names = _dedupe_strings(
+        [
+            profile.get("name")
+            for profile in doctor_profiles
+            if isinstance(profile, dict) and profile.get("name")
+        ]
+    ) or _dedupe_strings(
+        sanitized_fresh_doctor_names
+        + (
+            []
+            if has_fresh_doctor_evidence
+            else [
+                str(name).strip()
+                for name in list(stored_signal_facts.get("doctor_names") or [])
+                if _is_plausible_person_name(str(name).strip())
+            ]
+        )
+    )
+    branch_count = len(branch_contact_names) if branch_contact_names else len(branch_names)
+    doctor_count = len(doctor_profiles) if doctor_profiles else len(doctor_names)
+    multi_clinic = bool(branch_count > 1)
     instagram_present = bool(
         proof_extraction.get("instagram_present")
         or social_profiles.get("instagram")
@@ -1221,17 +1626,16 @@ def build_signal_facts(
         proof_extraction.get("instant_response_path")
         or whatsapp_detected
         or chat_widget_type
-        or booking_detected
     )
     content_ready_score = proof_extraction.get("content_ready_score")
     raw_booking_flow_quality = str(proof_extraction.get("booking_flow_quality") or "").strip().lower()
     if booking_detected and raw_booking_flow_quality in {"", "none", "unknown", "n/a"}:
-        booking_flow_quality = "strong" if contact_form_detected else "basic"
+        booking_flow_quality = "basic" if contact_form_detected else "weak"
     elif raw_booking_flow_quality in {"strong", "basic", "weak", "none"}:
         booking_flow_quality = raw_booking_flow_quality
     else:
         booking_flow_quality = (
-            "strong" if booking_detected and contact_form_detected else "basic" if booking_detected else "none"
+            "basic" if booking_detected and contact_form_detected else "weak" if booking_detected else "none"
         )
 
     email_contacts = _dedupe_strings(
@@ -1246,6 +1650,7 @@ def build_signal_facts(
         ]
         + ([stored_signal_facts.get("best_contact_email")] if stored_signal_facts.get("best_contact_email") else [])
     )
+    email_contacts = [email for email in email_contacts if not _is_junk_contact_email(email)]
     ranked_candidate = next(
         (
             candidate
@@ -1258,32 +1663,30 @@ def build_signal_facts(
         enrichment_payload.get("decision_maker_name")
         or people_intelligence.get("decision_maker_name")
         or ranked_candidate.get("name")
-        or stored_signal_facts.get("decision_maker_name")
+        or (None if has_fresh_decision_maker_evidence else stored_signal_facts.get("decision_maker_name"))
     )
-    if not decision_maker_name and doctor_names:
-        decision_maker_name = doctor_names[0]
     decision_maker_linkedin = (
         enrichment_payload.get("decision_maker_linkedin")
         or people_intelligence.get("decision_maker_linkedin")
         or people_intelligence.get("best_contact_linkedin")
         or ranked_candidate.get("linkedin")
-        or stored_signal_facts.get("decision_maker_linkedin")
+        or (None if has_fresh_decision_maker_evidence else stored_signal_facts.get("decision_maker_linkedin"))
     )
     decision_maker_role = (
         enrichment_payload.get("decision_maker_role")
         or people_intelligence.get("decision_maker_role")
         or ranked_candidate.get("role")
-        or stored_signal_facts.get("decision_maker_role")
+        or (None if has_fresh_decision_maker_evidence else stored_signal_facts.get("decision_maker_role"))
     )
     decision_maker_source = (
         enrichment_payload.get("decision_maker_source")
         or ranked_candidate.get("source")
-        or stored_signal_facts.get("decision_maker_source")
+        or (None if has_fresh_decision_maker_evidence else stored_signal_facts.get("decision_maker_source"))
     )
     decision_maker_confidence = (
         enrichment_payload.get("decision_maker_confidence")
         or (min(float(ranked_candidate.get("score", 0)) / 100.0, 0.98) if ranked_candidate else None)
-        or stored_signal_facts.get("decision_maker_confidence")
+        or (None if has_fresh_decision_maker_evidence else stored_signal_facts.get("decision_maker_confidence"))
     )
     if decision_maker_name and not _is_plausible_person_name(str(decision_maker_name)):
         decision_maker_name = None
@@ -1293,29 +1696,54 @@ def build_signal_facts(
     best_contact_phone = (
         people_intelligence.get("best_contact_phone")
         or (phone_numbers[0] if phone_numbers else None)
-        or stored_signal_facts.get("best_contact_phone")
+        or (
+            None
+            if (people_intelligence.get("best_contact_phone") or phone_numbers)
+            else stored_signal_facts.get("best_contact_phone")
+        )
     )
+    best_contact_phone = _normalize_contact_phone(best_contact_phone)
     best_contact_email = (
         people_intelligence.get("best_contact_email")
         or _pick_best_email(
             email_contacts,
             lead_data.get("website") or lead_data.get("landing_page_url"),
         )
-        or stored_signal_facts.get("best_contact_email")
+        or (
+            None
+            if (people_intelligence.get("best_contact_email") or email_contacts)
+            else stored_signal_facts.get("best_contact_email")
+        )
     )
+    if _is_junk_contact_email(best_contact_email):
+        best_contact_email = None
     best_contact_linkedin = (
         people_intelligence.get("best_contact_linkedin")
         or ranked_candidate.get("linkedin")
         or decision_maker_linkedin
-        or stored_signal_facts.get("best_contact_linkedin")
+        or (
+            None
+            if (
+                people_intelligence.get("best_contact_linkedin")
+                or ranked_candidate.get("linkedin")
+                or decision_maker_linkedin
+            )
+            else stored_signal_facts.get("best_contact_linkedin")
+        )
     )
-    if not decision_maker_name and doctor_names:
-        plausible_doctors = [name for name in doctor_names if _is_plausible_person_name(str(name))]
-        if plausible_doctors:
-            decision_maker_name = plausible_doctors[0]
-            decision_maker_role = decision_maker_role or "primary_doctor_contact"
-            decision_maker_source = decision_maker_source or "doctor_roster"
-            decision_maker_confidence = decision_maker_confidence or 0.55
+    decision_maker_evidence_level = _confidence_to_evidence_level(decision_maker_confidence)
+    decision_maker_status = "unverified"
+    decision_maker_candidate_name = None
+    if decision_maker_name and decision_maker_evidence_level == "verified":
+        decision_maker_status = "verified"
+    elif decision_maker_name:
+        decision_maker_candidate_name = str(decision_maker_name)
+        decision_maker_name = None
+        decision_maker_linkedin = None
+        decision_maker_role = None
+        decision_maker_source = None
+        decision_maker_status = "candidate"
+
     recommended_channel, best_contact_reason = _derive_best_contact_channel(
         phone_numbers=phone_numbers,
         best_contact_email=best_contact_email,
@@ -1328,6 +1756,49 @@ def build_signal_facts(
     if not best_contact_reason:
         best_contact_reason = stored_signal_facts.get("best_contact_reason")
 
+    confidence_by_signal = {
+        "phone": 1.0 if phone_numbers else 0.0,
+        "booking": 0.95 if booking_target else 0.7 if booking_detected else 0.0,
+        "contact_form": 0.8 if contact_form_detected else 0.0,
+        "whatsapp": 0.95 if whatsapp_target else 0.35 if whatsapp_widget_detected else 0.0,
+        "ads": 1.0 if ads_status in {"yes", "no"} else 0.25,
+        "reviews": 0.95 if lead_data.get("reviews_count") is not None else 0.0,
+        "services": 0.8 if services else 0.0,
+        "multi_clinic": 0.95 if branch_contact_names else 0.85 if multi_clinic else 0.5 if branch_count else 0.0,
+        "doctors": 0.95 if doctor_profiles else 0.85 if doctor_names else 0.0,
+        "social": 0.75 if social_profiles else 0.0,
+        "decision_maker": float(decision_maker_confidence) if decision_maker_confidence is not None else 0.0,
+    }
+    capture_path_kind = _classify_capture_path(
+        {
+            "whatsapp_target": whatsapp_target,
+            "chat_widget_type": chat_widget_type,
+            "instant_response_path": instant_response_path,
+            "booking_detected": booking_detected,
+            "contact_form_detected": contact_form_detected,
+        }
+    )
+    after_hours_status = _classify_after_hours_capture(
+        {
+            "after_hours_capture": after_hours_capture,
+            "whatsapp_target": whatsapp_target,
+            "chat_widget_type": chat_widget_type,
+            "booking_detected": booking_detected,
+            "contact_form_detected": contact_form_detected,
+        }
+    )
+    evidence_levels = {
+        "phone": _confidence_to_evidence_level(confidence_by_signal["phone"]),
+        "booking": _confidence_to_evidence_level(confidence_by_signal["booking"]),
+        "contact_form": _confidence_to_evidence_level(confidence_by_signal["contact_form"]),
+        "whatsapp": _confidence_to_evidence_level(confidence_by_signal["whatsapp"]),
+        "multi_clinic": _confidence_to_evidence_level(confidence_by_signal["multi_clinic"]),
+        "doctors": _confidence_to_evidence_level(confidence_by_signal["doctors"]),
+        "decision_maker": decision_maker_evidence_level,
+        "instant_response": "verified" if capture_path_kind == "instant" else "derived" if capture_path_kind == "delayed" else "unknown",
+        "after_hours_capture": "verified" if after_hours_status == "verified" else "derived" if after_hours_status == "likely" else "unknown",
+    }
+
     return {
         "phone_visible": phone_visible,
         "phone_numbers": phone_numbers,
@@ -1335,6 +1806,7 @@ def build_signal_facts(
         "booking_target": str(booking_target) if booking_target else None,
         "contact_form_detected": contact_form_detected,
         "whatsapp_detected": whatsapp_detected,
+        "whatsapp_widget_detected": whatsapp_widget_detected,
         "whatsapp_target": str(whatsapp_target) if whatsapp_target else None,
         "chat_widget_type": str(chat_widget_type) if chat_widget_type else None,
         "ads_status": ads_status,
@@ -1365,19 +1837,13 @@ def build_signal_facts(
         "booking_flow_quality": booking_flow_quality,
         "after_hours_capture": after_hours_capture,
         "instant_response_path": instant_response_path,
-        "confidence_by_signal": {
-            "phone": 1.0 if phone_numbers else 0.0,
-            "booking": 0.95 if booking_target else 0.7 if booking_detected else 0.0,
-            "contact_form": 0.8 if contact_form_detected else 0.0,
-            "whatsapp": 0.95 if whatsapp_target else 0.35 if whatsapp_widget_detected else 0.0,
-            "ads": 1.0 if ads_status in {"yes", "no"} else 0.25,
-            "reviews": 0.95 if lead_data.get("reviews_count") is not None else 0.0,
-            "services": 0.8 if services else 0.0,
-            "multi_clinic": 0.85 if multi_clinic else 0.5 if branch_count else 0.0,
-            "doctors": 0.85 if doctor_names else 0.0,
-            "social": 0.75 if social_profiles else 0.0,
-        },
+        "confidence_by_signal": confidence_by_signal,
+        "evidence_levels": evidence_levels,
+        "capture_path_kind": capture_path_kind,
+        "after_hours_capture_status": after_hours_status,
         "decision_maker_name": str(decision_maker_name) if decision_maker_name else None,
+        "decision_maker_status": decision_maker_status,
+        "decision_maker_candidate_name": decision_maker_candidate_name,
         "decision_maker_linkedin": str(decision_maker_linkedin) if decision_maker_linkedin else None,
         "decision_maker_role": str(decision_maker_role) if decision_maker_role else None,
         "decision_maker_source": str(decision_maker_source) if decision_maker_source else None,
@@ -1448,13 +1914,74 @@ def build_signal_facts(
     }
 
 
+def _confidence_to_evidence_level(confidence: Any) -> str:
+    try:
+        value = float(confidence)
+    except (TypeError, ValueError):
+        return "unknown"
+
+    if value >= 0.85:
+        return "verified"
+    if value >= 0.55:
+        return "derived"
+    if value > 0:
+        return "inferred"
+    return "unknown"
+
+
+def _get_signal_confidence(signal_facts: Optional[Dict[str, Any]], key: str) -> float:
+    confidence_map = (signal_facts or {}).get("confidence_by_signal") or {}
+    try:
+        return float(confidence_map.get(key) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _classify_capture_path(signal_facts: Optional[Dict[str, Any]]) -> str:
+    if not signal_facts:
+        return "unknown"
+    if signal_facts.get("whatsapp_target") or signal_facts.get("chat_widget_type") or signal_facts.get("instant_response_path"):
+        return "instant"
+    if signal_facts.get("booking_detected") or signal_facts.get("contact_form_detected"):
+        return "delayed"
+    return "missing"
+
+
+def _classify_after_hours_capture(signal_facts: Optional[Dict[str, Any]]) -> str:
+    if not signal_facts:
+        return "unknown"
+    if signal_facts.get("after_hours_capture"):
+        return "verified"
+    if signal_facts.get("whatsapp_target") or signal_facts.get("chat_widget_type"):
+        return "likely"
+    if signal_facts.get("booking_detected") or signal_facts.get("contact_form_detected"):
+        return "not_proven"
+    return "missing"
+
+
+def _count_fact(label_singular: str, label_plural: str, count: Any, confidence: float) -> Optional[str]:
+    try:
+        value = int(count or 0)
+    except (TypeError, ValueError):
+        return None
+
+    if value <= 0:
+        return None
+    if confidence >= 0.85:
+        noun = label_singular if value == 1 else label_plural
+        return f"{value} {noun} detected"
+    if value > 1:
+        return f"multiple {label_plural} referenced"
+    return f"{label_singular} referenced"
+
+
 def build_site_truth_summary_from_signal_facts(signal_facts: Optional[Dict[str, Any]]) -> Optional[str]:
     if not signal_facts:
         return None
 
     facts: List[str] = []
     facts.append("phone visible" if signal_facts.get("phone_visible") else "phone not detected")
-    facts.append("booking detected" if signal_facts.get("booking_detected") else "no booking detected")
+    facts.append("booking path detected" if signal_facts.get("booking_detected") else "no booking path detected")
 
     whatsapp_target = signal_facts.get("whatsapp_target")
     whatsapp_widget_detected = bool(signal_facts.get("whatsapp_widget_detected"))
@@ -1470,14 +1997,23 @@ def build_site_truth_summary_from_signal_facts(signal_facts: Optional[Dict[str, 
     contact_form_detected = signal_facts.get("contact_form_detected")
     if contact_form_detected:
         facts.append("contact form detected")
-    if signal_facts.get("after_hours_capture"):
+    after_hours_status = _classify_after_hours_capture(signal_facts)
+    if after_hours_status == "verified":
         facts.append("after-hours capture present")
+    elif after_hours_status == "likely":
+        facts.append("after-hours capture likely")
+    elif after_hours_status == "not_proven":
+        facts.append("after-hours capture not proven")
     else:
         facts.append("no after-hours capture")
-    if signal_facts.get("instant_response_path"):
-        facts.append("instant response path present")
+
+    capture_path = _classify_capture_path(signal_facts)
+    if capture_path == "instant":
+        facts.append("instant response path detected")
+    elif capture_path == "delayed":
+        facts.append("delayed capture path detected")
     else:
-        facts.append("no instant response path")
+        facts.append("no instant capture path proven")
 
     ads_status = signal_facts.get("ads_status")
     if ads_status == "yes":
@@ -1492,13 +2028,23 @@ def build_site_truth_summary_from_signal_facts(signal_facts: Optional[Dict[str, 
     if isinstance(reviews_count, int):
         facts.append(f"{reviews_count} reviews detected")
 
-    if signal_facts.get("multi_clinic"):
-        branch_count = signal_facts.get("branch_count") or 0
-        facts.append(f"multi-clinic ({branch_count} locations)" if branch_count else "multi-clinic")
+    branch_fact = _count_fact(
+        "location",
+        "locations",
+        signal_facts.get("branch_count"),
+        _get_signal_confidence(signal_facts, "multi_clinic"),
+    )
+    if signal_facts.get("multi_clinic") and branch_fact:
+        facts.append(branch_fact)
 
-    doctor_count = signal_facts.get("doctor_count")
-    if isinstance(doctor_count, int) and doctor_count > 0:
-        facts.append(f"{doctor_count} doctors detected")
+    doctor_fact = _count_fact(
+        "doctor",
+        "doctors",
+        signal_facts.get("doctor_count"),
+        _get_signal_confidence(signal_facts, "doctors"),
+    )
+    if doctor_fact:
+        facts.append(doctor_fact)
 
     return "Site truth: " + ", ".join(facts) + "."
 
@@ -1521,12 +2067,22 @@ def build_commercial_reason_from_signal_facts(
             positives.append(f"real market demand ({reviews_count}+ reviews)")
 
     if signal_facts.get("multi_clinic"):
-        branch_count = signal_facts.get("branch_count") or 0
-        positives.append(f"multi-location footprint ({branch_count} clinics)" if branch_count else "multi-location footprint")
+        branch_fact = _count_fact(
+            "location",
+            "locations",
+            signal_facts.get("branch_count"),
+            _get_signal_confidence(signal_facts, "multi_clinic"),
+        )
+        positives.append(branch_fact or "multi-location footprint")
 
-    doctor_count = signal_facts.get("doctor_count")
-    if isinstance(doctor_count, int) and doctor_count > 0:
-        positives.append(f"visible doctor-led trust ({doctor_count} doctors)")
+    doctor_fact = _count_fact(
+        "doctor",
+        "doctors",
+        signal_facts.get("doctor_count"),
+        _get_signal_confidence(signal_facts, "doctors"),
+    )
+    if doctor_fact:
+        positives.append(f"visible doctor-led trust ({doctor_fact})")
 
     content_ready_score = signal_facts.get("content_ready_score")
     decision_maker_name = signal_facts.get("decision_maker_name")
@@ -1547,7 +2103,10 @@ def build_commercial_reason_from_signal_facts(
         positives.append("content-ready brand")
     contact_intelligence = signal_facts.get("contact_intelligence") or {}
     top_contact = contact_intelligence.get("top_contact") or {}
-    if top_contact.get("name"):
+    if top_contact.get("name") and (
+        top_contact.get("contact_type") in {"founder_direct", "doctor_direct", "actual_contact"}
+        or float(top_contact.get("confidence") or 0) >= 70
+    ):
         contact_label = str(top_contact.get("contact_type") or top_contact.get("owner_scope") or "contact").replace("_", " ")
         positives.append(f"{top_contact.get('name')} ({contact_label})")
     contact_quality_score = signal_facts.get("contact_quality_score")
@@ -1559,17 +2118,26 @@ def build_commercial_reason_from_signal_facts(
 
     if not signal_facts.get("phone_visible"):
         problems.append("phone is not prominent")
-    if not signal_facts.get("whatsapp_detected"):
+    capture_path = _classify_capture_path(signal_facts)
+    after_hours_status = _classify_after_hours_capture(signal_facts)
+
+    if not signal_facts.get("whatsapp_detected") and capture_path == "delayed":
+        problems.append("no instant messaging capture path")
+    elif not signal_facts.get("whatsapp_detected"):
         problems.append("no WhatsApp capture path")
     elif signal_facts.get("whatsapp_widget_detected") and not signal_facts.get("whatsapp_target"):
         problems.append("WhatsApp widget is visible, but the exact target was not extracted")
     booking_quality = str(signal_facts.get("booking_flow_quality") or "none").lower()
     if booking_quality in {"none", "weak"}:
         problems.append("booking path is weak")
-    if not signal_facts.get("after_hours_capture"):
+    if after_hours_status == "missing":
         problems.append("no after-hours capture")
-    if not signal_facts.get("instant_response_path"):
+    elif after_hours_status == "not_proven":
+        problems.append("after-hours capture is not proven")
+    if capture_path == "missing":
         problems.append("no instant response path")
+    elif capture_path == "delayed":
+        problems.append("high-intent visitors likely fall into delayed follow-up")
 
     volume_score = ((signal_facts.get("volume_score_inputs") or {}).get("volume_score"))
     summary_parts: List[str] = []
@@ -1595,20 +2163,26 @@ def build_top_issue_from_signal_facts(signal_facts: Optional[Dict[str, Any]]) ->
     rating = signal_facts.get("rating") or 0
     content_ready_score = signal_facts.get("content_ready_score") or 0
     branch_count = signal_facts.get("branch_count") or 0
+    capture_path = _classify_capture_path(signal_facts)
+    after_hours_status = _classify_after_hours_capture(signal_facts)
 
     if not signal_facts.get("phone_visible"):
         return "Phone is not prominent"
+    booking_quality = str(signal_facts.get("booking_flow_quality") or "none").lower()
+    if not signal_facts.get("booking_detected") and not signal_facts.get("contact_form_detected"):
+        return "No digital capture path detected"
+    if signal_facts.get("booking_detected") and booking_quality in {"none", "weak"}:
+        return "Booking flow is weak"
+    if capture_path == "delayed":
+        return "High-intent visitors likely hit delayed follow-up"
+    if capture_path == "missing":
+        return "No instant conversational capture path"
     if signal_facts.get("whatsapp_widget_detected") and not signal_facts.get("whatsapp_target"):
         return "WhatsApp widget target is not cleanly extracted"
-    if not signal_facts.get("whatsapp_detected"):
+    if not signal_facts.get("whatsapp_detected") and capture_path != "missing":
         return "WhatsApp capture is missing"
-    booking_quality = str(signal_facts.get("booking_flow_quality") or "none").lower()
-    if not signal_facts.get("booking_detected") or booking_quality in {"none", "weak"}:
-        return "Booking flow is weak"
-    if not signal_facts.get("after_hours_capture"):
+    if after_hours_status == "missing":
         return "No after-hours capture"
-    if not signal_facts.get("instant_response_path"):
-        return "No instant response path"
     if (
         signal_facts.get("contact_form_detected") is False
         and (reviews >= 200 or branch_count > 1 or content_ready_score >= 70)
@@ -1629,18 +2203,26 @@ def build_next_best_action_from_signal_facts(signal_facts: Optional[Dict[str, An
     rating = signal_facts.get("rating") or 0
     content_ready_score = signal_facts.get("content_ready_score") or 0
     branch_count = signal_facts.get("branch_count") or 0
+    capture_path = _classify_capture_path(signal_facts)
+    after_hours_status = _classify_after_hours_capture(signal_facts)
 
     if not signal_facts.get("phone_visible"):
         return "Make phone visible in header and hero"
+    booking_quality = str(signal_facts.get("booking_flow_quality") or "none").lower()
+    if not signal_facts.get("booking_detected") and not signal_facts.get("contact_form_detected"):
+        return "Add a digital booking or callback path"
+    if signal_facts.get("booking_detected") and booking_quality in {"none", "weak"}:
+        return "Fix booking flow and confirmation path"
+    if capture_path == "delayed":
+        return "Layer instant messaging on top of the existing booking and callback flow"
+    if capture_path == "missing":
+        return "Add instant response automation"
     if signal_facts.get("whatsapp_widget_detected") and not signal_facts.get("whatsapp_target"):
         return "Clarify the chat widget target and extract the exact WhatsApp entry path"
-    if not signal_facts.get("whatsapp_detected"):
+    if not signal_facts.get("whatsapp_detected") and capture_path != "missing":
         return "Add WhatsApp entry path and autoresponse"
-    booking_quality = str(signal_facts.get("booking_flow_quality") or "none").lower()
-    if not signal_facts.get("booking_detected") or booking_quality in {"none", "weak"}:
-        return "Fix booking flow and confirmation path"
-    if not signal_facts.get("instant_response_path"):
-        return "Add instant response automation"
+    if after_hours_status == "not_proven":
+        return "Verify or add after-hours capture instead of relying on callback delay"
     if (
         signal_facts.get("contact_form_detected") is False
         and (reviews >= 200 or branch_count > 1 or content_ready_score >= 70)
@@ -1695,10 +2277,20 @@ def build_frontend_lead(
     """Normalize a raw lead row and related agent outputs into the frontend lead shape."""
     created_at = lead_data.get("created_at") or datetime.utcnow().isoformat()
     updated_at = lead_data.get("updated_at") or created_at
+    website = lead_data.get("website") or lead_data.get("landing_page_url")
+    company_name = str(lead_data.get("business_name") or "").strip() or "Unknown"
+    if website:
+        brand_hint = _domain_brand_hint(str(website)) or infer_company_name_from_url(str(website))
+        if _looks_like_seo_brand_noise(company_name) or _is_generic_company_title(
+            company_name,
+            raw_geo=str(lead_data.get("location") or ""),
+            brand_hint=brand_hint,
+        ):
+            company_name = infer_company_name_from_title(str(website), company_name) or brand_hint or company_name
 
     return {
         "id": str(lead_data.get("lead_id")),
-        "company_name": lead_data.get("business_name") or "Unknown",
+        "company_name": company_name,
         "domain": extract_domain(lead_data.get("website") or lead_data.get("landing_page_url")) or "",
         "niche": lead_data.get("category") or "",
         "geo": lead_data.get("location") or "",
@@ -1833,14 +2425,20 @@ def attach_final_metadata(
     payload["analysis_state"] = analysis_state or payload.get("analysis_state") or "analyzed"
     if analysis_updated_at:
         payload["analysis_updated_at"] = analysis_updated_at
+    computed_site_truth_summary = build_site_truth_summary_from_signal_facts(signal_facts)
+    computed_why_this_lead = build_commercial_reason_from_signal_facts(signal_facts, intent)
+
     if signal_facts is not None:
         payload["signal_facts"] = signal_facts
         payload["signals_version"] = SIGNALS_VERSION
-    if intent:
-        if intent.get("site_truth_summary") is not None:
-            payload["site_truth_summary"] = intent.get("site_truth_summary")
-        if intent.get("why_this_lead") is not None:
-            payload["why_this_lead"] = intent.get("why_this_lead")
+    if computed_site_truth_summary is not None:
+        payload["site_truth_summary"] = computed_site_truth_summary
+    elif intent and intent.get("site_truth_summary") is not None:
+        payload["site_truth_summary"] = intent.get("site_truth_summary")
+    if computed_why_this_lead is not None:
+        payload["why_this_lead"] = computed_why_this_lead
+    elif intent and intent.get("why_this_lead") is not None:
+        payload["why_this_lead"] = intent.get("why_this_lead")
     if payload.get("status") in {"qualified_preview", "candidate_preview", "discovered"}:
         payload["status"] = "outreach_pending" if payload.get("contacts") else "enriched"
     return payload
@@ -1862,6 +2460,8 @@ def build_analysis_bundle(
     scoring = dict(scoring or {})
     proof = dict(proof or {})
     score_breakdown = dict(scoring.get("score_breakdown") or {})
+    site_truth_summary = build_site_truth_summary_from_signal_facts(signal_facts) or intent.get("site_truth_summary")
+    commercial_reason = build_commercial_reason_from_signal_facts(signal_facts, intent) or intent.get("why_this_lead")
 
     reviews = signal_facts.get("reviews_count")
     rating = signal_facts.get("rating")
@@ -1889,6 +2489,10 @@ def build_analysis_bundle(
     contact_evidence = signal_facts.get("contact_evidence") or []
     contact_intelligence = signal_facts.get("contact_intelligence") or {}
     top_contact = contact_intelligence.get("top_contact") or {}
+    capture_path_kind = _classify_capture_path(signal_facts)
+    after_hours_status = _classify_after_hours_capture(signal_facts)
+    decision_maker_status = signal_facts.get("decision_maker_status")
+    decision_maker_candidate_name = signal_facts.get("decision_maker_candidate_name")
 
     trust_markers: List[str] = []
     pain_points: List[str] = []
@@ -1896,13 +2500,18 @@ def build_analysis_bundle(
         trust_markers.append(f"{int(reviews)} reviews")
     if isinstance(rating, (int, float)) and rating:
         trust_markers.append(f"{float(rating):.1f} rating")
-    if isinstance(branch_count, int) and branch_count > 1:
-        trust_markers.append(f"{branch_count} locations")
-    if isinstance(doctor_count, int) and doctor_count > 0:
-        trust_markers.append(f"{doctor_count} doctors")
+    branch_fact = _count_fact("location", "locations", branch_count, _get_signal_confidence(signal_facts, "multi_clinic"))
+    if branch_fact:
+        trust_markers.append(branch_fact)
+    doctor_fact = _count_fact("doctor", "doctors", doctor_count, _get_signal_confidence(signal_facts, "doctors"))
+    if doctor_fact:
+        trust_markers.append(doctor_fact)
     if isinstance(content_ready_score, int) and content_ready_score >= 70:
         trust_markers.append("strong content readiness")
-    if top_contact.get("name"):
+    if top_contact.get("name") and (
+        top_contact.get("contact_type") in {"founder_direct", "doctor_direct", "actual_contact"}
+        or float(top_contact.get("confidence") or 0) >= 70
+    ):
         contact_label = str(top_contact.get("contact_type") or top_contact.get("owner_scope") or "contact").replace("_", " ")
         trust_markers.append(f"{top_contact.get('name')} ({contact_label})")
     contact_quality_score = signal_facts.get("contact_quality_score")
@@ -1912,9 +2521,11 @@ def build_analysis_bundle(
         except (TypeError, ValueError):
             pass
 
-    if not whatsapp_detected:
-        pain_points.append("missing WhatsApp capture")
-    if not booking_detected:
+    if capture_path_kind == "delayed":
+        pain_points.append("delayed follow-up instead of instant capture")
+    elif capture_path_kind == "missing":
+        pain_points.append("no instant capture path")
+    if not booking_detected and not signal_facts.get("contact_form_detected"):
         pain_points.append("weak booking conversion")
     if signal_facts.get("contact_form_detected") is False and (
         (isinstance(reviews, (int, float)) and reviews >= 200)
@@ -1924,12 +2535,12 @@ def build_analysis_bundle(
         pain_points.append("no fallback form for high-intent visitors")
     if not phone_visible:
         pain_points.append("phone not prominent")
-    if not after_hours_capture:
+    if after_hours_status == "missing":
         pain_points.append("after-hours response gap")
-    if not instant_response_path:
-        pain_points.append("no instant-response path")
 
-    if not whatsapp_detected:
+    if capture_path_kind == "delayed" and not whatsapp_detected:
+        recommended_offer = "WhatsApp Lead Recovery + Instant Booking Layer"
+    elif not whatsapp_detected:
         recommended_offer = "WhatsApp Lead Recovery + Booking Conversion"
     elif signal_facts.get("contact_form_detected") is False and (
         (isinstance(reviews, (int, float)) and reviews >= 200)
@@ -1973,8 +2584,8 @@ def build_analysis_bundle(
             "total_score": score_breakdown.get("total_score") or scoring.get("final_score"),
         },
         "guidance": {
-            "site_truth_summary": intent.get("site_truth_summary"),
-            "why_this_lead": intent.get("why_this_lead"),
+            "site_truth_summary": site_truth_summary,
+            "why_this_lead": commercial_reason,
             "top_issue": signal_facts.get("top_issue"),
             "next_best_action": signal_facts.get("next_best_action"),
             "recommended_channel": signal_facts.get("recommended_channel"),
@@ -2002,6 +2613,8 @@ def build_analysis_bundle(
             "known_pain_points": pain_points,
             "trust_markers": trust_markers,
             "decision_maker_name": decision_maker_name,
+            "decision_maker_status": decision_maker_status,
+            "decision_maker_candidate_name": decision_maker_candidate_name,
             "decision_maker_linkedin": decision_maker_linkedin,
             "decision_maker_role": decision_maker_role,
             "decision_maker_source": decision_maker_source,
@@ -2075,7 +2688,9 @@ def strip_contradicted_site_claims(
         str(extraction.get("phone_visibility") or "")
     ) > 0 or bool(extraction.get("phone_numbers"))
     has_booking = bool(extraction.get("booking_link"))
-    has_whatsapp = bool(extraction.get("whatsapp_target")) or extraction.get("chat_widget") == "whatsapp"
+    has_whatsapp = extraction.get("chat_widget") == "whatsapp" or bool(
+        extraction.get("whatsapp_target")
+    )
     has_chat = bool(extraction.get("chat_widget"))
 
     replacements: List[str] = []
@@ -2276,6 +2891,13 @@ def get_processed_details_for_lead(db, lead_id: str) -> Dict[str, Any]:
     scoring = db.get_scoring_result(lead_uuid) or {}
     enrichment = db.get_enrichment_data(lead_uuid) or {}
     outreach_rows = db.get_outreach_for_lead(lead_uuid, limit=10) or []
+    lead_state_metadata = dict((lead_state or {}).get("metadata") or {})
+    has_persisted_truth = bool(
+        lead_state_metadata.get("signal_facts")
+        or lead_state_metadata.get("analysis_bundle")
+        or lead_state_metadata.get("intelligence")
+    )
+    has_analysis_inputs = bool(enrichment) or bool(intent) or bool(proof) or bool(scoring) or has_persisted_truth
 
     def _score_breakdown_is_zero(payload: Dict[str, Any]) -> bool:
         breakdown = (payload or {}).get("score_breakdown") or {}
@@ -2289,8 +2911,9 @@ def get_processed_details_for_lead(db, lead_id: str) -> Dict[str, Any]:
         return all(value == 0 for value in numeric_values)
 
     def _needs_scoring_refresh() -> bool:
+        has_upstream_signal = bool(intent) or bool(enrichment) or bool(proof)
         if not scoring:
-            return True
+            return has_upstream_signal
 
         scoring_dt = _parse_iso_datetime(scoring.get("created_at"))
         upstream_times = [
@@ -2306,7 +2929,6 @@ def get_processed_details_for_lead(db, lead_id: str) -> Dict[str, Any]:
         if scoring_dt and upstream_times and scoring_dt < max(upstream_times):
             return True
 
-        has_upstream_signal = bool(intent) or bool(enrichment) or bool(proof)
         if has_upstream_signal and (
             scoring.get("final_score") in {None, 0}
             and _score_breakdown_is_zero(scoring)
@@ -2326,15 +2948,19 @@ def get_processed_details_for_lead(db, lead_id: str) -> Dict[str, Any]:
             refreshed_state = get_scoring_agent()(refreshed_state)
             scoring = refreshed_state.get("scoring") or scoring
 
-    signal_facts = build_signal_facts(
-        lead_data,
-        enrichment=enrichment,
-        intent=intent,
-        proof=proof,
-        scoring=scoring,
-        lead_state=lead_state,
+    signal_facts = (
+        build_signal_facts(
+            lead_data,
+            enrichment=enrichment,
+            intent=intent,
+            proof=proof,
+            scoring=scoring,
+            lead_state=lead_state,
+        )
+        if has_analysis_inputs
+        else {}
     )
-    if intent or proof or signal_facts:
+    if has_analysis_inputs and (intent or proof or scoring or has_persisted_truth):
         intent = harmonize_intent_with_proof(intent, proof, signal_facts)
         persist_harmonized_intent(db, intent)
 
@@ -2398,10 +3024,17 @@ def get_processed_details_for_lead(db, lead_id: str) -> Dict[str, Any]:
 
 def _normalize_contact_phone(value: Any) -> Optional[str]:
     digits = re.sub(r"\D", "", str(value or ""))
-    if not digits:
+    if len(digits) < 7:
+        return None
+    core = digits[-10:]
+    if len(set(core)) == 1:
+        return None
+    if core in {"0123456789", "1234567890", "0987654321", "9876543210"}:
+        return None
+    if core.endswith("123456789") or core.endswith("987654321"):
         return None
     if len(digits) > 10:
-        return digits[-10:]
+        return core
     return digits
 
 
@@ -2568,9 +3201,14 @@ def resolve_contact_to_lead(
             reasons.append(f"Matched phone {matched_phone}")
         if matched_name:
             reasons.append(f"Matched name {matched_name}")
-        if signal_facts.get("decision_maker_name"):
+        decision_maker_reference = (
+            signal_facts.get("decision_maker_name")
+            if signal_facts.get("decision_maker_status") == "verified"
+            else signal_facts.get("decision_maker_candidate_name")
+        )
+        if decision_maker_reference:
             reasons.append(
-                f"Decision maker candidate {signal_facts.get('decision_maker_name')}"
+                f"Likely contact {decision_maker_reference}"
             )
 
         best_score = combined_score
@@ -2736,6 +3374,7 @@ def run_selected_lead_pipeline(
     *,
     include_outreach: bool = True,
     include_audit: bool = True,
+    force_refresh: bool = False,
 ) -> Dict[str, Any]:
     """Run the heavy operator chain for a selected lead preview."""
     def run_agent_step(
@@ -2773,7 +3412,10 @@ def run_selected_lead_pipeline(
                 }
 
     lead_payload = dict(lead_data)
-    lead_state = db.get_lead_state(UUID(str(lead_data.get("lead_id")))) or {}
+    lead_uuid = UUID(str(lead_data.get("lead_id")))
+    if force_refresh:
+        db.clear_lead_analysis_cache(lead_uuid)
+    lead_state = db.get_lead_state(lead_uuid) or {}
     ads_verification = verify_clinic_ads(lead_payload, lead_state)
     if ads_verification.get("status") == "yes":
         lead_payload["ads_active"] = True
@@ -2791,6 +3433,7 @@ def run_selected_lead_pipeline(
             "ads_verification": ads_verification,
             "force_audit": include_audit,
         },
+        use_persisted_state=not force_refresh,
     )
 
     enrichment_agent = get_enrichment_agent()
@@ -2887,15 +3530,16 @@ def build_graph_state(
     current_stage: str,
     last_node: str,
     metadata: Optional[Dict[str, Any]] = None,
+    use_persisted_state: bool = True,
 ) -> Dict[str, Any]:
     """Build a dict-based graph state with persisted related data."""
     lead_id = UUID(str(lead_data.get("lead_id")))
-    lead_state = db.get_lead_state(lead_id) or {}
-    enrichment = db.get_enrichment_data(lead_id) or {}
-    intent = db.get_intent_data(lead_id) or {}
-    scoring = db.get_scoring_result(lead_id) or {}
-    proof = db.get_proof_artifact(lead_id) or {}
-    conversations = db.get_conversations_for_lead(lead_id)
+    lead_state = (db.get_lead_state(lead_id) or {}) if use_persisted_state else {}
+    enrichment = (db.get_enrichment_data(lead_id) or {}) if use_persisted_state else {}
+    intent = (db.get_intent_data(lead_id) or {}) if use_persisted_state else {}
+    scoring = (db.get_scoring_result(lead_id) or {}) if use_persisted_state else {}
+    proof = (db.get_proof_artifact(lead_id) or {}) if use_persisted_state else {}
+    conversations = db.get_conversations_for_lead(lead_id) if use_persisted_state else []
     latest_conversation = None
 
     if conversations:
@@ -3378,6 +4022,12 @@ SEO_BRAND_BLOCKLIST = (
     "near me",
     "directory",
     "list of",
+    "beauty clinic for ",
+    "weight loss",
+    "skin specialist in ",
+    "best dermatologist",
+    "best skin specialist",
+    "best skin ",
     "clinic in ",
     "hospital in ",
     "dermatologist in ",
@@ -3679,9 +4329,13 @@ def discover_company_candidates_osint(raw_niche: str, raw_geo: str, limit: int) 
             seen_domains.add(domain)
 
             title = str(result.get("title") or "")
-            company_name = title.split("|")[0].split("-")[0].strip()
             brand_hint = _domain_brand_hint(website) or infer_company_name_from_url(website)
-            if _is_generic_company_title(company_name, raw_geo=raw_geo, brand_hint=brand_hint):
+            company_name = infer_company_name_from_title(website, title)
+            if _looks_like_seo_brand_noise(company_name) or _is_generic_company_title(
+                company_name,
+                raw_geo=raw_geo,
+                brand_hint=brand_hint,
+            ):
                 company_name = brand_hint or company_name
             if not company_name or len(company_name) < 3:
                 company_name = brand_hint or infer_company_name_from_url(website)
@@ -4613,9 +5267,10 @@ async def process_selected_leads(
 ):
     """Run enrich -> intent -> proof -> score -> outreach for selected leads."""
     logger.info(
-        "Process selected leads request: count=%s, include_outreach=%s",
+        "Process selected leads request: count=%s, include_outreach=%s, force_refresh=%s",
         len(request.lead_ids),
         request.include_outreach,
+        request.force_refresh,
     )
 
     try:
@@ -4651,6 +5306,7 @@ async def process_selected_leads(
                         db,
                         current_lead,
                         include_outreach=request.include_outreach,
+                        force_refresh=request.force_refresh,
                     ),
                 )
                 processed["intent"] = harmonize_intent_with_proof(
@@ -4757,9 +5413,10 @@ async def analyze_lead(
 ):
     """Run deterministic clinic analysis for a single lead."""
     logger.info(
-        "Analyze lead request: lead_id=%s, include_outreach=%s",
+        "Analyze lead request: lead_id=%s, include_outreach=%s, force_refresh=%s",
         request.lead_id,
         request.include_outreach,
+        request.force_refresh,
     )
 
     try:
@@ -4776,6 +5433,7 @@ async def analyze_lead(
                 current_lead,
                 include_outreach=request.include_outreach,
                 include_audit=False,
+                force_refresh=request.force_refresh,
             ),
         )
         return result
@@ -4792,6 +5450,7 @@ def execute_lead_analysis(
     *,
     include_outreach: bool,
     include_audit: bool = False,
+    force_refresh: bool = False,
 ) -> Dict[str, Any]:
     """Run the full single-lead analysis flow and persist the result."""
     lead_model = lead_data_to_model(lead_data)
@@ -4805,6 +5464,7 @@ def execute_lead_analysis(
         lead_data,
         include_outreach=include_outreach,
         include_audit=include_audit,
+        force_refresh=force_refresh,
     )
     processed["intent"] = harmonize_intent_with_proof(
         processed.get("intent") or {},
@@ -4892,7 +5552,11 @@ def execute_lead_analysis(
     }
 
 
-def run_lead_analysis_background(lead_id: str, include_outreach: bool) -> None:
+def run_lead_analysis_background(
+    lead_id: str,
+    include_outreach: bool,
+    force_refresh: bool = False,
+) -> None:
     """Run analysis outside the request/response window and persist success or failure state."""
     db = get_db()
     lead_data = db.get_lead(lead_id)
@@ -4906,6 +5570,7 @@ def run_lead_analysis_background(lead_id: str, include_outreach: bool) -> None:
             lead_data,
             include_outreach=include_outreach,
             include_audit=False,
+            force_refresh=force_refresh,
         )
         logger.info("Background analysis completed for lead_id=%s", lead_id)
     except Exception as exc:
@@ -4948,9 +5613,10 @@ async def analyze_lead_async(
 ):
     """Queue single-lead analysis and return immediately for UI polling."""
     logger.info(
-        "Analyze lead async request: lead_id=%s, include_outreach=%s",
+        "Analyze lead async request: lead_id=%s, include_outreach=%s, force_refresh=%s",
         request.lead_id,
         request.include_outreach,
+        request.force_refresh,
     )
 
     try:
@@ -4959,6 +5625,9 @@ async def analyze_lead_async(
         lead_data = db.get_lead(normalized_lead_id)
         if not lead_data:
             raise HTTPException(status_code=404, detail="Lead not found")
+
+        if request.force_refresh:
+            db.clear_lead_analysis_cache(UUID(normalized_lead_id))
 
         lead_state = db.get_lead_state(UUID(normalized_lead_id)) or {}
         metadata = dict(lead_state.get("metadata") or {})
@@ -4993,6 +5662,7 @@ async def analyze_lead_async(
             run_lead_analysis_background,
             normalized_lead_id,
             request.include_outreach,
+            request.force_refresh,
         )
         return {
             "success": True,
@@ -5217,7 +5887,10 @@ async def handle_conversation(
                 result_state.get("scoring") or {},
             ),
             "conversation": conversation,
-            "response": ai_response,
+            "response": {
+                "message": ai_response,
+            },
+            "ai_response": ai_response,
             "needs_escalation": result_state.get("is_escalated", False),
             "escalation_reason": metadata.get("objection_summary"),
         }
@@ -5225,6 +5898,234 @@ async def handle_conversation(
         raise
     except Exception as e:
         logger.error(f"Conversation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _build_prospect_analysis_bundle(
+    lead_context: Optional[Dict[str, Any]] = None,
+    ops_state: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    lead_context = lead_context or {}
+    ops_state = ops_state or {}
+    top_issue = lead_context.get("top_issue") or "booking drop-off on WhatsApp"
+    next_best_action = lead_context.get("next_best_action") or (
+        "understand the clinic workflow before suggesting any change"
+    )
+    niche = ops_state.get("niche") or "Derm & Aesthetic clinic"
+    city = ops_state.get("city")
+    decision_maker_name = lead_context.get("decision_maker_name")
+    decision_maker_role = lead_context.get("decision_maker_role")
+
+    return {
+        "guidance": {
+            "top_issue": top_issue,
+            "next_best_action": next_best_action,
+            "recommended_channel": "whatsapp",
+        },
+        "facts": {
+            "top_issue": top_issue,
+            "next_best_action": next_best_action,
+            "decision_maker_name": decision_maker_name,
+            "decision_maker_role": decision_maker_role,
+            "recommended_channel": "whatsapp",
+        },
+        "agent_context": {
+            "business_summary": f"Early-stage sales thread for a {niche} lead.",
+            "conversion_summary": f"Primary commercial angle: {top_issue}.",
+            "known_pain_points": [top_issue],
+            "trust_markers": [city] if city else [],
+            "decision_maker_name": decision_maker_name,
+            "decision_maker_role": decision_maker_role,
+            "recommended_offer": "WhatsApp enquiry handling and booking conversion",
+            "recommended_channel": "whatsapp",
+            "recommended_next_step": next_best_action,
+        },
+        "scores": {
+            "final_score": lead_context.get("final_score"),
+            "preview_match_score": lead_context.get("preview_match_score"),
+        },
+    }
+
+
+def _should_use_fast_prospect_opening(message: str, entities: Dict[str, Any]) -> bool:
+    normalized = str(message or "").strip().lower()
+    if not normalized:
+        return True
+
+    greeting_only = normalized in {
+        "hi",
+        "hii",
+        "hello",
+        "hey",
+        "yo",
+        "good morning",
+        "good afternoon",
+        "good evening",
+    }
+    very_short = len(normalized.split()) <= 3
+    has_real_signal = bool(
+        (entities.get("pain_points") or [])
+        or (entities.get("objection_categories") or [])
+        or entities.get("requested_next_step")
+        or entities.get("pain_confirmed")
+    )
+    return greeting_only or (very_short and not has_real_signal)
+
+
+def _build_prospect_fast_opening(message: str, ops_state: Optional[Dict[str, Any]] = None) -> str:
+    normalized = str(message or "").strip().lower()
+    ops_state = ops_state or {}
+    niche = str(ops_state.get("niche") or "").strip().lower()
+    clinic_label = "clinic"
+    if "hospital" in niche:
+        clinic_label = "hospital"
+    elif "dental" in niche or "dent" in niche:
+        clinic_label = "dental clinic"
+    elif niche:
+        clinic_label = "clinic"
+
+    if any(token in normalized for token in ("booking", "appointment", "consultation")):
+        return (
+            "Understood. Is this for one clinic or multiple branches, and do you want WhatsApp "
+            "to just capture enquiries or help confirm bookings too?"
+        )
+
+    return (
+        f"Hi, this is ZRAI. Is this for one {clinic_label} or multiple branches, and is the main need "
+        "enquiry capture, booking, or follow-up on WhatsApp?"
+    )
+
+
+@app.post("/api/v1/conversation/prospect")
+async def handle_prospect_conversation(
+    request: ProspectConversationRequest,
+    user_id: Optional[str] = Depends(get_user_id),
+):
+    """Handle fast clinic-sales reasoning for unlinked WhatsApp prospect threads."""
+    try:
+        conversation_agent = get_conversation_agent()
+        channel = normalize_channel(request.channel)
+        lead_context = request.lead_context or {}
+        ops_state = request.ops_state or {}
+
+        synthetic_lead = {
+            "lead_id": uuid4(),
+            "business_name": (
+                lead_context.get("company_name")
+                or request.contact_name
+                or "Clinic prospect"
+            ),
+            "category": ops_state.get("niche") or "clinic",
+            "location": ops_state.get("city"),
+        }
+        analysis_bundle = _build_prospect_analysis_bundle(
+            lead_context=lead_context,
+            ops_state=ops_state,
+        )
+
+        transcript = conversation_agent._hydrate_transcript(
+            [
+                {"role": item.role, "message": item.message}
+                for item in request.transcript[-6:]
+            ]
+        )
+        entities = conversation_agent._hydrate_entities(request.entities or {})
+
+        conversation = Conversation(
+            conversation_id=uuid4(),
+            lead_id=synthetic_lead["lead_id"],
+            transcript=transcript,
+            entities=entities,
+        )
+        conversation.transcript.append(
+            ConversationMessage(
+                role="prospect",
+                message=request.message,
+            )
+        )
+
+        entities = conversation_agent._extract_entities(
+            request.message,
+            conversation.entities,
+            channel=channel,
+            lead=synthetic_lead,
+        )
+        seed_signals = classify_sales_signals(request.message)
+        if seed_signals.get("lead_channels"):
+            entities.lead_channels = list(
+                dict.fromkeys([*entities.lead_channels, *seed_signals["lead_channels"]])
+            )
+        entities.current_channel = channel
+        entities.stage = infer_sales_stage(entities.model_dump())
+        conversation.entities = entities
+
+        if _should_use_fast_prospect_opening(request.message, entities.model_dump()):
+            ai_response = _build_prospect_fast_opening(
+                request.message,
+                ops_state=ops_state,
+            )
+            conversation.transcript.append(
+                ConversationMessage(
+                    role="ai",
+                    message=ai_response,
+                )
+            )
+            return {
+                "success": True,
+                "conversation": {
+                    "conversation_id": str(conversation.conversation_id),
+                    "entities": conversation.entities.model_dump(),
+                },
+                "ai_response": ai_response,
+                "needs_escalation": False,
+                "escalation_reason": None,
+            }
+
+        should_escalate, escalation_reasons = conversation_agent._check_escalation_criteria(
+            entities,
+            request.message,
+        )
+
+        if entities.opt_out:
+            ai_response = build_sales_fallback_response(
+                entities.model_dump(),
+                analysis_bundle,
+            )
+        else:
+            try:
+                ai_response = conversation_agent._generate_response(
+                    conversation,
+                    synthetic_lead,
+                    request.message,
+                    analysis_bundle,
+                    channel,
+                )
+            except Exception as exc:
+                logger.error(f"Prospect conversation response generation error: {exc}")
+                ai_response = build_sales_fallback_response(
+                    entities.model_dump(),
+                    analysis_bundle,
+                )
+
+        conversation.transcript.append(
+            ConversationMessage(
+                role="ai",
+                message=ai_response,
+            )
+        )
+
+        return {
+            "success": True,
+            "conversation": {
+                "conversation_id": str(conversation.conversation_id),
+                "entities": conversation.entities.model_dump(),
+            },
+            "ai_response": ai_response,
+            "needs_escalation": should_escalate,
+            "escalation_reason": ", ".join(escalation_reasons) if escalation_reasons else None,
+        }
+    except Exception as e:
+        logger.error(f"Prospect conversation error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

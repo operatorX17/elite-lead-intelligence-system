@@ -38,6 +38,7 @@ const analyzeRequestSchema = z.object({
   lead_id: z.string().min(1, "Lead id is required"),
   include_outreach: z.boolean().optional().default(true),
   force_refresh: z.boolean().optional().default(false),
+  async: z.boolean().optional().default(true),
   lead: importableLeadSchema.optional(),
 });
 
@@ -110,7 +111,7 @@ export async function POST(request: Request): Promise<Response> {
       throw error;
     }
 
-    const backendPath = body.include_outreach ? "/api/v1/analyze-lead-async" : "/api/v1/analyze-lead";
+    const backendPath = body.async === false ? "/api/v1/analyze-lead" : "/api/v1/analyze-lead-async";
 
     const backendResponse = await fetch(`${ZRAI_BACKEND_URL}${backendPath}`, {
       method: "POST",
