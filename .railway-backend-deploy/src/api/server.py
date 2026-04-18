@@ -3734,6 +3734,90 @@ def _select_best_google_maps_match(
     return best_candidate
 
 
+def _select_branch_landing_page(
+    lead_data: Dict[str, Any],
+    matched: Dict[str, Any],
+) -> Optional[str]:
+    current_url = str(lead_data.get("landing_page_url") or lead_data.get("website") or "").strip()
+    current_domain = (extract_domain(current_url) or "").lower().replace("www.", "")
+    location_tokens = [
+        token for token in re.findall(r"[a-z]+", str(lead_data.get("location") or "").lower()) if len(token) > 2
+    ]
+
+    best_url: Optional[str] = None
+    best_score = 0
+    for result in list(matched.get("webResults") or []):
+        if not isinstance(result, dict):
+            continue
+        url = str(result.get("url") or "").strip()
+        if not url:
+            continue
+        parsed = urlparse(url if "://" in url else f"https://{url}")
+        domain = (parsed.netloc or "").lower().replace("www.", "")
+        if current_domain and domain and domain != current_domain:
+            continue
+        if not parsed.path or parsed.path == "/":
+            continue
+
+        haystack = f"{url} {result.get('title') or ''} {result.get('description') or ''}".lower()
+        path_depth = len([segment for segment in parsed.path.split("/") if segment])
+        score = path_depth * 10
+        score += sum(6 for token in location_tokens if token in haystack)
+        if any(marker in haystack for marker in ("near-me", "/locations", "/clinics", "clinic-")):
+            score += 10
+        if current_url and url.rstrip("/") == current_url.rstrip("/"):
+            score -= 20
+        if score > best_score:
+            best_url = url
+            best_score = score
+
+    return best_url if best_score >= 16 else None
+
+
+def _collect_related_google_maps_places(
+    lead_data: Dict[str, Any],
+    candidates: List[Dict[str, Any]],
+    matched: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    matched_place_id = str(matched.get("placeId") or "")
+    related: List[Tuple[float, Dict[str, Any]]] = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        if str(candidate.get("placeId") or "") == matched_place_id:
+            continue
+        score = _score_google_maps_candidate(lead_data, candidate)
+        if score < 45:
+            continue
+        related.append(
+            (
+                score,
+                {
+                    "title": candidate.get("title") or candidate.get("name"),
+                    "url": candidate.get("url"),
+                    "address": candidate.get("address"),
+                    "website": candidate.get("website"),
+                    "phone": candidate.get("phone"),
+                    "placeId": candidate.get("placeId"),
+                },
+            )
+        )
+
+    related.sort(key=lambda item: item[0], reverse=True)
+    deduped: List[Dict[str, Any]] = []
+    seen = set()
+    for _, candidate in related:
+        key = (
+            str(candidate.get("title") or "").lower(),
+            str(candidate.get("placeId") or ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(candidate)
+    return deduped[:8]
+
+
 def refresh_google_maps_truth(
     db,
     lead_data: Dict[str, Any],
@@ -3781,6 +3865,7 @@ def refresh_google_maps_truth(
         logger.warning("Google Maps truth refresh found no acceptable match for %s", business_name)
         return existing_metadata.get("raw_apify_data") or {}
 
+    related_places = _collect_related_google_maps_places(lead_data, items, matched)
     raw_apify_data = {
         "reviewsCount": matched.get("reviewsCount"),
         "totalScore": matched.get("totalScore") or matched.get("rating"),
@@ -3799,9 +3884,13 @@ def refresh_google_maps_truth(
         "maps_phone": matched.get("phone"),
         "maps_website": matched.get("website"),
         "maps_category": matched.get("categoryName") or matched.get("category"),
+        "relatedPlaces": related_places,
         "maps_refreshed_at": datetime.utcnow().isoformat(),
         "maps_source": "apify_google_maps_scraper",
     }
+    branch_landing_page = _select_branch_landing_page(lead_data, matched)
+    if branch_landing_page:
+        raw_apify_data["branchLandingPage"] = branch_landing_page
 
     metadata = dict(existing_metadata)
     metadata["raw_apify_data"] = raw_apify_data
@@ -3828,6 +3917,8 @@ def refresh_google_maps_truth(
     if matched.get("website") and not lead_data.get("website"):
         lead_updates["website"] = matched.get("website")
         lead_updates["landing_page_url"] = matched.get("website")
+    if branch_landing_page:
+        lead_updates["landing_page_url"] = branch_landing_page
     if lead_updates:
         updated_lead = db.update_lead(lead_uuid, lead_updates)
         lead_data.update(updated_lead or {})

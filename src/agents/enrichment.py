@@ -42,6 +42,19 @@ PUBLIC_DIRECTORY_HOST_HINTS = {
     "1mg.com",
 }
 
+BRANCH_LOCALITY_ALIASES = {
+    "jp nagar": "JP Nagar",
+    "j p nagar": "JP Nagar",
+    "koramangala": "Koramangala",
+    "jayanagar": "Jayanagar",
+    "indiranagar": "Indiranagar",
+    "whitefield": "Whitefield",
+    "hsr": "HSR Layout",
+    "hsr layout": "HSR Layout",
+    "electronic city": "Electronic City",
+    "sarjapur": "Sarjapur",
+}
+
 
 # Tech signal patterns
 BOOKING_PROVIDERS = {
@@ -115,7 +128,7 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         # Merge raw Apify data into lead for volume signal extraction
         lead_with_apify = {**lead, **raw_apify_data}
         
-        website_context = self._fetch_website_context(lead.get("website"))
+        website_context = self._fetch_website_context(lead.get("landing_page_url") or lead.get("website"))
         instagram_profile = self._extract_instagram_profile(lead, website_context)
         if instagram_profile:
             social_profiles = dict(website_context.get("social_profiles") or {})
@@ -125,7 +138,7 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         # Extract tech signals and clinic-specific contact context from the site.
         tech_signals = self._extract_tech_signals(website_context.get("content", ""))
 
-        people_intelligence = self._extract_people_intelligence(lead, website_context)
+        people_intelligence = self._extract_people_intelligence(lead_with_apify, website_context)
         if instagram_profile:
             people_intelligence["instagram_profile"] = instagram_profile
             if instagram_profile.get("full_name") and not people_intelligence.get("decision_maker_name"):
@@ -134,7 +147,7 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         # Extract decision maker info from business name, contact pages, social/profile hints,
         # and ranked people intelligence derived from the site and public search results.
         decision_maker = self._extract_decision_maker(
-            lead,
+            lead_with_apify,
             website_context,
             people_intelligence=people_intelligence,
         )
@@ -248,6 +261,7 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             "raw_content": "",
             "emails": [],
             "phones": [],
+            "supporting_urls": [],
             "contact_paths": [],
             "social_profiles": {},
             "services": [],
@@ -272,6 +286,7 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
                 self._logger.warning("Apify crawl fallback failed for %s: %s", website, exc)
 
         supporting_urls = self._extract_candidate_page_urls(raw_content, website)
+        context["supporting_urls"] = supporting_urls
         supporting_content: List[str] = []
         for supporting_url in supporting_urls[:3]:
             if supporting_url.rstrip("/") == website.rstrip("/"):
@@ -747,6 +762,16 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         branch_contacts = self._extract_branch_contacts(raw_content)
         branch_names = [item.get("name") for item in branch_contacts if item.get("name")]
         phone_numbers = [item.get("phone") for item in branch_contacts if item.get("phone")]
+        branch_hints = self._extract_branch_hints_from_sources(
+            business_name=business_name,
+            website_context=website_context,
+            web_results=list(lead.get("webResults") or lead.get("web_results") or []),
+            related_places=list(lead.get("relatedPlaces") or lead.get("related_places") or []),
+            maps_title=lead.get("maps_title"),
+        )
+        for branch_hint in branch_hints:
+            if branch_hint not in branch_names:
+                branch_names.append(branch_hint)
 
         extra_phone_candidates = [] if branch_contacts else list(website_context.get("phones", []))
         for phone in extra_phone_candidates:
@@ -884,6 +909,129 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             "best_contact_linkedin": best_contact_linkedin,
             "contact_evidence": contact_evidence[:8],
         }
+
+    def _extract_branch_hints_from_sources(
+        self,
+        *,
+        business_name: str,
+        website_context: Dict[str, Any],
+        web_results: List[Dict[str, Any]],
+        related_places: List[Dict[str, Any]],
+        maps_title: Optional[str],
+    ) -> List[str]:
+        candidates: List[str] = []
+        if maps_title:
+            candidates.append(str(maps_title))
+        for supporting_url in list(website_context.get("supporting_urls") or []):
+            candidates.append(str(supporting_url))
+        for result in web_results:
+            if not isinstance(result, dict):
+                continue
+            if result.get("url"):
+                candidates.append(str(result.get("url")))
+            if result.get("title"):
+                candidates.append(str(result.get("title")))
+        for result in related_places:
+            if not isinstance(result, dict):
+                continue
+            if result.get("url"):
+                candidates.append(str(result.get("url")))
+            if result.get("title"):
+                candidates.append(str(result.get("title")))
+            if result.get("address"):
+                candidates.append(str(result.get("address")))
+
+        hints: List[str] = []
+        seen = set()
+        for candidate in candidates:
+            hint = self._extract_branch_hint_from_text(candidate, business_name)
+            if not hint:
+                continue
+            key = hint.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            hints.append(hint)
+        return hints[:8]
+
+    def _extract_branch_hint_from_text(self, text: str, business_name: str) -> Optional[str]:
+        value = str(text or "").strip()
+        if not value:
+            return None
+
+        lowered = value.lower()
+        business_tokens = {
+            token
+            for token in re.findall(r"[a-z]+", business_name.lower())
+            if len(token) > 2
+        }
+        generic_tokens = {
+            "clinic",
+            "clinics",
+            "skin",
+            "hair",
+            "and",
+            "the",
+            "best",
+            "near",
+            "me",
+            "dermatologist",
+            "cosmetic",
+            "aesthetic",
+            "doctor",
+            "doctors",
+            "branch",
+            "branches",
+            "centre",
+            "center",
+            "care",
+            "hospital",
+            "treatment",
+            "treatments",
+        }
+
+        direct_match = re.search(r"\bin\s+([a-z][a-z\s]{2,30})(?:,| -|\|)", lowered)
+        if direct_match:
+            normalized = self._normalize_branch_hint_candidate(direct_match.group(1))
+            if normalized:
+                return normalized
+        title_match = re.search(r"-\s*([a-z][a-z\s]{2,30})(?:,|:)", lowered)
+        if title_match:
+            normalized = self._normalize_branch_hint_candidate(title_match.group(1))
+            if normalized:
+                return normalized
+
+        parsed = urlparse(value if value.startswith(("http://", "https://")) else f"https://example.com/{value.lstrip('/')}")
+        segments = [unquote(segment) for segment in parsed.path.split("/") if segment]
+        for segment in reversed(segments):
+            tokens = [
+                token
+                for token in re.split(r"[-_]+", segment.lower())
+                if token and token not in generic_tokens and token not in business_tokens and len(token) > 1
+            ]
+            if not tokens:
+                continue
+            for alias, canonical in BRANCH_LOCALITY_ALIASES.items():
+                alias_tokens = alias.split()
+                if all(token in tokens for token in alias_tokens):
+                    return canonical
+            normalized = self._normalize_branch_hint_candidate(" ".join(tokens[-3:]))
+            if normalized:
+                return normalized
+
+        return None
+
+    def _normalize_branch_hint_candidate(self, value: str) -> Optional[str]:
+        text = re.sub(r"\s+", " ", str(value or "")).strip(" -,:;/")
+        if not text:
+            return None
+        lowered = text.lower()
+        for alias, canonical in BRANCH_LOCALITY_ALIASES.items():
+            if alias in lowered:
+                return canonical
+        if self._is_plausible_branch_name(text):
+            return text.title()
+        return None
 
     def _extract_doctor_profiles(self, raw_content: str) -> List[Dict[str, Any]]:
         profiles: List[Dict[str, Any]] = []
