@@ -289,6 +289,58 @@ BRAVE_SEARCH_API_URL = "https://api.search.brave.com/res/v1/web/search"
 FIRECRAWL_SEARCH_API_URL = "https://api.firecrawl.dev/v1/search"
 SIGNALS_VERSION = "clinic_intel_v1"
 
+
+def clear_lead_analysis_cache_safe(db: Any, lead_id: UUID) -> None:
+    """Clear persisted analysis artifacts without assuming a newer DB client interface.
+
+    Production can momentarily serve a mixed build during rollout. Fall back to the
+    raw Supabase tables and lead_state update if the wrapper method is unavailable.
+    """
+    clear_cache = getattr(db, "clear_lead_analysis_cache", None)
+    if callable(clear_cache):
+        clear_cache(lead_id)
+        return
+
+    client = getattr(db, "client", None)
+    lead_id_str = str(lead_id)
+    if client is not None:
+        for table_name in ("enrichment_data", "intent_data", "proof_artifacts", "scoring_results"):
+            try:
+                client.table(table_name).delete().eq("lead_id", lead_id_str).execute()
+            except Exception:
+                logger.exception("Failed clearing %s for lead %s", table_name, lead_id_str)
+
+    get_lead_state = getattr(db, "get_lead_state", None)
+    save_lead_state = getattr(db, "save_lead_state", None)
+    if not callable(get_lead_state) or not callable(save_lead_state):
+        return
+
+    lead_state = get_lead_state(lead_id) or {}
+    if not lead_state:
+        return
+
+    metadata = dict(lead_state.get("metadata") or {})
+    for key in [
+        "analysis_state",
+        "analysis_updated_at",
+        "signals_version",
+        "signal_facts",
+        "analysis_bundle",
+        "intelligence",
+        "people_intelligence",
+        "contact_intelligence",
+        "site_truth_summary",
+        "why_this_lead",
+        "top_issue",
+        "next_best_action",
+        "refresh_requested_at",
+    ]:
+        metadata.pop(key, None)
+
+    lead_state["metadata"] = metadata
+    lead_state["updated_at"] = datetime.utcnow().isoformat()
+    save_lead_state(lead_state)
+
 # ============================================================================
 # Request/Response Models
 # ============================================================================
@@ -3414,7 +3466,7 @@ def run_selected_lead_pipeline(
     lead_payload = dict(lead_data)
     lead_uuid = UUID(str(lead_data.get("lead_id")))
     if force_refresh:
-        db.clear_lead_analysis_cache(lead_uuid)
+        clear_lead_analysis_cache_safe(db, lead_uuid)
     lead_state = db.get_lead_state(lead_uuid) or {}
     ads_verification = verify_clinic_ads(lead_payload, lead_state)
     if ads_verification.get("status") == "yes":
@@ -5627,7 +5679,7 @@ async def analyze_lead_async(
             raise HTTPException(status_code=404, detail="Lead not found")
 
         if request.force_refresh:
-            db.clear_lead_analysis_cache(UUID(normalized_lead_id))
+            clear_lead_analysis_cache_safe(db, UUID(normalized_lead_id))
 
         lead_state = db.get_lead_state(UUID(normalized_lead_id)) or {}
         metadata = dict(lead_state.get("metadata") or {})
