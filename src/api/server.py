@@ -1470,6 +1470,16 @@ def build_signal_facts(
     stored_signal_facts = dict(stored_analysis_bundle.get("facts") or {})
     ads_verification = lead_state_metadata.get("ads_verification") or {}
     people_intelligence = dict(lead_state_metadata.get("people_intelligence") or {})
+    instagram_profile = dict(
+        people_intelligence.get("instagram_profile")
+        or stored_signal_facts.get("instagram_profile")
+        or {}
+    )
+    youtube_channel = dict(
+        people_intelligence.get("youtube_channel")
+        or stored_signal_facts.get("youtube_channel")
+        or {}
+    )
 
     phone_numbers = _dedupe_strings(
         [
@@ -1538,6 +1548,9 @@ def build_signal_facts(
 
     ads_channels = _dedupe_strings(list(ads_verification.get("channels") or []))
     ads_last_seen = ads_verification.get("last_seen") or lead_data.get("ad_last_seen")
+    ads_active_count = ads_verification.get("active_ads_count")
+    ads_creative_hints = _dedupe_strings(list(ads_verification.get("creative_hints") or []))
+    ads_page_names = _dedupe_strings(list(ads_verification.get("page_names") or []))
 
     services = _dedupe_strings(
         list(enrichment_payload.get("key_services") or [])
@@ -1551,6 +1564,10 @@ def build_signal_facts(
         people_intelligence.get("social_profiles") or {},
         stored_signal_facts.get("social_profiles") or {},
     )
+    if instagram_profile and not social_profiles.get("instagram_profile"):
+        social_profiles["instagram_profile"] = instagram_profile
+    if youtube_channel and not social_profiles.get("youtube_channel"):
+        social_profiles["youtube_channel"] = youtube_channel
     fresh_doctor_profiles = _sanitize_doctor_profiles(list(people_intelligence.get("doctor_profiles") or []))
     fresh_decision_maker_candidates = _sanitize_decision_maker_candidates(
         list(people_intelligence.get("decision_maker_candidates") or [])
@@ -1864,6 +1881,10 @@ def build_signal_facts(
         "ads_status": ads_status,
         "ads_channels": ads_channels,
         "ads_last_seen": str(ads_last_seen) if ads_last_seen else None,
+        "ads_active_count": int(ads_active_count) if isinstance(ads_active_count, (int, float)) else None,
+        "ads_creative_hints": ads_creative_hints,
+        "ads_page_names": ads_page_names,
+        "paid_acquisition_active": ads_status == "yes",
         "reviews_count": lead_data.get("reviews_count") or lead_data.get("review_count"),
         "rating": lead_data.get("rating") or lead_data.get("review_rating"),
         "volume_score_inputs": {
@@ -1882,7 +1903,9 @@ def build_signal_facts(
         "doctor_names": doctor_names,
         "doctor_profiles": doctor_profiles,
         "instagram_present": instagram_present,
+        "instagram_profile": instagram_profile,
         "youtube_present": youtube_present,
+        "youtube_channel": youtube_channel,
         "testimonials_present": testimonials_present,
         "gallery_present": gallery_present,
         "content_ready_score": content_ready_score,
@@ -2517,6 +2540,11 @@ def build_analysis_bundle(
 
     reviews = signal_facts.get("reviews_count")
     rating = signal_facts.get("rating")
+    ads_status = signal_facts.get("ads_status")
+    ads_active_count = signal_facts.get("ads_active_count")
+    ads_channels = signal_facts.get("ads_channels") or []
+    instagram_profile = signal_facts.get("instagram_profile") or {}
+    youtube_channel = signal_facts.get("youtube_channel") or {}
     branch_count = signal_facts.get("branch_count")
     doctor_count = signal_facts.get("doctor_count")
     phone_visible = bool(signal_facts.get("phone_visible"))
@@ -2552,6 +2580,11 @@ def build_analysis_bundle(
         trust_markers.append(f"{int(reviews)} reviews")
     if isinstance(rating, (int, float)) and rating:
         trust_markers.append(f"{float(rating):.1f} rating")
+    if ads_status == "yes":
+        if isinstance(ads_active_count, (int, float)) and ads_active_count:
+            trust_markers.append(f"{int(ads_active_count)} active Meta ads")
+        else:
+            trust_markers.append("active Meta ads")
     branch_fact = _count_fact("location", "locations", branch_count, _get_signal_confidence(signal_facts, "multi_clinic"))
     if branch_fact:
         trust_markers.append(branch_fact)
@@ -2572,6 +2605,12 @@ def build_analysis_bundle(
             trust_markers.append(f"contact quality {int(float(contact_quality_score))}/100")
         except (TypeError, ValueError):
             pass
+    instagram_followers = instagram_profile.get("followers_count")
+    if isinstance(instagram_followers, (int, float)) and instagram_followers:
+        trust_markers.append(f"Instagram {int(instagram_followers)} followers")
+    youtube_subscribers = youtube_channel.get("subscriber_count")
+    if isinstance(youtube_subscribers, (int, float)) and youtube_subscribers:
+        trust_markers.append(f"YouTube {int(youtube_subscribers)} subscribers")
 
     if capture_path_kind == "delayed":
         pain_points.append("delayed follow-up instead of instant capture")
@@ -2589,8 +2628,14 @@ def build_analysis_bundle(
         pain_points.append("phone not prominent")
     if after_hours_status == "missing":
         pain_points.append("after-hours response gap")
+    if ads_status == "yes" and capture_path_kind != "instant":
+        pain_points.append("paid traffic likely hits delayed follow-up")
+    if ads_status == "yes" and not whatsapp_detected:
+        pain_points.append("no instant messaging path for paid traffic")
 
-    if capture_path_kind == "delayed" and not whatsapp_detected:
+    if ads_status == "yes" and capture_path_kind != "instant":
+        recommended_offer = "Paid Traffic Recovery + Instant Follow-up System"
+    elif capture_path_kind == "delayed" and not whatsapp_detected:
         recommended_offer = "WhatsApp Lead Recovery + Instant Booking Layer"
     elif not whatsapp_detected:
         recommended_offer = "WhatsApp Lead Recovery + Booking Conversion"
@@ -2684,6 +2729,11 @@ def build_analysis_bundle(
             "recommended_channel": signal_facts.get("recommended_channel"),
             "recommended_next_step": signal_facts.get("next_best_action"),
             "contact_intelligence": contact_intelligence,
+            "ads_status": ads_status,
+            "ads_active_count": ads_active_count,
+            "ads_channels": ads_channels,
+            "instagram_profile": instagram_profile,
+            "youtube_channel": youtube_channel,
         },
     }
 
@@ -2865,14 +2915,50 @@ def verify_clinic_ads(
         )
         if items:
             first_item = items[0]
+            platform_values = _dedupe_strings(
+                [
+                    platform
+                    for item in items
+                    if isinstance(item, dict)
+                    for platform in (
+                        list(item.get("publisherPlatform") or [])
+                        + list(item.get("publisherPlatforms") or [])
+                    )
+                ]
+            )
+            creative_hints = _dedupe_strings(
+                [
+                    value
+                    for item in items
+                    if isinstance(item, dict)
+                    for value in [
+                        item.get("adCreativeType"),
+                        item.get("collationCount"),
+                        item.get("snapshot", {}).get("body", {}).get("text")
+                        if isinstance(item.get("snapshot"), dict)
+                        else None,
+                    ]
+                    if value
+                ]
+            )
+            page_names = _dedupe_strings(
+                [
+                    item.get("pageName") or item.get("advertiserName") or item.get("page_name")
+                    for item in items
+                    if isinstance(item, dict)
+                ]
+            )
             return {
                 "status": "yes",
-                "channels": ["meta"],
+                "channels": platform_values or ["meta"],
                 "last_seen": first_item.get("adSnapshotUrl")
                 or first_item.get("startDate")
                 or lead_data.get("ad_last_seen"),
                 "evidence_url": first_item.get("adSnapshotUrl") or str(facebook_page),
                 "source": "facebook_page_ads_scraper",
+                "active_ads_count": len(items),
+                "page_names": page_names[:3],
+                "creative_hints": creative_hints[:5],
             }
         return {
             "status": "no",
@@ -2880,6 +2966,7 @@ def verify_clinic_ads(
             "last_seen": None,
             "evidence_url": str(facebook_page),
             "source": "facebook_page_ads_scraper",
+            "active_ads_count": 0,
         }
     except Exception as exc:
         logger.warning("Clinic ads verification failed for %s: %s", lead_data.get("business_name"), exc)
@@ -2889,6 +2976,7 @@ def verify_clinic_ads(
             "last_seen": None,
             "evidence_url": str(facebook_page),
             "source": "facebook_page_ads_scraper_failed",
+            "active_ads_count": None,
         }
 
 

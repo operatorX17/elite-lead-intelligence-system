@@ -130,9 +130,14 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         
         website_context = self._fetch_website_context(lead.get("landing_page_url") or lead.get("website"))
         instagram_profile = self._extract_instagram_profile(lead, website_context)
+        youtube_channel = self._extract_youtube_channel(lead, website_context)
         if instagram_profile:
             social_profiles = dict(website_context.get("social_profiles") or {})
             social_profiles["instagram_profile"] = instagram_profile
+            website_context["social_profiles"] = social_profiles
+        if youtube_channel:
+            social_profiles = dict(website_context.get("social_profiles") or {})
+            social_profiles["youtube_channel"] = youtube_channel
             website_context["social_profiles"] = social_profiles
 
         # Extract tech signals and clinic-specific contact context from the site.
@@ -143,6 +148,8 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             people_intelligence["instagram_profile"] = instagram_profile
             if instagram_profile.get("full_name") and not people_intelligence.get("decision_maker_name"):
                 people_intelligence["decision_maker_name"] = instagram_profile.get("full_name")
+        if youtube_channel:
+            people_intelligence["youtube_channel"] = youtube_channel
 
         # Extract decision maker info from business name, contact pages, social/profile hints,
         # and ranked people intelligence derived from the site and public search results.
@@ -386,7 +393,7 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             "profile_url": profile_url or f"https://www.instagram.com/{username}/",
             "source": "website_instagram_link",
         }
-        if os.getenv("ZRAI_ENABLE_INSTAGRAM_BIO_ACTOR", "").strip().lower() != "true":
+        if not self._env_feature_enabled("ZRAI_ENABLE_INSTAGRAM_BIO_ACTOR", default=True):
             return lightweight_profile
 
         profile = self._apify.run_instagram_bio_extractor(username)
@@ -417,9 +424,115 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             "bio": biography,
             "external_url": external_url,
             "followers_count": follower_count,
+            "verified": profile.get("verified"),
+            "business_category": profile.get("businessCategoryName")
+            or profile.get("business_category_name"),
+            "posts_count": profile.get("postsCount") or profile.get("posts_count"),
+            "latest_post_count": len(profile.get("latestPosts") or []),
             "source": "apify_instagram_bio_extractor",
         }
         return {key: value for key, value in normalized.items() if value not in (None, "", [], {})}
+
+    def _extract_youtube_channel(
+        self,
+        lead: Dict[str, Any],
+        website_context: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Extract lightweight YouTube channel intelligence from the site and actor."""
+        social_profiles = dict(website_context.get("social_profiles") or {})
+        youtube_candidates: List[str] = []
+        youtube_candidates.extend(list(social_profiles.get("youtube") or []))
+
+        channel_url = next(
+            (
+                str(candidate).strip()
+                for candidate in youtube_candidates
+                if isinstance(candidate, str) and str(candidate).strip()
+            ),
+            None,
+        )
+        if not channel_url:
+            return {}
+
+        lightweight_channel: Dict[str, Any] = {
+            "channel_url": channel_url,
+            "source": "website_youtube_link",
+        }
+        if not self._env_feature_enabled("ZRAI_ENABLE_YOUTUBE_ACTOR", default=True):
+            return lightweight_channel
+
+        items = self._apify.run_youtube_scraper([channel_url])
+        if not items:
+            return lightweight_channel
+
+        subscriber_count = 0
+        total_views = 0
+        total_videos = 0
+        recent_view_sum = 0
+        recent_view_items = 0
+        latest_video_date = None
+        channel_name = None
+        resolved_channel_url = channel_url
+
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            channel_name = channel_name or item.get("channelName") or item.get("channel_name")
+            resolved_channel_url = (
+                item.get("channelUrl")
+                or item.get("channel_url")
+                or resolved_channel_url
+            )
+            subscriber_count = max(
+                subscriber_count,
+                self._coerce_int(item.get("numberOfSubscribers") or item.get("subscriberCount")),
+            )
+            total_views = max(
+                total_views,
+                self._coerce_int(item.get("channelTotalViews") or item.get("totalViews")),
+            )
+            total_videos = max(
+                total_videos,
+                self._coerce_int(item.get("channelTotalVideos") or item.get("videoCount")),
+            )
+            view_count = self._coerce_int(item.get("viewCount") or item.get("views"))
+            if view_count > 0:
+                recent_view_sum += view_count
+                recent_view_items += 1
+            published_at = str(item.get("date") or "").strip()
+            if published_at and (latest_video_date is None or published_at > latest_video_date):
+                latest_video_date = published_at
+
+        normalized: Dict[str, Any] = {
+            **lightweight_channel,
+            "channel_name": channel_name,
+            "channel_url": resolved_channel_url,
+            "subscriber_count": subscriber_count or None,
+            "total_views": total_views or None,
+            "total_videos": total_videos or None,
+            "recent_video_count": len([item for item in items if isinstance(item, dict)]),
+            "avg_recent_views": int(recent_view_sum / recent_view_items) if recent_view_items else None,
+            "latest_video_date": latest_video_date,
+            "source": "apify_youtube_scraper",
+        }
+        return {key: value for key, value in normalized.items() if value not in (None, "", [], {})}
+
+    def _env_feature_enabled(self, env_key: str, *, default: bool = False) -> bool:
+        raw_value = os.getenv(env_key)
+        if raw_value is None or not raw_value.strip():
+            return default
+        return raw_value.strip().lower() in {"1", "true", "yes", "on"}
+
+    def _coerce_int(self, value: Any) -> int:
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
+        raw = str(value or "").strip()
+        if not raw:
+            return 0
+        digits = re.sub(r"[^\d]", "", raw)
+        return int(digits) if digits else 0
 
     def _extract_instagram_username(self, value: Optional[str]) -> Optional[str]:
         """Extract a clean Instagram username from a URL or raw handle."""

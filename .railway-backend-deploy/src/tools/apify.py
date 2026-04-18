@@ -50,6 +50,7 @@ class ApifyClient:
     WEBSITE_CRAWLER_ACTOR = "apify/website-content-crawler"
     CONTACT_SCRAPER_ACTOR = "apify/contact-info-scraper"
     INSTAGRAM_BIO_EXTRACTOR_ACTOR = "ZufOwumbzPOXiSyhh"
+    YOUTUBE_SCRAPER_ACTOR = "streamers/youtube-scraper"
     
     def __init__(self, api_token: Optional[str] = None):
         config = load_config()
@@ -361,6 +362,47 @@ class ApifyClient:
         except Exception as e:
             logger.warning("Instagram bio extractor error for %s: %s", normalized_username, e)
             return {}
+
+    def run_youtube_scraper(
+        self,
+        start_urls: List[str],
+        max_results: int = 5,
+        max_results_shorts: int = 3,
+        max_results_streams: int = 0,
+    ) -> List[Dict[str, Any]]:
+        """Run the YouTube scraper against direct channel/profile URLs."""
+        normalized_urls = [
+            str(url).strip()
+            for url in start_urls
+            if isinstance(url, str) and str(url).strip()
+        ]
+        if not normalized_urls:
+            return []
+
+        logger.info("Running YouTube scraper for %s URL(s)", len(normalized_urls))
+
+        input_data = {
+            "startUrls": [{"url": url} for url in normalized_urls],
+            "maxResults": max_results,
+            "maxResultsShorts": max_results_shorts,
+            "maxResultStreams": max_results_streams,
+        }
+
+        try:
+            with self._without_broken_local_proxy():
+                run = self._client.actor(self.YOUTUBE_SCRAPER_ACTOR).call(
+                    run_input=input_data,
+                    memory_mbytes=self._config.memory_mbytes,
+                    timeout_secs=self._config.default_timeout_secs,
+                )
+                dataset = self._client.dataset(run["defaultDatasetId"])
+                items = list(dataset.iterate_items())
+
+            logger.info("YouTube scraper returned %s results", len(items))
+            return items
+        except Exception as e:
+            logger.warning("YouTube scraper error for %s: %s", normalized_urls, e)
+            return []
     
     def crawl_website(
         self,

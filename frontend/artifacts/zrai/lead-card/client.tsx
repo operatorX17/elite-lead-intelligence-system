@@ -387,6 +387,45 @@ function formatLocationFact(signalFacts: SignalFacts) {
   return "Single / unknown";
 }
 
+function formatAdsFact(signalFacts: SignalFacts) {
+  if (signalFacts.ads_status === "yes") {
+    return signalFacts.ads_active_count ? `${signalFacts.ads_active_count} live` : "Active";
+  }
+  if (signalFacts.ads_status === "no") {
+    return "No";
+  }
+  return "Not checked";
+}
+
+function formatSocialCount(value: number | null | undefined, noun: string) {
+  if (value == null) {
+    return "-";
+  }
+  return `${value} ${noun}`;
+}
+
+function buildSocialResearchSummary(signalFacts: SignalFacts) {
+  const lines = [
+    signalFacts.ads_status === "yes"
+      ? signalFacts.ads_active_count
+        ? `Meta ads active: ${signalFacts.ads_active_count}`
+        : "Meta ads active"
+      : null,
+    signalFacts.instagram_profile?.followers_count
+      ? `Instagram: ${signalFacts.instagram_profile.followers_count} followers`
+      : signalFacts.instagram_present
+        ? "Instagram profile detected"
+        : null,
+    signalFacts.youtube_channel?.subscriber_count
+      ? `YouTube: ${signalFacts.youtube_channel.subscriber_count} subscribers`
+      : signalFacts.youtube_present
+        ? "YouTube channel detected"
+        : null,
+  ].filter(Boolean);
+
+  return lines.length ? lines.join(" | ") : null;
+}
+
 function normalizeLeadCardContent(
   lead: Lead,
   processedDetails?: ProcessedLeadDetails | null
@@ -926,6 +965,10 @@ function LeadCardContent({
               <div className="mt-1">{signalFacts.reviews_count ?? "-"}</div>
             </div>
             <div className="rounded-md bg-zinc-100 p-2 dark:bg-zinc-900">
+              <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Rating</div>
+              <div className="mt-1">{signalFacts.rating ?? "-"}</div>
+            </div>
+            <div className="rounded-md bg-zinc-100 p-2 dark:bg-zinc-900">
               <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Locations</div>
               <div className="mt-1">{formatLocationFact(signalFacts)}</div>
             </div>
@@ -937,6 +980,35 @@ function LeadCardContent({
                   {contactIntel.doctorNames.slice(0, 4).join(", ")}
                 </div>
               )}
+            </div>
+            <div className="rounded-md bg-zinc-100 p-2 dark:bg-zinc-900">
+              <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Ads</div>
+              <div className="mt-1">{formatAdsFact(signalFacts)}</div>
+              {!!signalFacts.ads_channels?.length && (
+                <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                  {signalFacts.ads_channels.join(", ")}
+                </div>
+              )}
+            </div>
+            <div className="rounded-md bg-zinc-100 p-2 dark:bg-zinc-900">
+              <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Instagram</div>
+              <div className="mt-1">
+                {signalFacts.instagram_profile?.followers_count != null
+                  ? formatSocialCount(signalFacts.instagram_profile.followers_count, "followers")
+                  : signalFacts.instagram_present
+                    ? "Present"
+                    : "No"}
+              </div>
+            </div>
+            <div className="rounded-md bg-zinc-100 p-2 dark:bg-zinc-900">
+              <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">YouTube</div>
+              <div className="mt-1">
+                {signalFacts.youtube_channel?.subscriber_count != null
+                  ? formatSocialCount(signalFacts.youtube_channel.subscriber_count, "subs")
+                  : signalFacts.youtube_present
+                    ? "Present"
+                    : "No"}
+              </div>
             </div>
           </div>
           <div className="mt-3 rounded-md bg-zinc-100 p-2 text-sm dark:bg-zinc-900">
@@ -969,6 +1041,11 @@ function LeadCardContent({
             <div className="rounded-md bg-zinc-100 p-2 dark:bg-zinc-900">
               <span className="font-medium">Next best action:</span> {getNextBestAction(signalFacts)}
             </div>
+            {buildSocialResearchSummary(signalFacts) && (
+              <div className="rounded-md bg-zinc-100 p-2 dark:bg-zinc-900">
+                <span className="font-medium">Growth signals:</span> {buildSocialResearchSummary(signalFacts)}
+              </div>
+            )}
           </div>
           {contactIntel.hasAny && (
             <div className="mt-3 space-y-2 text-sm">

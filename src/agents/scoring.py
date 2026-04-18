@@ -2,9 +2,10 @@
 Scoring Agent - deterministic clinic opportunity scoring.
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from datetime import datetime
 import logging
+import re
 
 from src.agents.base import BaseAgent
 from src.graph.state import LeadGraphState
@@ -18,20 +19,20 @@ class ScoringAgent(BaseAgent):
     Score clinics on close-now opportunity rather than legacy mixed heuristics.
 
     Final formula:
-    demand_score * 0.35
-    + trust_score * 0.25
-    + leak_score * 0.20
-    + serviceability_score * 0.10
-    + offer_fit_score * 0.10
+      demand_score * 0.33
+      + trust_score * 0.22
+      + leak_score * 0.25
+      + serviceability_score * 0.10
+      + offer_fit_score * 0.10
 
     Strong clinics with real demand and trust should not collapse into mediocre
     final scores just because leakage is moderate instead of catastrophic.
     """
 
     DEFAULT_WEIGHTS = {
-        "demand_score": 0.35,
-        "trust_score": 0.25,
-        "leak_score": 0.20,
+        "demand_score": 0.33,
+        "trust_score": 0.22,
+        "leak_score": 0.25,
         "serviceability_score": 0.10,
         "offer_fit_score": 0.10,
     }
@@ -156,6 +157,17 @@ class ScoringAgent(BaseAgent):
     ) -> Dict[str, Any]:
         proof_extraction = (proof or {}).get("extraction_data") or {}
         contact_paths = [str(path).lower() for path in (metadata.get("contact_paths") or [])]
+        people_intelligence = metadata.get("people_intelligence") or {}
+        instagram_profile = dict(
+            people_intelligence.get("instagram_profile")
+            or metadata.get("signal_facts", {}).get("instagram_profile")
+            or {}
+        )
+        youtube_channel = dict(
+            people_intelligence.get("youtube_channel")
+            or metadata.get("signal_facts", {}).get("youtube_channel")
+            or {}
+        )
 
         phone_numbers = list(proof_extraction.get("phone_numbers") or [])
         if enrichment.get("normalized_phone"):
@@ -169,13 +181,17 @@ class ScoringAgent(BaseAgent):
             social_profiles["facebook"] = [str(lead.get("facebook_page"))]
         if lead.get("instagram") and not social_profiles.get("instagram"):
             social_profiles["instagram"] = [str(lead.get("instagram"))]
+        if instagram_profile and not social_profiles.get("instagram_profile"):
+            social_profiles["instagram_profile"] = instagram_profile
+        if youtube_channel and not social_profiles.get("youtube_channel"):
+            social_profiles["youtube_channel"] = youtube_channel
 
         whatsapp_target = proof_extraction.get("whatsapp_target")
         whatsapp_detected = bool(
             whatsapp_target
             or proof_extraction.get("chat_widget") == "whatsapp"
-            or enrichment.get("chat_widget") == "whatsapp"
-            or "whatsapp" in contact_paths
+            or enrichment.get("whatsapp_detected")
+            or enrichment.get("whatsapp_target")
         )
         booking_detected = bool(
             proof_extraction.get("booking_detected")
@@ -204,10 +220,28 @@ class ScoringAgent(BaseAgent):
             list(proof_extraction.get("services") or [])
             + ([lead.get("category")] if lead.get("category") else [])
         )
-        branch_names = self._dedupe(list(proof_extraction.get("branch_names") or []))
-        doctor_names = self._dedupe(list(proof_extraction.get("doctor_names") or []))
-        branch_count = proof_extraction.get("branch_count") if isinstance(proof_extraction.get("branch_count"), int) else len(branch_names)
-        doctor_count = proof_extraction.get("doctor_count") if isinstance(proof_extraction.get("doctor_count"), int) else len(doctor_names)
+        branch_contacts = self._clean_branch_contacts(list(people_intelligence.get("branch_contacts") or []))
+        doctor_profiles = self._clean_doctor_profiles(list(people_intelligence.get("doctor_profiles") or []))
+        branch_contact_names = self._clean_branch_names(
+            [contact.get("name") for contact in branch_contacts if isinstance(contact, dict) and contact.get("name")]
+        )
+        doctor_profile_names = self._clean_doctor_names(
+            [profile.get("name") for profile in doctor_profiles if isinstance(profile, dict) and profile.get("name")]
+        )
+        branch_names = branch_contact_names or self._clean_branch_names(
+            list(people_intelligence.get("branch_names") or [])
+            + list(proof_extraction.get("branch_names") or [])
+        )
+        doctor_names = doctor_profile_names or self._clean_doctor_names(
+            list(people_intelligence.get("doctor_names") or [])
+            + list(proof_extraction.get("doctor_names") or [])
+        )
+        branch_count = len(branch_contact_names) if branch_contact_names else len(branch_names)
+        doctor_count = len(doctor_profiles) if doctor_profiles else len(doctor_names)
+        contact_intelligence = metadata.get("contact_intelligence") or {}
+        contact_quality_score = self._to_int(
+            metadata.get("contact_quality_score") or contact_intelligence.get("contact_quality_score")
+        )
 
         return {
             "phone_visible": bool(phone_numbers) or str(proof_extraction.get("phone_visibility") or "").lower() in {"hero", "visible", "above_fold", "below_fold"},
@@ -217,10 +251,17 @@ class ScoringAgent(BaseAgent):
             "contact_form_detected": contact_form_detected,
             "whatsapp_detected": whatsapp_detected,
             "whatsapp_target": whatsapp_target,
-            "chat_widget_type": "whatsapp" if whatsapp_detected else proof_extraction.get("chat_widget") or enrichment.get("chat_widget"),
+            "chat_widget_type": (
+                "whatsapp"
+                if whatsapp_detected
+                else proof_extraction.get("chat_widget") or enrichment.get("chat_widget")
+            ),
             "ads_status": ads_status,
             "ads_channels": list(ads_verification.get("channels") or []),
             "ads_last_seen": ads_verification.get("last_seen") or lead.get("ad_last_seen"),
+            "ads_active_count": self._to_int(ads_verification.get("active_ads_count")),
+            "ads_creative_hints": list(ads_verification.get("creative_hints") or []),
+            "paid_acquisition_active": ads_status == "yes",
             "reviews_count": lead.get("reviews_count") or lead.get("review_count"),
             "rating": lead.get("rating") or lead.get("review_rating"),
             "volume_score_inputs": {
@@ -232,19 +273,30 @@ class ScoringAgent(BaseAgent):
             },
             "services": services,
             "social_profiles": social_profiles,
-            "multi_clinic": bool(proof_extraction.get("multi_clinic") or branch_count > 1),
+            "multi_clinic": bool(branch_count > 1),
             "branch_count": branch_count,
             "branch_names": branch_names,
+            "branch_contacts": branch_contacts,
             "doctor_count": doctor_count,
             "doctor_names": doctor_names,
+            "doctor_profiles": doctor_profiles,
             "instagram_present": bool(proof_extraction.get("instagram_present") or social_profiles.get("instagram")),
+            "instagram_profile": instagram_profile,
             "youtube_present": bool(proof_extraction.get("youtube_present") or social_profiles.get("youtube")),
+            "youtube_channel": youtube_channel,
             "testimonials_present": bool(proof_extraction.get("testimonials_present")),
             "gallery_present": bool(proof_extraction.get("gallery_present")),
             "content_ready_score": int(proof_extraction.get("content_ready_score") or 0),
             "booking_flow_quality": proof_extraction.get("booking_flow_quality") or ("basic" if booking_detected else "none"),
             "after_hours_capture": bool(proof_extraction.get("after_hours_capture")),
-            "instant_response_path": bool(proof_extraction.get("instant_response_path") or whatsapp_detected or booking_detected),
+            "instant_response_path": bool(
+                proof_extraction.get("instant_response_path")
+                or whatsapp_detected
+                or proof_extraction.get("chat_widget")
+                or enrichment.get("chat_widget")
+            ),
+            "contact_intelligence": contact_intelligence,
+            "contact_quality_score": contact_quality_score,
         }
 
     def _compute_score_breakdown(
@@ -263,6 +315,13 @@ class ScoringAgent(BaseAgent):
         social_profiles = signal_facts.get("social_profiles") or {}
         social_count = len([value for value in social_profiles.values() if value])
         ads_status = signal_facts.get("ads_status")
+        ads_active_count = self._to_int(signal_facts.get("ads_active_count"))
+        instagram_profile = signal_facts.get("instagram_profile") or {}
+        youtube_channel = signal_facts.get("youtube_channel") or {}
+        instagram_followers = self._to_int(instagram_profile.get("followers_count"))
+        instagram_posts = self._to_int(instagram_profile.get("posts_count"))
+        youtube_subscribers = self._to_int(youtube_channel.get("subscriber_count"))
+        youtube_recent_videos = self._to_int(youtube_channel.get("recent_video_count"))
         volume_score = self._to_int(intent.get("volume_score") or (signal_facts.get("volume_score_inputs") or {}).get("volume_score"))
         intent_score = self._to_int(intent.get("intent_score"))
         intent_leak_score = self._to_int(intent.get("leak_score"))
@@ -298,6 +357,7 @@ class ScoringAgent(BaseAgent):
         demand_score += min(len(services), 4) * 2
         if ads_status == "yes":
             demand_score += 10
+            demand_score += min(ads_active_count * 2, 12)
         demand_score += min(int(volume_score / 10), 10)
         demand_score += min(int(intent_score / 20), 5)
 
@@ -313,52 +373,109 @@ class ScoringAgent(BaseAgent):
             trust_score += 10
         if social_count:
             trust_score += min(social_count, 3) * 5
-        trust_score += min(int(content_ready_score / 10), 20)
-        if contact_quality_score:
-            trust_score += min(int(contact_quality_score / 8), 15)
-        if top_contact:
+        if instagram_followers >= 100000:
+            trust_score += 10
+        elif instagram_followers >= 25000:
+            trust_score += 7
+        elif instagram_followers >= 5000:
             trust_score += 4
+        if instagram_posts >= 30:
+            trust_score += 4
+        if youtube_subscribers >= 10000:
+            trust_score += 8
+        elif youtube_subscribers >= 1000:
+            trust_score += 4
+        if youtube_recent_videos >= 5:
+            trust_score += 4
+        trust_score += min(int(content_ready_score / 12), 14)
+        if contact_quality_score:
+            trust_score += min(int(contact_quality_score / 12), 10)
+        if top_contact:
             contact_type = str(top_contact.get("contact_type") or "").lower()
-            if contact_type in {"founder_direct", "doctor_direct", "actual_contact"}:
-                trust_score += 8
-            if top_contact.get("phone"):
-                trust_score += 3
-            if top_contact.get("email"):
-                trust_score += 3
-            if top_contact.get("linkedin"):
-                trust_score += 3
             confidence = self._to_int(top_contact.get("confidence"))
-            if confidence:
-                trust_score += min(int(confidence / 15), 6)
-        if alternate_contacts:
-            trust_score += min(len(alternate_contacts), 4) * 2
+            if contact_type in {"founder_direct", "doctor_direct", "actual_contact"} and confidence >= 70:
+                trust_score += 10
+            elif confidence >= 60 and contact_type in {"decision_maker_candidate", "contact_candidate"}:
+                trust_score += 4
+            if confidence >= 65 and top_contact.get("phone"):
+                trust_score += 2
+            if confidence >= 65 and top_contact.get("email"):
+                trust_score += 2
+            if confidence >= 70 and top_contact.get("linkedin"):
+                trust_score += 2
+        verified_alternate_contacts = [
+            contact
+            for contact in alternate_contacts
+            if self._to_int(contact.get("confidence")) >= 60
+            and str(contact.get("contact_type") or "").lower() in {
+                "founder_direct",
+                "doctor_direct",
+                "actual_contact",
+                "decision_maker_candidate",
+            }
+        ]
+        if verified_alternate_contacts:
+            trust_score += min(len(verified_alternate_contacts), 2) * 2
         if branch_contacts:
-            trust_score += min(len(branch_contacts), 3) * 2
+            trust_score += min(len(branch_contacts), 2)
         if reviews >= 200 and rating >= 4.5:
-            trust_score = max(trust_score, 35)
+            trust_score = max(trust_score, 30)
 
         leak_score = 0
         if not signal_facts.get("phone_visible"):
-            leak_score += 25
+            leak_score += 30
         if not signal_facts.get("whatsapp_detected"):
-            leak_score += 15
+            leak_score += 14 if signal_facts.get("booking_detected") or signal_facts.get("contact_form_detected") else 22
         if booking_quality == "none":
-            leak_score += 20
+            leak_score += 30
         elif booking_quality == "weak":
-            leak_score += 12
+            leak_score += 22
+        elif booking_quality == "basic":
+            leak_score += 14
         if not signal_facts.get("contact_form_detected"):
-            leak_score += 10
+            leak_score += 12
         if not signal_facts.get("after_hours_capture"):
-            leak_score += 10
+            leak_score += 6 if signal_facts.get("booking_detected") or signal_facts.get("contact_form_detected") else 10
         if not signal_facts.get("instant_response_path"):
+            leak_score += 8 if signal_facts.get("booking_detected") or signal_facts.get("contact_form_detected") else 12
+        if (
+            not signal_facts.get("whatsapp_detected")
+            and booking_quality in {"basic", "weak", "none"}
+            and self._to_int(signal_facts.get("reviews_count")) >= 20
+        ):
+            leak_score += 6
+        if (
+            not signal_facts.get("whatsapp_detected")
+            and booking_quality in {"basic", "weak"}
+            and not signal_facts.get("instant_response_path")
+        ):
+            leak_score += 12
+        if (
+            not signal_facts.get("whatsapp_detected")
+            and not signal_facts.get("after_hours_capture")
+            and (reviews >= 50 or branch_count > 1 or content_ready_score >= 60)
+        ):
+            leak_score += 8
+        if ads_status == "yes" and not signal_facts.get("instant_response_path"):
+            leak_score += 14
+        if ads_status == "yes" and not signal_facts.get("whatsapp_detected"):
             leak_score += 10
-        if signal_facts.get("phone_visible") and not any([
-            signal_facts.get("whatsapp_detected"),
-            signal_facts.get("booking_detected"),
-            signal_facts.get("contact_form_detected"),
-        ]):
-            leak_score += 10
-        leak_score = max(leak_score, min(int(intent_leak_score * 0.6), 80))
+        missing_capture_paths = sum(
+            1
+            for signal_present in [
+                signal_facts.get("whatsapp_detected"),
+                signal_facts.get("booking_detected"),
+                signal_facts.get("contact_form_detected"),
+            ]
+            if not signal_present
+        )
+        if signal_facts.get("phone_visible") and missing_capture_paths >= 2:
+            leak_score += 18
+        if reviews >= 50 and missing_capture_paths >= 2:
+            leak_score += 8
+        if branch_count > 1 and missing_capture_paths >= 2:
+            leak_score += 6
+        leak_score = max(leak_score, min(int(intent_leak_score * 0.9), 95))
 
         serviceability_score = 0
         if self._is_high_ticket_category(str(lead.get("category") or "")):
@@ -382,6 +499,11 @@ class ScoringAgent(BaseAgent):
             offer_fit_score += 10
         if social_count:
             offer_fit_score += 10
+        if ads_status == "yes":
+            offer_fit_score += 14
+            offer_fit_score += min(ads_active_count * 2, 10)
+        if instagram_followers >= 5000 or youtube_subscribers >= 1000:
+            offer_fit_score += 6
         offer_fit_score += min(int(reactivation_fit / 12), 8)
 
         return {
@@ -454,6 +576,108 @@ class ScoringAgent(BaseAgent):
     def _is_high_ticket_category(self, category: str) -> bool:
         category_lower = str(category or "").lower()
         return any(keyword in category_lower for keyword in self.HIGH_TICKET_HINTS)
+
+    def _clean_branch_names(self, values: List[Any]) -> List[str]:
+        blocked_terms = {
+            "about us",
+            "contact us",
+            "book appointment",
+            "treatments",
+            "treatment",
+            "gallery",
+            "offers",
+            "offer",
+            "popular treatments",
+            "chemical peel",
+            "photo facial",
+            "prp",
+            "microdermabrasion",
+            "laser hair",
+            "latest offers",
+        }
+        cleaned: List[str] = []
+        for value in self._dedupe(values):
+            text = str(value or "").strip()
+            lowered = text.lower()
+            if not text or "@" in lowered or lowered.startswith("http"):
+                continue
+            if any(term in lowered for term in blocked_terms):
+                continue
+            cleaned.append(text)
+        return cleaned
+
+    def _clean_branch_contacts(self, values: List[Any]) -> List[Dict[str, Any]]:
+        cleaned: List[Dict[str, Any]] = []
+        seen = set()
+        for value in values:
+            if not isinstance(value, dict):
+                continue
+            names = self._clean_branch_names([value.get("name")])
+            name = names[0] if names else None
+            phone = str(value.get("phone") or "").strip()
+            if not name and not phone:
+                continue
+            key = ((name or "").lower(), phone)
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized = dict(value)
+            normalized["name"] = name
+            normalized["phone"] = phone or None
+            cleaned.append(normalized)
+        return cleaned
+
+    def _clean_doctor_names(self, values: List[Any]) -> List[str]:
+        return [text for text in self._dedupe(values) if self._is_plausible_person_name(text)]
+
+    def _clean_doctor_profiles(self, values: List[Any]) -> List[Dict[str, Any]]:
+        cleaned: List[Dict[str, Any]] = []
+        seen = set()
+        for value in values:
+            if not isinstance(value, dict):
+                continue
+            name = str(value.get("name") or "").strip()
+            if not self._is_plausible_person_name(name):
+                continue
+            key = name.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized = dict(value)
+            normalized["name"] = name
+            cleaned.append(normalized)
+        return cleaned
+
+    def _is_plausible_person_name(self, value: Any) -> bool:
+        text = str(value or "").strip()
+        if not text:
+            return False
+        tokens = [token.lower() for token in re.findall(r"[A-Za-z]+", text)]
+        if len(tokens) < 2:
+            return False
+        blocked_tokens = {
+            "clinic",
+            "skin",
+            "hair",
+            "laser",
+            "care",
+            "center",
+            "centre",
+            "hospital",
+            "dermatology",
+            "aesthetic",
+            "aesthetics",
+            "cosmetic",
+            "consultant",
+            "dermatologist",
+            "doctor",
+            "specialist",
+            "surgeon",
+            "physician",
+            "admin",
+            "receptionist",
+        }
+        return not any(token in blocked_tokens for token in tokens)
 
     def _to_int(self, value: Any) -> int:
         try:

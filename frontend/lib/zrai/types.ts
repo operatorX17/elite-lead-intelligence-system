@@ -43,6 +43,24 @@ export interface Contact {
   created_at: string;
 }
 
+export interface ContactPoint {
+  name?: string;
+  role?: string | null;
+  clinic?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  linkedin?: string | null;
+  source?: string | null;
+  confidence?: number | null;
+  reason?: string | null;
+  channel?: string | null;
+  contact_type?: string | null;
+  owner_scope?: string | null;
+  is_primary?: boolean;
+  is_direct?: boolean;
+  is_public?: boolean;
+}
+
 export interface IntentSignal {
   id: string;
   lead_id: string;
@@ -54,17 +72,22 @@ export interface IntentSignal {
 }
 
 export interface SignalFacts {
-  phone_visible: boolean;
-  phone_numbers: string[];
-  booking_detected: boolean;
-  booking_target?: string | null;
-  contact_form_detected: boolean;
-  whatsapp_detected: boolean;
-  whatsapp_target?: string | null;
-  chat_widget_type?: string | null;
+    phone_visible: boolean;
+    phone_numbers: string[];
+    booking_detected: boolean;
+    booking_target?: string | null;
+    contact_form_detected: boolean;
+    whatsapp_detected: boolean;
+    whatsapp_widget_detected?: boolean;
+    whatsapp_target?: string | null;
+    chat_widget_type?: string | null;
   ads_status: AdsStatus;
   ads_channels: string[];
   ads_last_seen?: string | null;
+  ads_active_count?: number | null;
+  ads_creative_hints?: string[];
+  ads_page_names?: string[];
+  paid_acquisition_active?: boolean;
   reviews_count?: number | null;
   rating?: number | null;
   volume_score_inputs?: Record<string, unknown>;
@@ -87,15 +110,45 @@ export interface SignalFacts {
     linkedin?: string;
   }>;
   instagram_present?: boolean;
+  instagram_profile?: {
+    username?: string;
+    profile_url?: string;
+    full_name?: string;
+    bio?: string;
+    external_url?: string;
+    followers_count?: number;
+    verified?: boolean;
+    business_category?: string;
+    posts_count?: number;
+    latest_post_count?: number;
+    source?: string;
+  };
   youtube_present?: boolean;
+  youtube_channel?: {
+    channel_name?: string;
+    channel_url?: string;
+    subscriber_count?: number;
+    total_views?: number;
+    total_videos?: number;
+    recent_video_count?: number;
+    avg_recent_views?: number;
+    latest_video_date?: string;
+    source?: string;
+  };
   testimonials_present?: boolean;
   gallery_present?: boolean;
   content_ready_score?: number;
   booking_flow_quality?: string;
   after_hours_capture?: boolean;
   instant_response_path?: boolean;
+  contact_quality_score?: number | null;
   confidence_by_signal?: Record<string, number>;
+  evidence_levels?: Record<string, string>;
+  capture_path_kind?: "instant" | "delayed" | "missing" | "unknown";
+  after_hours_capture_status?: "verified" | "likely" | "not_proven" | "missing" | "unknown";
   decision_maker_name?: string | null;
+  decision_maker_candidate_name?: string | null;
+  decision_maker_status?: "verified" | "candidate" | "inferred" | "unknown" | null;
   decision_maker_linkedin?: string | null;
   decision_maker_role?: string | null;
   decision_maker_source?: string | null;
@@ -121,6 +174,23 @@ export interface SignalFacts {
     source?: string;
   }>;
   contact_evidence?: string[];
+  contact_intelligence?: {
+    top_contact?: ContactPoint | null;
+    alternate_contacts?: ContactPoint[];
+    contact_points?: ContactPoint[];
+    contact_evidence?: string[];
+    best_contact_reason?: string | null;
+    decision_maker_name?: string | null;
+    decision_maker_role?: string | null;
+    decision_maker_source?: string | null;
+    decision_maker_confidence?: number | null;
+    decision_maker_linkedin?: string | null;
+    best_contact_phone?: string | null;
+    best_contact_email?: string | null;
+    best_contact_linkedin?: string | null;
+    best_contact_channel?: string | null;
+    contact_quality_score?: number | null;
+  };
   top_issue?: string;
   next_best_action?: string;
   recommended_channel?: string | null;
@@ -167,6 +237,7 @@ export interface AnalysisBundle {
     proof_mode?: string | null;
     audit_bullets?: Array<Record<string, unknown>>;
   };
+  contact_intelligence?: SignalFacts["contact_intelligence"];
   lead: {
     id?: string | null;
     business_name?: string | null;
@@ -180,6 +251,8 @@ export interface AnalysisBundle {
     known_pain_points?: string[];
     trust_markers?: string[];
     decision_maker_name?: string | null;
+    decision_maker_candidate_name?: string | null;
+    decision_maker_status?: "verified" | "candidate" | "inferred" | "unknown" | null;
     decision_maker_linkedin?: string | null;
     decision_maker_role?: string | null;
     decision_maker_source?: string | null;
@@ -193,6 +266,7 @@ export interface AnalysisBundle {
     doctor_profiles?: SignalFacts["doctor_profiles"];
     branch_contacts?: SignalFacts["branch_contacts"];
     contact_evidence?: SignalFacts["contact_evidence"];
+    contact_intelligence?: SignalFacts["contact_intelligence"];
     recommended_offer?: string | null;
     recommended_channel?: string | null;
     recommended_next_step?: string | null;
@@ -200,11 +274,16 @@ export interface AnalysisBundle {
 }
 
 export interface Lead {
-  id: string;
-  company_name: string;
-  domain: string;
-  niche: string;
-  geo: string;
+    id: string;
+    company_name: string;
+    business_name?: string;
+    domain: string;
+    website?: string;
+    landing_page_url?: string;
+    source_url?: string;
+    url?: string;
+    niche: string;
+    geo: string;
   status: LeadStatus;
   score?: number;
   score_kind?: 'preview_match' | 'final_score';
@@ -280,7 +359,15 @@ export interface ScoringResult {
 // Outreach Types
 // ============================================================================
 
-export type OutreachChannel = 'email' | 'linkedin' | 'sms' | 'whatsapp';
+export type OutreachChannel =
+  | 'email'
+  | 'linkedin'
+  | 'sms'
+  | 'whatsapp'
+  | 'instagram'
+  | 'website_chat'
+  | 'dm'
+  | 'form';
 
 export type OutreachStatus = 
   | 'draft' 
@@ -370,6 +457,8 @@ export interface Conversation {
   status: ConversationStatus;
   messages: ConversationMessage[];
   escalation_reason?: string;
+  stage?: string;
+  entities?: Record<string, unknown>;
   assigned_to?: string;
   created_at: string;
   updated_at: string;

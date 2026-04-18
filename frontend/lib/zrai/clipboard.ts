@@ -54,6 +54,8 @@ type RankedContactModel = {
   bestContactReason: string | null;
   recommendedOffer: string | null;
   decisionMakerName: string | null;
+  decisionMakerCandidateName: string | null;
+  decisionMakerStatus: string | null;
   decisionMakerRole: string | null;
   decisionMakerSource: string | null;
   decisionMakerConfidence: number | null;
@@ -119,6 +121,45 @@ function formatConfidence(value: number | null | undefined) {
 
   const normalized = value <= 1 ? value * 100 : value;
   return `${Math.round(normalized)}%`;
+}
+
+function classifyCapturePath(signalFacts: SignalFacts | null | undefined) {
+  if (!signalFacts) {
+    return "unknown";
+  }
+  if (signalFacts.capture_path_kind) {
+    return signalFacts.capture_path_kind;
+  }
+  if (
+    signalFacts.whatsapp_target ||
+    signalFacts.chat_widget_type ||
+    signalFacts.instant_response_path
+  ) {
+    return "instant";
+  }
+  if (signalFacts.booking_detected || signalFacts.contact_form_detected) {
+    return "delayed";
+  }
+  return "missing";
+}
+
+function classifyAfterHours(signalFacts: SignalFacts | null | undefined) {
+  if (!signalFacts) {
+    return "unknown";
+  }
+  if (signalFacts.after_hours_capture_status) {
+    return signalFacts.after_hours_capture_status;
+  }
+  if (signalFacts.after_hours_capture) {
+    return "verified";
+  }
+  if (signalFacts.whatsapp_target || signalFacts.chat_widget_type) {
+    return "likely";
+  }
+  if (signalFacts.booking_detected || signalFacts.contact_form_detected) {
+    return "not_proven";
+  }
+  return "missing";
 }
 
 function getSignalFacts(
@@ -273,10 +314,7 @@ export function buildLeadScoreNarrative(
   const guidance = getGuidance(lead, processedDetails);
   const agentContext = getAgentContext(lead, processedDetails);
   const trustMarkers = agentContext.trust_markers || [];
-  const whyThisLead =
-    typeof processedDetails?.intent?.why_this_lead === "string"
-      ? processedDetails.intent.why_this_lead
-      : guidance.why_this_lead || null;
+  const whyThisLead = guidance.why_this_lead || null;
   const recommendedOffer = agentContext.recommended_offer || null;
   const recommendedChannel =
     signalFacts?.recommended_channel ||
@@ -289,14 +327,28 @@ export function buildLeadScoreNarrative(
     agentContext.recommended_next_step ||
     null;
   const topIssue = signalFacts?.top_issue || guidance.top_issue || null;
+  const capturePath = classifyCapturePath(signalFacts);
+  const afterHoursStatus = classifyAfterHours(signalFacts);
   const trustSignals = trustMarkers.length
     ? `Trust signals: ${trustMarkers.slice(0, 4).join(", ")}`
     : joinNonEmpty([
         signalFacts?.reviews_count != null ? `${signalFacts.reviews_count} reviews` : null,
         signalFacts?.rating != null ? `${signalFacts.rating} rating` : null,
+        signalFacts?.ads_status === "yes"
+          ? signalFacts?.ads_active_count
+            ? `${signalFacts.ads_active_count} active ads`
+            : "active ads"
+          : null,
         signalFacts?.branch_count ? `${signalFacts.branch_count} locations` : null,
         signalFacts?.doctor_count ? `${signalFacts.doctor_count} doctors` : null,
+        signalFacts?.instagram_profile?.followers_count
+          ? `Instagram ${signalFacts.instagram_profile.followers_count} followers`
+          : null,
+        signalFacts?.youtube_channel?.subscriber_count
+          ? `YouTube ${signalFacts.youtube_channel.subscriber_count} subscribers`
+          : null,
         signalFacts?.contact_intelligence?.top_contact?.name
+          && Number(signalFacts.contact_intelligence.top_contact.confidence || 0) >= 70
           ? `${signalFacts.contact_intelligence.top_contact.name} (${
               signalFacts.contact_intelligence.top_contact.contact_type ||
               signalFacts.contact_intelligence.top_contact.owner_scope ||
@@ -315,17 +367,35 @@ export function buildLeadScoreNarrative(
     "Trust score is a weighted 25% component of the final score and reflects reviews, rating, doctors, locations, social proof, and content readiness.";
   const leakDrivers = [
     signalFacts && !signalFacts.phone_visible ? "phone not prominent" : null,
-    signalFacts && !signalFacts.whatsapp_detected ? "missing WhatsApp capture" : null,
+    signalFacts && !signalFacts.whatsapp_detected && capturePath === "delayed"
+      ? "no instant messaging capture path"
+      : signalFacts && !signalFacts.whatsapp_detected && capturePath === "missing"
+        ? "no digital capture path"
+        : signalFacts && !signalFacts.whatsapp_detected
+          ? "missing WhatsApp capture"
+          : null,
     signalFacts
       ? signalFacts.booking_detected
-        ? signalFacts.booking_flow_quality === "weak"
+        ? signalFacts.booking_flow_quality === "weak" ||
+          signalFacts.booking_flow_quality === "none"
           ? "weak booking flow"
           : null
         : "missing booking path"
       : null,
     signalFacts && signalFacts.contact_form_detected === false ? "no contact form" : null,
-    signalFacts && !signalFacts.after_hours_capture ? "after-hours gap" : null,
-    signalFacts && !signalFacts.instant_response_path ? "no instant-response path" : null,
+    afterHoursStatus === "missing"
+      ? "after-hours gap"
+      : afterHoursStatus === "not_proven"
+        ? "after-hours capture not proven"
+        : null,
+    signalFacts?.ads_status === "yes" && capturePath !== "instant"
+      ? "paid traffic likely lands in delayed follow-up"
+      : null,
+    capturePath === "delayed"
+      ? "delayed follow-up instead of instant capture"
+      : capturePath === "missing"
+        ? "no instant-response path"
+        : null,
   ].filter(Boolean);
   const leakSummary =
     leakDrivers.length > 0
@@ -337,10 +407,21 @@ export function buildLeadScoreNarrative(
     signalFacts?.content_ready_score != null
       ? `content readiness ${signalFacts.content_ready_score}/100`
       : null,
+    signalFacts?.ads_status === "yes"
+      ? signalFacts?.ads_active_count
+        ? `${signalFacts.ads_active_count} live ads`
+        : "live ads detected"
+      : null,
     signalFacts?.booking_flow_quality && signalFacts.booking_flow_quality !== "strong"
       ? `booking flow ${signalFacts.booking_flow_quality}`
       : null,
     signalFacts?.whatsapp_detected ? null : "no WhatsApp capture",
+    signalFacts?.instagram_profile?.followers_count
+      ? `Instagram ${signalFacts.instagram_profile.followers_count} followers`
+      : null,
+    signalFacts?.youtube_channel?.subscriber_count
+      ? `YouTube ${signalFacts.youtube_channel.subscriber_count} subscribers`
+      : null,
     Object.keys(signalFacts?.social_profiles || {}).length
       ? "social footprint present"
       : null,
@@ -377,11 +458,28 @@ export function buildRankedContactModel(
     null;
   const canonicalTopContact = canonicalContactIntelligence?.top_contact || null;
   const canonicalAlternateContacts = canonicalContactIntelligence?.alternate_contacts || [];
+  const decisionMakerStatus =
+    String(
+      signalFacts?.decision_maker_status ||
+        agentContext.decision_maker_status ||
+        ""
+    ).trim() || null;
   const decisionMakerName = sanitizeDecisionMakerName(
+    decisionMakerStatus === "verified"
+      ? canonicalContactIntelligence?.decision_maker_name ||
+          signalFacts?.decision_maker_name ||
+          agentContext.decision_maker_name ||
+          canonicalTopContact?.name ||
+          null
+      : null
+  );
+  const decisionMakerCandidateName = sanitizeDecisionMakerName(
     canonicalContactIntelligence?.decision_maker_name ||
-      signalFacts?.decision_maker_name ||
-      agentContext.decision_maker_name ||
-      canonicalTopContact?.name ||
+      signalFacts?.decision_maker_candidate_name ||
+      agentContext.decision_maker_candidate_name ||
+      (decisionMakerStatus === "candidate"
+        ? signalFacts?.decision_maker_name || agentContext.decision_maker_name || canonicalTopContact?.name
+        : null) ||
       null
   );
   const decisionMakerLinkedin =
@@ -680,6 +778,8 @@ export function buildRankedContactModel(
     bestContactReason,
     recommendedOffer,
     decisionMakerName,
+    decisionMakerCandidateName,
+    decisionMakerStatus,
     decisionMakerRole,
     decisionMakerSource,
     decisionMakerConfidence,
@@ -875,6 +975,14 @@ export function formatLeadForClipboard(
     sections.push(`Top contact\n${formatRankedContact(contactModel.topContact)}`);
   }
 
+  if (!contactModel.decisionMakerName && contactModel.decisionMakerCandidateName) {
+    sections.push(
+      `Contact certainty\nLikely contact: ${contactModel.decisionMakerCandidateName}${
+        contactModel.decisionMakerRole ? ` | role: ${contactModel.decisionMakerRole}` : ""
+      } | status: candidate only`
+    );
+  }
+
   if (contactModel.alternateContacts.length) {
     sections.push(
       `Alternate contacts\n${contactModel.alternateContacts
@@ -896,9 +1004,9 @@ export function formatLeadForClipboard(
   }
 
   const siteTruthSummary =
-    processedDetails?.intent?.site_truth_summary || guidance.site_truth_summary || null;
+    guidance.site_truth_summary || processedDetails?.intent?.site_truth_summary || null;
   const whyThisLead =
-    processedDetails?.intent?.why_this_lead || guidance.why_this_lead || null;
+    guidance.why_this_lead || processedDetails?.intent?.why_this_lead || null;
 
   if (siteTruthSummary || whyThisLead) {
     const intentLines = [
