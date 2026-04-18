@@ -37,6 +37,7 @@ const importableLeadSchema = z.object({
 const analyzeRequestSchema = z.object({
   lead_id: z.string().min(1, "Lead id is required"),
   include_outreach: z.boolean().optional().default(true),
+  force_refresh: z.boolean().optional().default(false),
   lead: importableLeadSchema.optional(),
 });
 
@@ -120,6 +121,7 @@ export async function POST(request: Request): Promise<Response> {
       body: JSON.stringify({
         lead_id: leadId,
         include_outreach: body.include_outreach,
+        force_refresh: body.force_refresh,
       }),
     });
 

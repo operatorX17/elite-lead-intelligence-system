@@ -397,6 +397,33 @@ function normalizeLeadCardContent(
   });
 }
 
+function buildQueuedProcessedDetails(
+  existing: ProcessedLeadDetails | null | undefined,
+  analysisUpdatedAt: string | null | undefined,
+  clearPreviousTruth: boolean
+) {
+  if (!clearPreviousTruth) {
+    return {
+      ...(existing || {}),
+      analysis_state: "analyzing",
+      analysis_updated_at: analysisUpdatedAt || null,
+    } as ProcessedLeadDetails;
+  }
+
+  return {
+    enrichment: {},
+    intent: {},
+    proof: {},
+    scoring: {},
+    outreach: [],
+    signal_facts: undefined,
+    analysis_bundle: undefined,
+    analysis_state: "analyzing",
+    analysis_updated_at: analysisUpdatedAt || undefined,
+    signals_version: undefined,
+  } as ProcessedLeadDetails;
+}
+
 function LeadStatusBadge({ status }: { status: string }) {
   const colors: Record<string, string> = {
     discovered: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400",
@@ -595,40 +622,7 @@ function LeadCardContent({
 
     setIsRefreshingTruth(true);
     try {
-      const response = await fetch(getZRAILeadByIdEndpoint(lead.id));
-      if (!response.ok) {
-        throw new Error(await response.text());
-      }
-
-        const latest = await response.json();
-        const latestData = getPayloadData(latest);
-        if (!(latest?.success ?? true) || !latestData?.lead) {
-          throw new Error("Lead truth refresh failed.");
-        }
-
-        const latestLead = latestData.lead as Lead;
-        const latestProcessedDetailsRaw = latestData.processed_details
-          ? ({
-              ...(latestData.processed_details || {}),
-              signal_facts: latestData.signal_facts || latestData.processed_details?.signal_facts || null,
-              analysis_bundle: latestData.analysis_bundle || latestData.processed_details?.analysis_bundle || null,
-              analysis_state: latestData.analysis_state || latestData.processed_details?.analysis_state || null,
-              analysis_updated_at:
-                latestData.analysis_updated_at || latestData.processed_details?.analysis_updated_at || null,
-              signals_version: latestData.signals_version || latestData.processed_details?.signals_version || null,
-            } as ProcessedLeadDetails)
-          : null;
-      const hydrated = await hydrateFounderIntel(latestLead, latestProcessedDetailsRaw);
-      setMetadata((prev: LeadCardMetadata) => ({
-        ...prev,
-        lead: hydrated.lead,
-        processedDetails: hydrated.processedDetails,
-        liveLead: hydrated.lead,
-        liveProcessedDetails: hydrated.processedDetails,
-      }));
-      setLiveLead(hydrated.lead);
-      setLiveProcessedDetails(hydrated.processedDetails);
-      toast.success("Lead truth refreshed.");
+      await analyzeLead(true);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Lead truth refresh failed");
     } finally {
@@ -692,7 +686,7 @@ function LeadCardContent({
     toast.success("Analysis is still running. Use Refresh truth in a moment.");
   };
 
-  const analyzeLead = async () => {
+  const analyzeLead = async (forceRefresh: boolean = false) => {
     if (!lead?.id) {
       return;
     }
@@ -715,6 +709,7 @@ function LeadCardContent({
         body: JSON.stringify({
           lead_id: persistentLead.id,
           include_outreach: false,
+          force_refresh: forceRefresh,
           lead: persistentLead,
         }),
       });
@@ -736,11 +731,11 @@ function LeadCardContent({
           ...persistentLead,
           analysis_state: "analyzing",
         } as Lead;
-        const queuedProcessedDetails = {
-          ...(metadata?.processedDetails || {}),
-          analysis_state: "analyzing",
-          analysis_updated_at: resultData?.analysis_updated_at || result?.analysis_updated_at || null,
-        } as ProcessedLeadDetails;
+        const queuedProcessedDetails = buildQueuedProcessedDetails(
+          metadata?.processedDetails || null,
+          resultData?.analysis_updated_at || result?.analysis_updated_at || null,
+          forceRefresh
+        );
         setMetadata((prev: LeadCardMetadata) => ({
           ...prev,
           lead: queuedLead,
@@ -750,7 +745,7 @@ function LeadCardContent({
         }));
         setLiveLead(queuedLead);
         setLiveProcessedDetails(queuedProcessedDetails);
-        toast.success("Analysis started.");
+        toast.success(forceRefresh ? "Truth refresh started." : "Analysis started.");
         await pollLeadAnalysisCompletion(queuedLead.id);
         return;
       }
@@ -780,7 +775,7 @@ function LeadCardContent({
       }));
       setLiveLead(hydrated.lead);
       setLiveProcessedDetails(hydrated.processedDetails);
-      toast.success("Lead analyzed.");
+      toast.success(forceRefresh ? "Lead truth refreshed." : "Lead analyzed.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Lead analysis failed");
     } finally {

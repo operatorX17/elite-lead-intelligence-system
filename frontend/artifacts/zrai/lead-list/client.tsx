@@ -955,32 +955,112 @@ function mergeProcessedLeadDetailsRecords(
     return { ...existing };
   }
 
+  const parseUpdatedAt = (value: string | null | undefined) => {
+    const timestamp = Date.parse(String(value || ""));
+    return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
+  };
+
+  const getStateRank = (value: string | null | undefined) => {
+    switch (value) {
+      case "analyzed":
+        return 4;
+      case "analyzing":
+        return 3;
+      case "failed":
+        return 2;
+      case "preview":
+        return 1;
+      default:
+        return 0;
+    }
+  };
+
+  const incomingUpdatedAt = parseUpdatedAt(incoming.analysis_updated_at);
+  const existingUpdatedAt = parseUpdatedAt(existing.analysis_updated_at);
+  const incomingStateRank = getStateRank(incoming.analysis_state);
+  const existingStateRank = getStateRank(existing.analysis_state);
+  const incomingFactsCount = Object.keys(incoming.signal_facts || {}).length;
+  const existingFactsCount = Object.keys(existing.signal_facts || {}).length;
+  const incomingIsPrimary =
+    incomingUpdatedAt > existingUpdatedAt ||
+    (incomingUpdatedAt === existingUpdatedAt &&
+      (incomingStateRank > existingStateRank ||
+        (incomingStateRank === existingStateRank &&
+          incomingFactsCount >= existingFactsCount)));
+  const primary = incomingIsPrimary ? incoming : existing;
+  const secondary = incomingIsPrimary ? existing : incoming;
+
   return {
-    ...existing,
-    ...incoming,
+    ...secondary,
+    ...primary,
     enrichment: {
-      ...(existing.enrichment || {}),
-      ...(incoming.enrichment || {}),
+      ...(secondary.enrichment || {}),
+      ...(primary.enrichment || {}),
     },
     intent: {
-      ...(existing.intent || {}),
-      ...(incoming.intent || {}),
+      ...(secondary.intent || {}),
+      ...(primary.intent || {}),
     },
     proof: {
-      ...(existing.proof || {}),
-      ...(incoming.proof || {}),
+      ...(secondary.proof || {}),
+      ...(primary.proof || {}),
     },
     scoring: {
-      ...(existing.scoring || {}),
-      ...(incoming.scoring || {}),
+      ...(secondary.scoring || {}),
+      ...(primary.scoring || {}),
     },
-    signal_facts: incoming.signal_facts ?? existing.signal_facts,
-    analysis_bundle: incoming.analysis_bundle ?? existing.analysis_bundle,
-    analysis_state: incoming.analysis_state ?? existing.analysis_state,
-    analysis_updated_at: incoming.analysis_updated_at ?? existing.analysis_updated_at,
-    signals_version: incoming.signals_version ?? existing.signals_version,
-    outreach: incoming.outreach ?? existing.outreach ?? [],
+    signal_facts: primary.signal_facts ?? secondary.signal_facts,
+    analysis_bundle: primary.analysis_bundle ?? secondary.analysis_bundle,
+    analysis_state: primary.analysis_state ?? secondary.analysis_state,
+    analysis_updated_at: primary.analysis_updated_at ?? secondary.analysis_updated_at,
+    signals_version: primary.signals_version ?? secondary.signals_version,
+    outreach: primary.outreach ?? secondary.outreach ?? [],
   };
+}
+
+function mergeProcessedDetailsMapRecords(
+  existing: Record<string, ProcessedLeadDetails> | undefined,
+  incoming: Record<string, ProcessedLeadDetails> | undefined
+) {
+  const merged: Record<string, ProcessedLeadDetails> = {
+    ...(existing || {}),
+  };
+
+  for (const [leadId, details] of Object.entries(incoming || {})) {
+    const nextDetails = mergeProcessedLeadDetailsRecords(merged[leadId], details);
+    if (nextDetails) {
+      merged[leadId] = nextDetails;
+    }
+  }
+
+  return merged;
+}
+
+function buildQueuedProcessedDetails(
+  existing: ProcessedLeadDetails | null | undefined,
+  analysisUpdatedAt: string | null | undefined,
+  clearPreviousTruth: boolean
+) {
+  if (!clearPreviousTruth) {
+    return {
+      ...(existing || {}),
+      analysis_state: "analyzing",
+      analysis_updated_at: analysisUpdatedAt || null,
+    } as ProcessedLeadDetails;
+  }
+
+  return {
+    enrichment: {},
+    intent: {},
+    proof: {},
+    scoring: {},
+    outreach: [],
+    signal_facts: undefined,
+    analysis_bundle: undefined,
+    analysis_state: "analyzing",
+    analysis_updated_at: analysisUpdatedAt || undefined,
+    signals_version: undefined,
+  } as ProcessedLeadDetails;
 }
 
 function collectProcessedDetailsForLeadEntity(
@@ -1375,10 +1455,10 @@ function LeadListContent({
   const contentPayload = parseLeadListPayload(content);
   const contentLeads = contentPayload.leads;
   const metadataLeads = dedupeLeadRows(sanitizeLeadRows(metadata?.leads || []));
-  const mergedProcessedDetails = {
-    ...(contentPayload.processedDetails || {}),
-    ...(metadata?.processedDetails || {}),
-  };
+  const mergedProcessedDetails = mergeProcessedDetailsMapRecords(
+    contentPayload.processedDetails || {},
+    metadata?.processedDetails || {}
+  );
   const mergedRawLeads = sanitizeLeadRows(
     mergeLeadRows(contentLeads, metadataLeads)
   );
@@ -1449,11 +1529,13 @@ function LeadListContent({
       return;
     }
 
-    const nextProcessedDetails = {
-      ...(currentPayload.processedDetails || {}),
-      ...(snapshotPayload.processedDetails || {}),
-      ...(metadata?.processedDetails || {}),
-    };
+    const nextProcessedDetails = mergeProcessedDetailsMapRecords(
+      mergeProcessedDetailsMapRecords(
+        currentPayload.processedDetails || {},
+        snapshotPayload.processedDetails || {}
+      ),
+      metadata?.processedDetails || {}
+    );
     const mergedSnapshotLeads = mergeLeadRows(currentPayload.leads, snapshotPayload.leads);
     const canonicalSnapshotState = canonicalizeLeadListState({
       leads: mergedSnapshotLeads,
@@ -1919,6 +2001,7 @@ function LeadListContent({
     leadIds: string[],
     options?: {
       includeOutreach?: boolean;
+      forceRefresh?: boolean;
       successMessage?: string;
       emptyMessage?: string;
     }
@@ -2010,6 +2093,7 @@ function LeadListContent({
         body: JSON.stringify({
           lead_ids: activeLeadIds,
           include_outreach: options?.includeOutreach ?? true,
+          force_refresh: options?.forceRefresh ?? false,
         }),
       });
 
@@ -2132,59 +2216,7 @@ function LeadListContent({
 
     setIsRefreshingTruth(true);
     try {
-      const response = await fetch(getZRAILeadByIdEndpoint(selectedLead.id));
-      if (!response.ok) {
-        throw new Error(await response.text());
-      }
-
-        const payload = await response.json();
-        const payloadData = getPayloadData(payload);
-        if (!(payload?.success ?? true) || !payloadData?.lead) {
-          throw new Error("Lead truth refresh failed.");
-        }
-
-        const latestLead = payloadData.lead as Lead;
-        const latestProcessedDetailsRaw = payloadData.processed_details
-          ? ({
-              ...(payloadData.processed_details || {}),
-              signal_facts: payloadData.signal_facts || payloadData.processed_details?.signal_facts || null,
-              analysis_bundle: payloadData.analysis_bundle || payloadData.processed_details?.analysis_bundle || null,
-              analysis_state: payloadData.analysis_state || payloadData.processed_details?.analysis_state || null,
-              analysis_updated_at:
-                payloadData.analysis_updated_at || payloadData.processed_details?.analysis_updated_at || null,
-              signals_version: payloadData.signals_version || payloadData.processed_details?.signals_version || null,
-            } as ProcessedLeadDetails)
-          : null;
-      const hydrated = await hydrateFounderIntel(latestLead, latestProcessedDetailsRaw);
-      const baseLeads = leadsRef.current;
-      const baseProcessedDetails = processedDetailsRef.current;
-      const mergedLeads = dedupeLeadRows(mergeLeadRows(baseLeads, [hydrated.lead]));
-      const resolvedSelectedLeadId = resolveSelectedLeadId(
-        selectedLead.id,
-        mergedLeads,
-        [...baseLeads, hydrated.lead]
-      );
-      syncLeadListState({
-        nextLeads: mergedLeads,
-        nextProcessedDetails: hydrated.processedDetails
-          ? {
-              ...baseProcessedDetails,
-              [selectedLead.id]: hydrated.processedDetails,
-            }
-          : baseProcessedDetails,
-        nextSelectedLeadId: resolvedSelectedLeadId,
-      });
-      setSelectedLead(
-        mergedLeads.find((lead) => lead.id === resolvedSelectedLeadId) || hydrated.lead
-      );
-      setSelectedLeadLive(hydrated.lead);
-      setSelectedLeadLiveDetails(hydrated.processedDetails);
-      setMetadata((prev: LeadListMetadata) => ({
-        ...prev,
-        liveSelectedLead: hydrated.lead,
-        liveSelectedLeadDetails: hydrated.processedDetails,
-      }));
-      toast.success("Lead truth refreshed.");
+      await analyzeSelectedLead(true);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Lead truth refresh failed");
     } finally {
@@ -2271,7 +2303,7 @@ function LeadListContent({
     toast.success("Analysis is still running. Use Refresh truth in a moment.");
   };
 
-  const analyzeSelectedLead = async () => {
+  const analyzeSelectedLead = async (forceRefresh: boolean = false) => {
     if (!selectedLead?.id) {
       return;
     }
@@ -2326,6 +2358,7 @@ function LeadListContent({
         body: JSON.stringify({
           lead_id: effectiveLead.id,
           include_outreach: false,
+          force_refresh: forceRefresh,
           lead: effectiveLead,
         }),
       });
@@ -2350,11 +2383,11 @@ function LeadListContent({
         const mergedQueuedLeads = dedupeLeadRows(mergeLeadRows(workingLeadRows, [queuedLead]));
         const mergedQueuedDetails = {
           ...workingProcessedDetails,
-          [queuedLead.id]: {
-            ...(workingProcessedDetails?.[queuedLead.id] || {}),
-            analysis_state: "analyzing",
-            analysis_updated_at: payloadData?.analysis_updated_at || payload?.analysis_updated_at || null,
-          } as ProcessedLeadDetails,
+          [queuedLead.id]: buildQueuedProcessedDetails(
+            workingProcessedDetails?.[queuedLead.id] || null,
+            payloadData?.analysis_updated_at || payload?.analysis_updated_at || null,
+            forceRefresh
+          ),
         };
         const resolvedQueuedLeadId = resolveSelectedLeadId(
           queuedLead.id,
@@ -2371,7 +2404,7 @@ function LeadListContent({
         );
         setSelectedLeadLive(queuedLead);
         setSelectedLeadLiveDetails(mergedQueuedDetails[queuedLead.id] || null);
-        toast.success("Analysis started.");
+        toast.success(forceRefresh ? "Truth refresh started." : "Analysis started.");
         await pollLeadAnalysisCompletion(queuedLead.id);
         return;
       }
@@ -2412,7 +2445,7 @@ function LeadListContent({
       );
       setSelectedLeadLive(hydrated.lead);
       setSelectedLeadLiveDetails(hydrated.processedDetails);
-      toast.success("Lead analyzed.");
+      toast.success(forceRefresh ? "Lead truth refreshed." : "Lead analyzed.");
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
         toast.success("Lead analysis stopped.");
@@ -2544,6 +2577,7 @@ function LeadListContent({
                   dedupeLeadRows(sortedLeads).map((lead) => lead.id),
                   {
                     includeOutreach: false,
+                    forceRefresh: true,
                     successMessage: `Analyzed ${dedupeLeadRows(sortedLeads).length} visible lead${dedupeLeadRows(sortedLeads).length === 1 ? "" : "s"}.`,
                     emptyMessage: "No visible leads were analyzed successfully.",
                   }
@@ -3191,51 +3225,51 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
       const payload = Array.isArray(data) ? ({ leads: data } satisfies LeadListPayload) : data;
       const incomingLeads = dedupeLeadRows(sanitizeLeadRows(payload.leads || []));
       const incomingProcessedDetails = payload.processedDetails || payload.processed_details || {};
-      setMetadata((prev: LeadListMetadata) => ({
-        ...prev,
-        filter: payload.filter || prev.filter || "",
-        leads: dedupeLeadRows(
-          mergeLeadRows(
-            dedupeLeadRows(sanitizeLeadRows(prev?.leads || [])),
-            incomingLeads
-          ).map(
-            (lead) =>
-              hydrateLeadFromStoredAnalysis(
-                lead,
-                {
-                  ...incomingProcessedDetails,
-                  ...(prev.processedDetails || {}),
-                }[lead.id] || null
-              ) || lead
-          )
-        ),
-        loading: false,
-        processedDetails: {
-          ...incomingProcessedDetails,
-          ...(prev.processedDetails || {}),
-        },
-        selectedLeadId:
-          resolveSelectedLeadId(
-            payload.selectedLeadId || prev.selectedLeadId || null,
-            dedupeLeadRows(
-              mergeLeadRows(
-                dedupeLeadRows(sanitizeLeadRows(prev?.leads || [])),
-                incomingLeads
-              )
-            ),
-            [...dedupeLeadRows(sanitizeLeadRows(prev?.leads || [])), ...incomingLeads]
-          ) || null,
-        sortBy: payload.sortBy || prev.sortBy || "score",
-        sortOrder: payload.sortOrder || prev.sortOrder || "desc",
-      }));
+      setMetadata((prev: LeadListMetadata) => {
+        const nextProcessedDetails = mergeProcessedDetailsMapRecords(
+          prev.processedDetails || {},
+          incomingProcessedDetails
+        );
+        return {
+          ...prev,
+          filter: payload.filter || prev.filter || "",
+          leads: dedupeLeadRows(
+            mergeLeadRows(
+              dedupeLeadRows(sanitizeLeadRows(prev?.leads || [])),
+              incomingLeads
+            ).map(
+              (lead) =>
+                hydrateLeadFromStoredAnalysis(
+                  lead,
+                  nextProcessedDetails[lead.id] || null
+                ) || lead
+            )
+          ),
+          loading: false,
+          processedDetails: nextProcessedDetails,
+          selectedLeadId:
+            resolveSelectedLeadId(
+              payload.selectedLeadId || prev.selectedLeadId || null,
+              dedupeLeadRows(
+                mergeLeadRows(
+                  dedupeLeadRows(sanitizeLeadRows(prev?.leads || [])),
+                  incomingLeads
+                )
+              ),
+              [...dedupeLeadRows(sanitizeLeadRows(prev?.leads || [])), ...incomingLeads]
+            ) || null,
+          sortBy: payload.sortBy || prev.sortBy || "score",
+          sortOrder: payload.sortOrder || prev.sortOrder || "desc",
+        };
+      });
       setArtifact((draft) => ({
         ...draft,
         content: (() => {
           const currentPayload = parseLeadListPayload(draft.content || "");
-          const mergedDetails = {
-            ...incomingProcessedDetails,
-            ...(currentPayload.processedDetails || {}),
-          };
+          const mergedDetails = mergeProcessedDetailsMapRecords(
+            currentPayload.processedDetails || {},
+            incomingProcessedDetails
+          );
           const canonicalMergedLeads = mergeLeadRows(currentPayload.leads, incomingLeads);
           const mergedLeads = dedupeLeadRows(
             canonicalMergedLeads.map(
@@ -3327,10 +3361,10 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
           const contentPayload = parseLeadListPayload(content);
           const contentLeads = contentPayload.leads;
           const metadataLeads = dedupeLeadRows(sanitizeLeadRows(metadata?.leads || []));
-          const mergedProcessedDetails = {
-            ...(contentPayload.processedDetails || {}),
-            ...(metadata?.processedDetails || {}),
-          };
+          const mergedProcessedDetails = mergeProcessedDetailsMapRecords(
+            contentPayload.processedDetails || {},
+            metadata?.processedDetails || {}
+          );
           const mergedCanonicalLeadRows = mergeLeadRows(contentLeads, metadataLeads);
           const canonicalLeads = dedupeLeadRows(
             mergedCanonicalLeadRows.map(
@@ -3392,6 +3426,7 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
             body: JSON.stringify({
               lead_ids: Array.from(new Set(persistedTopLeads.map((lead) => lead.id))),
               include_outreach: false,
+              force_refresh: true,
             }),
           });
           if (!response.ok) {
