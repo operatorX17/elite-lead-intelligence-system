@@ -3467,6 +3467,7 @@ def run_selected_lead_pipeline(
     lead_uuid = UUID(str(lead_data.get("lead_id")))
     if force_refresh:
         clear_lead_analysis_cache_safe(db, lead_uuid)
+    maps_truth = refresh_google_maps_truth(db, lead_payload, force_refresh=force_refresh)
     lead_state = db.get_lead_state(lead_uuid) or {}
     ads_verification = verify_clinic_ads(lead_payload, lead_state)
     if ads_verification.get("status") == "yes":
@@ -3484,6 +3485,7 @@ def run_selected_lead_pipeline(
         metadata={
             "ads_verification": ads_verification,
             "force_audit": include_audit,
+            "raw_apify_data": maps_truth or dict((lead_state.get("metadata") or {}).get("raw_apify_data") or {}),
         },
         use_persisted_state=not force_refresh,
     )
@@ -3646,6 +3648,197 @@ def latest_assistant_message(transcript: List[Dict[str, Any]]) -> Optional[Dict[
         if role in {"ai", "assistant"}:
             return item
     return None
+
+
+def _digits_only(value: Optional[str]) -> str:
+    return re.sub(r"\D+", "", str(value or ""))
+
+
+def _maps_truth_missing(lead_data: Dict[str, Any], lead_state: Optional[Dict[str, Any]]) -> bool:
+    if lead_data.get("reviews_count") is not None and lead_data.get("rating") is not None:
+        return False
+    metadata = dict((lead_state or {}).get("metadata") or {})
+    raw_apify_data = dict(metadata.get("raw_apify_data") or {})
+    return raw_apify_data.get("reviewsCount") is None or raw_apify_data.get("totalScore") is None
+
+
+def _score_google_maps_candidate(lead_data: Dict[str, Any], candidate: Dict[str, Any]) -> float:
+    score = 0.0
+
+    lead_domain = extract_domain(lead_data.get("website") or lead_data.get("landing_page_url"))
+    candidate_domain = extract_domain(candidate.get("website"))
+    if lead_domain and candidate_domain:
+        if lead_domain == candidate_domain:
+            score += 120
+        elif lead_domain in candidate_domain or candidate_domain in lead_domain:
+            score += 80
+
+    lead_name = str(lead_data.get("business_name") or "").strip()
+    candidate_name = str(candidate.get("title") or candidate.get("name") or "").strip()
+    if lead_name and candidate_name:
+        score += SequenceMatcher(None, lead_name.lower(), candidate_name.lower()).ratio() * 60
+
+    lead_phone = _digits_only(lead_data.get("phone"))
+    candidate_phone = _digits_only(candidate.get("phone"))
+    if lead_phone and candidate_phone:
+        if lead_phone == candidate_phone:
+            score += 40
+        elif lead_phone[-8:] and lead_phone[-8:] == candidate_phone[-8:]:
+            score += 25
+
+    lead_location = str(lead_data.get("location") or "").lower()
+    candidate_location_parts = " ".join(
+        [
+            str(candidate.get("city") or ""),
+            str(candidate.get("state") or ""),
+            str(candidate.get("country") or ""),
+            str(candidate.get("address") or ""),
+        ]
+    ).lower()
+    if lead_location and candidate_location_parts:
+        location_tokens = [token for token in re.findall(r"[a-z]+", lead_location) if len(token) > 2]
+        token_overlap = sum(1 for token in location_tokens if token in candidate_location_parts)
+        score += min(token_overlap, 3) * 8
+
+    if candidate.get("placeId"):
+        score += 2
+    if candidate.get("reviewsCount") is not None:
+        score += 3
+    if candidate.get("totalScore") is not None:
+        score += 2
+
+    return score
+
+
+def _select_best_google_maps_match(
+    lead_data: Dict[str, Any],
+    candidates: List[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    if not candidates:
+        return None
+
+    scored = [
+        (_score_google_maps_candidate(lead_data, candidate), candidate)
+        for candidate in candidates
+        if isinstance(candidate, dict)
+    ]
+    scored.sort(key=lambda item: item[0], reverse=True)
+    best_score, best_candidate = scored[0]
+    if best_score < 45:
+        logger.warning(
+            "No strong Google Maps match for %s; best score=%s",
+            lead_data.get("business_name"),
+            round(best_score, 2),
+        )
+        return None
+    return best_candidate
+
+
+def refresh_google_maps_truth(
+    db,
+    lead_data: Dict[str, Any],
+    *,
+    force_refresh: bool = False,
+) -> Dict[str, Any]:
+    """Refresh Google Maps truth for a lead and persist it for later scoring/enrichment."""
+    lead_uuid = UUID(str(lead_data.get("lead_id")))
+    lead_state = db.get_lead_state(lead_uuid) or {}
+    existing_metadata = dict(lead_state.get("metadata") or {})
+
+    if not force_refresh and not _maps_truth_missing(lead_data, lead_state):
+        return existing_metadata.get("raw_apify_data") or {}
+
+    business_name = str(lead_data.get("business_name") or "").strip()
+    if not business_name:
+        return existing_metadata.get("raw_apify_data") or {}
+
+    geo_filter = build_discovery_geo(str(lead_data.get("location") or ""))
+    website = lead_data.get("website") or lead_data.get("landing_page_url")
+    brand_hint = infer_company_name_from_url(str(website)) if website else ""
+    keywords: List[str] = [business_name]
+    if brand_hint and brand_hint.lower() != business_name.lower():
+        keywords.append(brand_hint)
+
+    try:
+        logger.info(
+            "Refreshing Google Maps truth for lead_id=%s business=%s geo=%s",
+            lead_data.get("lead_id"),
+            business_name,
+            lead_data.get("location"),
+        )
+        items = get_discovery_agent()._apify.run_google_maps_scraper(
+            keywords=keywords[:2],
+            geo=geo_filter,
+            limit=6,
+            detailed=True,
+        )
+    except Exception as exc:
+        logger.warning("Google Maps truth refresh failed for %s: %s", business_name, exc)
+        return existing_metadata.get("raw_apify_data") or {}
+
+    matched = _select_best_google_maps_match(lead_data, items)
+    if not matched:
+        logger.warning("Google Maps truth refresh found no acceptable match for %s", business_name)
+        return existing_metadata.get("raw_apify_data") or {}
+
+    raw_apify_data = {
+        "reviewsCount": matched.get("reviewsCount"),
+        "totalScore": matched.get("totalScore") or matched.get("rating"),
+        "reviewsDistribution": matched.get("reviewsDistribution"),
+        "openingHours": matched.get("openingHours"),
+        "reviews": matched.get("reviews", []),
+        "questionsAndAnswers": matched.get("questionsAndAnswers"),
+        "peopleAlsoSearch": matched.get("peopleAlsoSearch"),
+        "imageCategories": matched.get("imageCategories"),
+        "webResults": matched.get("webResults"),
+        "tableReservationLinks": matched.get("tableReservationLinks"),
+        "placeId": matched.get("placeId"),
+        "maps_url": matched.get("url"),
+        "maps_title": matched.get("title") or matched.get("name"),
+        "maps_address": matched.get("address"),
+        "maps_phone": matched.get("phone"),
+        "maps_website": matched.get("website"),
+        "maps_category": matched.get("categoryName") or matched.get("category"),
+        "maps_refreshed_at": datetime.utcnow().isoformat(),
+        "maps_source": "apify_google_maps_scraper",
+    }
+
+    metadata = dict(existing_metadata)
+    metadata["raw_apify_data"] = raw_apify_data
+    db.save_lead_state(
+        {
+            "lead_id": str(lead_uuid),
+            "current_stage": lead_state.get("current_stage") or "analysis",
+            "last_node": lead_state.get("last_node") or "analysis",
+            "last_error": None,
+            "retry_count": lead_state.get("retry_count", 0),
+            "next_run_at": lead_state.get("next_run_at"),
+            "locks": lead_state.get("locks") or [],
+            "metadata": metadata,
+        }
+    )
+
+    lead_updates: Dict[str, Any] = {}
+    if raw_apify_data.get("reviewsCount") is not None:
+        lead_updates["reviews_count"] = raw_apify_data.get("reviewsCount")
+    if raw_apify_data.get("totalScore") is not None:
+        lead_updates["rating"] = raw_apify_data.get("totalScore")
+    if matched.get("phone") and not lead_data.get("phone"):
+        lead_updates["phone"] = matched.get("phone")
+    if matched.get("website") and not lead_data.get("website"):
+        lead_updates["website"] = matched.get("website")
+        lead_updates["landing_page_url"] = matched.get("website")
+    if lead_updates:
+        updated_lead = db.update_lead(lead_uuid, lead_updates)
+        lead_data.update(updated_lead or {})
+    logger.info(
+        "Google Maps truth refreshed for lead_id=%s reviews=%s rating=%s",
+        lead_data.get("lead_id"),
+        raw_apify_data.get("reviewsCount"),
+        raw_apify_data.get("totalScore"),
+    )
+
+    return raw_apify_data
 
 
 def build_discovery_geo(raw_geo: str) -> Dict[str, str]:
