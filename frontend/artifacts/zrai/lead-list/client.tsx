@@ -4258,7 +4258,7 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
       icon: <span className="font-semibold text-[10px]">AI</span>,
       label: "Analyze visible",
       description: "Run analysis truth, scoring, and proof for all visible leads",
-      onClick: async ({ artifact, content, metadata, setArtifact, setMetadata }) => {
+      onClick: async ({ content, metadata, setArtifact, setMetadata }) => {
         try {
           const contentPayload = parseLeadListPayload(content);
           const contentLeads = contentPayload.leads;
@@ -4373,6 +4373,8 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
             [...replacedLeadRows, ...processedLeads]
           );
           const nextContent = serializeLeadListPayload(nextLeads, {
+            autoAnalyzeCompletedToken: baseMetadata.autoAnalyzeCompletedToken || null,
+            autoAnalyzeEnabled: baseMetadata.autoAnalyzeEnabled ?? true,
             filter: baseMetadata.filter || "",
             processedDetails: nextProcessedDetails,
             selectedLeadId: nextSelectedLeadId,
@@ -4390,24 +4392,6 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
             ...draft,
             content: nextContent,
           }));
-
-          const snapshotKey = getLeadListSnapshotKey(artifact?.documentId);
-          if (snapshotKey) {
-            try {
-              window.localStorage.setItem(snapshotKey, nextContent);
-            } catch {}
-          }
-
-          if (artifact?.documentId && artifact.documentId !== "init") {
-            void fetch(`/api/document?id=${artifact.documentId}`, {
-              method: "POST",
-              body: JSON.stringify({
-                title: artifact.title,
-                content: nextContent,
-                kind: artifact.kind,
-              }),
-            }).catch(() => {});
-          }
 
           toast.success(
             `Analyzed ${processedLeads.length} visible lead${processedLeads.length === 1 ? "" : "s"}.`
