@@ -2524,17 +2524,6 @@ function LeadListContent({
     }
   }, [leads, selectedLead]);
 
-  if (leads.length === 0) {
-    return (
-      <div className="flex h-full items-center justify-center p-8">
-        <div className="text-center text-zinc-500">
-          <div className="text-lg">No leads found</div>
-          <div className="text-sm">Use the discover tool to find leads</div>
-        </div>
-      </div>
-    );
-  }
-
   const handleSort = (column: string) => {
     const nextSortOrder =
       sortBy === column && sortOrder === "desc" ? "asc" : "desc";
@@ -3217,6 +3206,17 @@ function LeadListContent({
     : hasFinalRows
       ? "Avg final"
       : "Avg match";
+
+  if (leads.length === 0) {
+    return (
+      <div className="flex h-full items-center justify-center p-8">
+        <div className="text-center text-zinc-500">
+          <div className="text-lg">No leads found</div>
+          <div className="text-sm">Use the discover tool to find leads</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-row">
