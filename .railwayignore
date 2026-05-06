@@ -4,6 +4,9 @@
 .codex-score-check.json
 .pytest_cache
 .venv
+.env
+.env.*
+!.env.example
 venv
 env
 ENV

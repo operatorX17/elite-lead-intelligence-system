@@ -7,6 +7,7 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime
 from uuid import uuid4
 import logging
+import re
 
 from src.agents.base import BaseAgent, CircuitBreakerMixin, RetryMixin
 from src.graph.state import LeadGraphState
@@ -15,6 +16,295 @@ from src.tools.apify import ApifyClient
 
 
 logger = logging.getLogger(__name__)
+
+
+SEO_BRAND_BLOCKLIST = (
+    "best ",
+    "top ",
+    "#1",
+    "near me",
+    "directory",
+    "list of",
+    "weight loss",
+    "best dermatologist",
+    "best skin specialist",
+    "best skin ",
+    "clinic in ",
+    "hospital in ",
+    "dermatologist in ",
+    "skin clinic in ",
+    "skin specialist in ",
+    "hair clinic in ",
+    "beauty clinic for ",
+    "cosmetic clinic in ",
+    "multispecialty hospital in ",
+)
+
+SEO_GEO_HINTS = (
+    "bangalore",
+    "bengaluru",
+    "jayanagar",
+    "indiranagar",
+    "whitefield",
+    "koramangala",
+    "hsr",
+    "marathahalli",
+)
+
+AGGREGATOR_DOMAINS = (
+    "whatclinic.com",
+    "practo.com",
+    "justdial.com",
+    "sulekha.com",
+    "lybrate.com",
+    "credihealth.com",
+)
+
+GENERIC_BRAND_SUFFIXES = (
+    "clinic",
+    "clinics",
+    "hospital",
+    "hospitals",
+    "skin",
+    "hair",
+    "aesthetic",
+    "aesthetics",
+    "cosmetic",
+    "cosmetics",
+    "derma",
+    "dermatology",
+    "care",
+    "center",
+    "centre",
+    "wellness",
+)
+
+GENERIC_BRAND_TITLES = (
+    "home",
+    "our clinic",
+    "welcome",
+    "welcome to our clinic",
+    "our team",
+    "book appointment",
+    "contact us",
+)
+
+GENERIC_QUERY_NAME_TOKENS = {
+    "aesthetic",
+    "aesthetics",
+    "clinic",
+    "clinics",
+    "skin",
+    "hair",
+    "laser",
+    "cosmetic",
+    "derma",
+    "dermatology",
+    "service",
+    "services",
+    "hospital",
+    "doctor",
+    "doctors",
+    "bangalore",
+    "bengaluru",
+    "near",
+    "me",
+}
+
+
+def _extract_domain(url: str) -> str:
+    raw = str(url or "").strip()
+    if not raw:
+        return ""
+    normalized = re.sub(r"^https?://", "", raw, flags=re.IGNORECASE)
+    normalized = normalized.split("/", 1)[0].strip().lower()
+    return normalized.replace("www.", "")
+
+
+def _normalize_brand_token(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", (value or "").lower())
+
+
+def _is_aggregator_domain(url: str) -> bool:
+    hostname = _extract_domain(url)
+    return any(
+        hostname == blocked or hostname.endswith(f".{blocked}")
+        for blocked in AGGREGATOR_DOMAINS
+    )
+
+
+def _derive_domain_brand_tokens(hostname: str) -> List[str]:
+    stem = (hostname or "").split(".")[0].lower()
+    normalized = _normalize_brand_token(stem)
+    if not normalized:
+        return []
+
+    tokens = [normalized]
+    trimmed = normalized
+    changed = True
+    while changed and trimmed:
+        changed = False
+        for suffix in GENERIC_BRAND_SUFFIXES:
+            suffix_token = _normalize_brand_token(suffix)
+            if trimmed.endswith(suffix_token) and len(trimmed) > len(suffix_token) + 2:
+                trimmed = trimmed[: -len(suffix_token)]
+                tokens.append(trimmed)
+                changed = True
+                break
+
+    # Prefer stronger brand roots first, but keep full stem for exact matches too.
+    return sorted({token for token in tokens if len(token) >= 3}, key=len, reverse=True)
+
+
+def _trim_geo_suffix(segment: str) -> str:
+    candidate = str(segment or "").strip(" -:,\u2013\u2014")
+    if not candidate:
+        return ""
+
+    # Remove trailing geo fragments after commas.
+    parts = [part.strip() for part in candidate.split(",") if part.strip()]
+    while len(parts) > 1 and any(hint in parts[-1].lower() for hint in SEO_GEO_HINTS):
+        parts.pop()
+    candidate = ", ".join(parts).strip(" -:,\u2013\u2014")
+
+    # Remove long tail geo tokens from the end when the prefix already looks branded.
+    words = candidate.split()
+    while len(words) > 2 and any(hint == words[-1].lower() for hint in SEO_GEO_HINTS):
+        words.pop()
+
+    candidate = " ".join(words).strip(" -:,\u2013\u2014")
+    candidate = re.sub(r"\s*\+?\d[\d\s-]{6,}$", "", candidate).strip(" -:,\u2013\u2014")
+    return candidate
+
+
+def _humanize_domain_stem(url: str) -> str:
+    hostname = _extract_domain(url) or str(url or "").strip().lower()
+    stem = hostname.split(".")[0].replace("-", " ").replace("_", " ").strip()
+    if not stem:
+        return ""
+
+    raw_stem = re.sub(r"\s+", "", stem.lower())
+    words: List[str] = []
+    remaining = raw_stem
+
+    while remaining:
+        matched_suffix = None
+        for suffix in sorted(GENERIC_BRAND_SUFFIXES, key=len, reverse=True):
+            suffix_token = _normalize_brand_token(suffix)
+            if remaining.endswith(suffix_token) and len(remaining) > len(suffix_token) + 2:
+                matched_suffix = suffix
+                brand_root = remaining[: -len(suffix_token)]
+                if brand_root:
+                    words.insert(0, matched_suffix)
+                    remaining = brand_root
+                break
+        if not matched_suffix:
+            words.insert(0, remaining)
+            break
+
+    humanized = " ".join(word for word in words if word).strip()
+    if not humanized:
+        humanized = stem
+
+    return " ".join(part.capitalize() for part in humanized.split())
+
+
+def _looks_like_seo_brand_noise(value: str) -> bool:
+    lowered = (value or "").strip().lower()
+    if not lowered:
+        return True
+    return any(token in lowered for token in SEO_BRAND_BLOCKLIST)
+
+
+def _looks_like_search_query_name(value: str) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return True
+    lowered = text.lower()
+    has_encoded_separator = "+" in lowered or "%20" in lowered
+    normalized = re.sub(r"(?i)%20", " ", lowered.replace("+", " "))
+    tokens = [token for token in re.findall(r"[a-z]+", normalized) if token]
+    if not tokens:
+        return True
+    generic_ratio = sum(1 for token in tokens if token in GENERIC_QUERY_NAME_TOKENS) / len(tokens)
+    if has_encoded_separator and generic_ratio >= 0.7:
+        return True
+    if len(tokens) <= 3 and generic_ratio == 1:
+        return True
+    return False
+
+
+def _infer_company_name_from_url(url: str) -> str:
+    domain = _extract_domain(url) or str(url or "").strip()
+    return _humanize_domain_stem(domain) or domain
+
+
+def _infer_company_name_from_title(url: str, title: str) -> str:
+    fallback = _infer_company_name_from_url(url)
+    title = (title or "").strip()
+    if not title:
+        return fallback
+
+    domain = _extract_domain(url) or str(url or "").strip()
+    hostname = domain.lower().replace("www.", "")
+    domain_tokens = _derive_domain_brand_tokens(hostname)
+
+    raw_segments: List[str] = []
+    for segment in re.split(r"\|", title):
+        cleaned = segment.strip(" -:,\u2013\u2014")
+        if cleaned:
+            raw_segments.append(cleaned)
+        for subsegment in re.split(r"\s[-\u2013\u2014]\s", cleaned):
+            normalized = subsegment.strip(" -:,\u2013\u2014")
+            if normalized:
+                raw_segments.append(normalized)
+        if ":" in cleaned:
+            prefix = cleaned.split(":", 1)[0].strip(" -:,\u2013\u2014")
+            if prefix:
+                raw_segments.append(prefix)
+
+    best_segment = ""
+    best_score = float("-inf")
+    for segment in raw_segments:
+        lowered = segment.lower()
+        normalized = _normalize_brand_token(segment)
+        score = 0
+
+        if _looks_like_seo_brand_noise(segment):
+            score -= 6
+        if any(hint in lowered for hint in SEO_GEO_HINTS):
+            score -= 3
+        if len(segment.split()) > 8:
+            score -= 2
+        if 3 <= len(segment) <= 60:
+            score += 1
+        if len(segment.split()) <= 6:
+            score += 1
+        if any(token in lowered for token in ["clinic", "clinics", "aesthetic", "skin", "hair", "care", "laser"]):
+            score += 1
+        if domain_tokens:
+            best_domain_hit = max((len(token) for token in domain_tokens if token in normalized), default=0)
+            if best_domain_hit:
+                score += 8 if best_domain_hit >= 5 else 5
+        if "example.com" in lowered:
+            score -= 6
+
+        if score > best_score:
+            best_segment = segment
+            best_score = score
+
+    cleaned_best = _trim_geo_suffix(best_segment)
+    if cleaned_best and cleaned_best.lower() in GENERIC_BRAND_TITLES:
+        return fallback
+
+    if cleaned_best and domain_tokens:
+        normalized_best = _normalize_brand_token(cleaned_best)
+        if any(token in normalized_best for token in domain_tokens):
+            return cleaned_best
+
+    if best_segment and best_score >= 2:
+        return cleaned_best or best_segment
+    return fallback
 
 
 class DiscoveryAgent(BaseAgent, CircuitBreakerMixin, RetryMixin):
@@ -195,6 +485,16 @@ class DiscoveryAgent(BaseAgent, CircuitBreakerMixin, RetryMixin):
                                     "imageCategories": raw.get("imageCategories"),
                                     "webResults": raw.get("webResults"),
                                     "tableReservationLinks": raw.get("tableReservationLinks"),
+                                    "placeId": raw.get("placeId"),
+                                    "maps_url": raw.get("url"),
+                                    "maps_title": raw.get("title") or raw.get("name"),
+                                    "maps_address": raw.get("address"),
+                                    "maps_phone": raw.get("phone"),
+                                    "maps_website": raw.get("website"),
+                                    "maps_category": raw.get("categoryName") or raw.get("category"),
+                                    "relatedPlaces": raw.get("relatedPlaces") or [],
+                                    "maps_source": "apify_google_maps_scraper",
+                                    "maps_refreshed_at": datetime.utcnow().isoformat(),
                                 }
                             },
                         })
@@ -277,6 +577,11 @@ class DiscoveryAgent(BaseAgent, CircuitBreakerMixin, RetryMixin):
         Requirements: 3.4
         """
         try:
+            website = raw.get("website")
+            if website and _is_aggregator_domain(website):
+                self._logger.info("Skipping aggregator domain from discovery: %s", website)
+                return None
+
             # Extract location
             location_parts = []
             if raw.get("city"):
@@ -295,14 +600,37 @@ class DiscoveryAgent(BaseAgent, CircuitBreakerMixin, RetryMixin):
                 geo_tags.append(raw["state"])
             
             # Create lead - return Lead object
+            raw_title = raw.get("title") or raw.get("name", "")
+            raw_name = str(raw.get("name") or "").strip()
+            business_name = (
+                ""
+                if _looks_like_search_query_name(str(raw_title or ""))
+                else _infer_company_name_from_title(website or "", raw_title)
+            )
+            if (
+                not business_name
+                or business_name.lower() == "unknown"
+                or business_name.lower() in GENERIC_BRAND_TITLES
+                or _looks_like_seo_brand_noise(str(business_name or ""))
+                or _looks_like_search_query_name(str(business_name or ""))
+            ):
+                business_name = (
+                    raw_name
+                    if raw_name and not _looks_like_seo_brand_noise(raw_name) and not _looks_like_search_query_name(raw_name)
+                    else _infer_company_name_from_url(website or "")
+                ) or "Unknown"
+            if business_name == "Unknown" or _looks_like_search_query_name(business_name):
+                self._logger.warning("Dropping Google Maps result with query-like business name: %s", raw_title)
+                return None
+
             lead = Lead(
                 lead_id=uuid4(),
-                business_name=raw.get("title") or raw.get("name", "Unknown"),
+                business_name=business_name,
                 category=raw.get("categoryName") or raw.get("category") or (raw.get("categories", [None])[0] if raw.get("categories") else None),
                 location=location,
                 geo_tags=geo_tags,
-                website=raw.get("website"),
-                landing_page_url=raw.get("website"),
+                website=website,
+                landing_page_url=website,
                 phone=raw.get("phone"),
                 emails_found=raw.get("emails", []),
                 facebook_page=raw.get("facebooks", [None])[0] if raw.get("facebooks") else None,
@@ -336,14 +664,20 @@ class DiscoveryAgent(BaseAgent, CircuitBreakerMixin, RetryMixin):
             }
             cta_type = cta_map.get(cta_raw.lower(), CTAType.OTHER)
         
+        business_name = raw.get("business_name", "Unknown")
+        website = raw.get("website")
+        landing_page_url = raw.get("landing_page_url") or website
+        if website and _looks_like_seo_brand_noise(str(business_name or "")):
+            business_name = _infer_company_name_from_title(website, str(business_name or ""))
+
         return Lead(
             lead_id=uuid4(),
-            business_name=raw.get("business_name", "Unknown"),
+            business_name=business_name,
             category=raw.get("category"),
             location=raw.get("location"),
             geo_tags=raw.get("geo_tags", []),
-            website=raw.get("website"),
-            landing_page_url=raw.get("landing_page_url") or raw.get("website"),
+            website=website,
+            landing_page_url=landing_page_url,
             phone=raw.get("phone"),
             emails_found=raw.get("emails_found", []),
             facebook_page=raw.get("facebook_page"),

@@ -452,7 +452,7 @@ class AuditAgent(BaseAgent, CircuitBreakerMixin):
                 continue
             seen.add(page_url)
             deduped.append(page)
-        return deduped[:5]
+        return deduped[:8]
 
     def _build_page_analysis_plan(self, base_url: str, html: str) -> Dict[str, List[Dict[str, str]]]:
         soup = BeautifulSoup(html or "", "html.parser")
@@ -523,7 +523,7 @@ class AuditAgent(BaseAgent, CircuitBreakerMixin):
         merged = dict(base_extraction)
         analyzed_pages: List[str] = []
 
-        for page_spec in page_urls[:5]:
+        for page_spec in page_urls[:8]:
             page_url = page_spec.get("url")
             page_type = page_spec.get("page_type") or "general"
             if not page_url:
@@ -972,31 +972,158 @@ class AuditAgent(BaseAgent, CircuitBreakerMixin):
                     names.append(match.strip())
         return self._dedupe_list(names)[:12]
 
+    def _normalize_branch_name_candidate(self, value: str) -> Optional[str]:
+        text = " ".join(str(value or "").split()).strip(" -,:;")
+        if not text or len(text) > 180:
+            return None
+        lowered = text.lower()
+        locality_aliases = {
+            "jp nagar": "JP Nagar",
+            "j.p. nagar": "JP Nagar",
+            "koramangala": "Koramangala",
+            "jayanagar": "Jayanagar",
+            "indiranagar": "Indiranagar",
+            "whitefield": "Whitefield",
+            "hsr layout": "HSR Layout",
+            "hsr": "HSR Layout",
+            "electronic city": "Electronic City",
+            "sarjapur": "Sarjapur",
+            "sarjapur road": "Sarjapur",
+            "thanisandra": "Thanisandra",
+            "thannisandra": "Thanisandra",
+            "thanisandra main road": "Thanisandra",
+            "chikkabellandur": "Chikkabellandur",
+            "hebbal": "Hebbal",
+            "rajajinagar": "Rajajinagar",
+            "malleshwaram": "Malleshwaram",
+            "marathahalli": "Marathahalli",
+            "banashankari": "Banashankari",
+            "basavanagudi": "Basavanagudi",
+            "rt nagar": "RT Nagar",
+            "yelahanka": "Yelahanka",
+        }
+        for alias, canonical in locality_aliases.items():
+            if alias in lowered:
+                return canonical
+        if ("," in text or "#" in text) and len(text) > 30:
+            return None
+        if re.search(r"\b\d{5,6}\b", lowered):
+            return None
+        if re.search(r"\b(?:bangalore|bengaluru)\b", lowered):
+            return None
+        blocked_terms = {
+            "about us",
+            "contact us",
+            "popular treatments",
+            "useful links",
+            "latest offers",
+            "book appointment",
+            "book your appointment",
+            "book consultation",
+            "view doctors",
+            "please do get in touch",
+            "frequently asked",
+            "chemical peel",
+            "laser hair",
+            "microdermabrasion",
+            "photo facial",
+            "testimonials",
+            "success stories",
+            "gallery",
+            "treatments",
+            "offers",
+        }
+        if any(token in lowered for token in blocked_terms):
+            return None
+        if "@" in lowered or lowered.startswith("http"):
+            return None
+        location_tokens = (
+            "nagar",
+            "layout",
+            "road",
+            "rd",
+            "block",
+            "phase",
+            "cross",
+            "main",
+            "koramangala",
+            "jayanagar",
+            "indiranagar",
+            "whitefield",
+            "hsr",
+            "jp",
+            "bengaluru",
+            "bangalore",
+            "branch",
+            "sarjapur",
+            "thanisandra",
+            "chikkabellandur",
+        )
+        if not any(token in lowered for token in location_tokens):
+            return None
+        if any(token in lowered for token in ("road", "rd", "cross", "main", "block", "phase")):
+            return None
+        return text
+
     def _extract_branch_names(self, soup: BeautifulSoup) -> List[str]:
         names: List[str] = []
         location_heading = soup.find(
             lambda tag: tag.name in {"h1", "h2", "h3", "h4", "strong", "b"}
             and any(token in tag.get_text(" ", strip=True).lower() for token in ["location", "our clinics", "branches"])
         )
-        search_roots = [location_heading.parent] if location_heading and location_heading.parent else []
+        search_roots: List[BeautifulSoup] = [location_heading.parent] if location_heading and location_heading.parent else []
+        search_roots.extend(self._find_branch_context_roots(soup))
+        deduped_roots = []
+        seen_root_ids = set()
+        for root in search_roots:
+            root_id = id(root)
+            if root_id in seen_root_ids:
+                continue
+            seen_root_ids.add(root_id)
+            deduped_roots.append(root)
+        search_roots = deduped_roots[:8]
         if not search_roots:
-            search_roots = [soup]
+            return []
 
         for root in search_roots:
-            for tag in root.find_all(["h3", "h4", "h5", "strong", "b", "a", "p", "span"]):
+            for tag in root.find_all(["h3", "h4", "h5", "strong", "b", "a", "div", "p", "span"]):
                 text = " ".join(tag.get_text(" ", strip=True).split())
-                lowered = text.lower()
-                if not text or len(text) > 90:
-                    continue
-                if any(token in lowered for token in ["book visit", "view doctors", "book consultation", "book appointment"]):
-                    continue
-                if (
-                    "clinic" in lowered
-                    or "branch" in lowered
-                    or re.search(r"\b[a-z]+\s+(nagar|layout|road|halli|pet|puram|city|clinic)\b", lowered)
-                ):
-                    names.append(text)
+                candidate = self._normalize_branch_name_candidate(text)
+                if candidate:
+                    names.append(candidate)
         return self._dedupe_list(names)[:12]
+
+    def _find_branch_context_roots(self, soup: BeautifulSoup) -> List[BeautifulSoup]:
+        roots: List[BeautifulSoup] = []
+        for tag in soup.find_all(["section", "div", "footer", "address", "article"]):
+            attrs = " ".join(
+                str(value)
+                for value in [
+                    tag.get("id"),
+                    " ".join(tag.get("class", [])) if tag.get("class") else "",
+                    tag.get("aria-label"),
+                    tag.get("data-testid"),
+                ]
+                if value
+            ).lower()
+            text = " ".join(tag.get_text(" ", strip=True).split())
+            lowered_text = text.lower()
+            if not text or len(text) > 2500:
+                continue
+            if "open in maps" in lowered_text:
+                roots.append(tag)
+                continue
+            if any(token in attrs for token in ["location", "branch", "contact", "footer", "address", "clinic"]):
+                roots.append(tag)
+                continue
+            context_hits = sum(
+                1
+                for token in ["location", "branch", "contact us", "address", "our clinics", "book appointment"]
+                if token in lowered_text
+            )
+            if context_hits >= 2:
+                roots.append(tag)
+        return roots
 
     def _detect_testimonials(self, soup: BeautifulSoup, lowered_html: str) -> bool:
         if any(token in lowered_html for token in ["testimonial", "what our patients say", "success stories"]):
@@ -1059,8 +1186,6 @@ class AuditAgent(BaseAgent, CircuitBreakerMixin):
             return True
         if whatsapp_detected or chat_widget:
             return True
-        if booking_detected:
-            return True
         if contact_form_detected and not hours_present:
             return True
         return False
@@ -1081,8 +1206,6 @@ class AuditAgent(BaseAgent, CircuitBreakerMixin):
             token in lowered_text
             for token in ["instant reply", "quick response", "response within", "chat now", "message now"]
         ):
-            return True
-        if booking_detected:
             return True
         if contact_form_detected and any(
             token in lowered_text for token in ["get a call back", "call back", "we will call you", "request callback"]

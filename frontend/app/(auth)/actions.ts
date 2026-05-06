@@ -2,11 +2,12 @@
 
 import { z } from "zod";
 
+import { normalizeAuthEmail } from "@/lib/auth/security";
 import { createUser, getUser } from "@/lib/db/queries";
 import { signIn } from "./auth";
 
 const authFormSchema = z.object({
-  email: z.string().email(),
+  email: z.string().trim().email().transform((value) => normalizeAuthEmail(value)),
   password: z.string().min(6),
 });
 

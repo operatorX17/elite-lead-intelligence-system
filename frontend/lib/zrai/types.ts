@@ -117,10 +117,14 @@ export interface SignalFacts {
     bio?: string;
     external_url?: string;
     followers_count?: number;
+    following_count?: number;
     verified?: boolean;
+    email?: string;
+    is_business_account?: boolean;
     business_category?: string;
     posts_count?: number;
     latest_post_count?: number;
+    profile_pic_url?: string;
     source?: string;
   };
   youtube_present?: boolean;
@@ -144,6 +148,10 @@ export interface SignalFacts {
   contact_quality_score?: number | null;
   confidence_by_signal?: Record<string, number>;
   evidence_levels?: Record<string, string>;
+  fact_sources?: Record<string, string>;
+  maps_place_id?: string | null;
+  maps_match_score?: number | null;
+  maps_refreshed_at?: string | null;
   capture_path_kind?: "instant" | "delayed" | "missing" | "unknown";
   after_hours_capture_status?: "verified" | "likely" | "not_proven" | "missing" | "unknown";
   decision_maker_name?: string | null;

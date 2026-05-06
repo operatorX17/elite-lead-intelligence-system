@@ -127,6 +127,382 @@ function getLeadSummary(lead: Lead) {
   );
 }
 
+function normalizeWhitespace(value: string | null | undefined) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function sanitizeLeadEmailValue(value: string | null | undefined) {
+  const email = String(value || "").trim().toLowerCase();
+  if (!email) {
+    return "";
+  }
+  if (
+    email.startsWith("frame-") ||
+    email.includes("@mht") ||
+    email.includes("@mhtml") ||
+    email.endsWith("@example.com") ||
+    email.endsWith("@example.org")
+  ) {
+    return "";
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return "";
+  }
+  return email;
+}
+
+function sanitizeLeadPhoneValue(value: string | null | undefined) {
+  const phone = normalizeWhitespace(value);
+  if (!phone) {
+    return "";
+  }
+  const digits = phone.replace(/\D+/g, "");
+  if (digits.length < 7) {
+    return "";
+  }
+  return phone;
+}
+
+function dedupeStringValues(values: Array<string | null | undefined>) {
+  return Array.from(
+    new Set(values.map((value) => normalizeWhitespace(value)).filter(Boolean))
+  );
+}
+
+function titleCaseLeadHostLabel(value: string) {
+  return value
+    .split(/[\s.-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function formatLeadHostLabel(host: string | null | undefined) {
+  const normalizedHost = normalizeLeadDomainValue(host);
+  if (!normalizedHost) {
+    return "";
+  }
+
+  const label = normalizedHost.split(".")[0] || normalizedHost;
+  return titleCaseLeadHostLabel(label);
+}
+
+function extractLeadBrandPrefix(value: string | null | undefined) {
+  const raw = normalizeWhitespace(value);
+  if (!raw) {
+    return "";
+  }
+
+  const prefix = raw.split(/[:|\-]/)[0]?.trim() || "";
+  return normalizeWhitespace(prefix);
+}
+
+function isLikelyGenericLeadName(value: string | null | undefined) {
+  const normalized = normalizeLeadCompanyValue(value);
+  if (!normalized) {
+    return false;
+  }
+
+  if (/(^|\s)(best|top|premium|leading|number 1|no 1|#1)(\s|$)/.test(normalized)) {
+    return true;
+  }
+
+  if (/\b(in|near)\s+[a-z]+\b/.test(normalized) && /\b(clinic|specialist|dermatologist|aesthetic|skin|hair)\b/.test(normalized)) {
+    return true;
+  }
+
+  if (/^#?\d+\s+hair and skin clinic$/.test(normalized)) {
+    return true;
+  }
+
+  return false;
+}
+
+function pickCanonicalLeadName(lead: Lead | null | undefined) {
+  if (!lead) {
+    return "";
+  }
+
+  const businessName = normalizeWhitespace(lead.business_name);
+  const companyName = normalizeWhitespace(lead.company_name);
+  const businessPrefix = extractLeadBrandPrefix(businessName);
+  const companyPrefix = extractLeadBrandPrefix(companyName);
+  const hostLabel = formatLeadHostLabel(getLeadWebsiteHostValue(lead) || lead.domain);
+  const directCandidates = [businessName, companyName];
+
+  for (const candidate of directCandidates) {
+    if (candidate && !isLikelyGenericLeadName(candidate)) {
+      return candidate;
+    }
+  }
+
+  for (const candidate of [businessPrefix, companyPrefix]) {
+    if (candidate && !isLikelyGenericLeadName(candidate)) {
+      return candidate;
+    }
+  }
+
+  return hostLabel;
+}
+
+function sanitizeLeadContacts(contacts: Lead["contacts"] | null | undefined) {
+  const contactByIdentity = new Map<string, NonNullable<Lead["contacts"]>[number]>();
+
+  function scoreContactQuality(contact: {
+    name?: string;
+    title?: string;
+    phone?: string;
+    email?: string;
+    linkedin_url?: string;
+  }) {
+    const normalizedName = normalizeWhitespace(contact.name);
+    const normalizedTitle = normalizeWhitespace(contact.title);
+    const normalizedEmail = sanitizeLeadEmailValue(contact.email);
+    const normalizedPhone = sanitizeLeadPhoneValue(contact.phone);
+    let score = 0;
+
+    if (normalizedPhone) {
+      score += 5;
+    }
+    if (normalizedEmail) {
+      score += /\b(gmail|yahoo|hotmail|outlook)\./i.test(normalizedEmail) ? 2 : 4;
+    }
+    if (normalizeWhitespace(contact.linkedin_url)) {
+      score += 3;
+    }
+    if (normalizedName && normalizedName !== "Contact" && !isLikelyGenericLeadName(normalizedName)) {
+      score += 2;
+    }
+    if (normalizedTitle) {
+      score += 1;
+    }
+
+    return score;
+  }
+
+  for (const contact of contacts || []) {
+    const name = normalizeWhitespace(contact?.name) || "Contact";
+    const title = normalizeWhitespace(contact?.title);
+    const phone = sanitizeLeadPhoneValue(contact?.phone);
+    const email = sanitizeLeadEmailValue(contact?.email);
+    const linkedinUrl = normalizeWhitespace(contact?.linkedin_url);
+
+    if (!phone && !email && !linkedinUrl) {
+      continue;
+    }
+
+    const normalizedLinkedin = linkedinUrl.toLowerCase();
+    const identity =
+      (normalizedLinkedin && `linkedin:${normalizedLinkedin}`) ||
+      (phone && `phone:${phone}`) ||
+      (email && `email:${email.toLowerCase()}`) ||
+      [name.toLowerCase(), title.toLowerCase(), phone, email, normalizedLinkedin].join("|");
+
+    const nextContact = {
+      ...contact,
+      name,
+      title: title || undefined,
+      phone: phone || undefined,
+      email: email || undefined,
+      linkedin_url: linkedinUrl || undefined,
+    };
+    const existing = contactByIdentity.get(identity);
+
+    if (!existing || scoreContactQuality(nextContact) > scoreContactQuality(existing)) {
+      contactByIdentity.set(identity, nextContact);
+    }
+  }
+
+  return Array.from(contactByIdentity.values());
+}
+
+function normalizeBranchDisplayName(value: string | null | undefined) {
+  let text = normalizeWhitespace(value);
+  if (!text) {
+    return "";
+  }
+
+  text = text.split(",")[0]?.trim() || text;
+  text = text.replace(/\b\d{5,6}\b/g, "").trim();
+
+  if (/^\d/.test(text)) {
+    return "";
+  }
+
+  if (/\bjp nagar\b/i.test(text)) {
+    return "JP Nagar";
+  }
+  if (/\bkoramangala\b/i.test(text)) {
+    return "Koramangala";
+  }
+  if (/\bjayanagar\b/i.test(text)) {
+    return "Jayanagar";
+  }
+  if (/\bindiranagar\b/i.test(text)) {
+    return "Indiranagar";
+  }
+  if (/\bhsr\b/i.test(text)) {
+    return "HSR Layout";
+  }
+
+  const lowered = text.toLowerCase();
+  if (["bangalore", "bengaluru", "karnataka", "india"].includes(lowered)) {
+    return "";
+  }
+
+  return text;
+}
+
+function getDisplayBranchNames(signalFacts: SignalFacts | null | undefined) {
+  return dedupeStringValues(
+    (signalFacts?.branch_names || []).map((value) => normalizeBranchDisplayName(value))
+  );
+}
+
+function normalizeDoctorDisplayName(value: string | null | undefined) {
+  const text = normalizeWhitespace(value);
+  if (!text) {
+    return "";
+  }
+
+  const lowered = text.toLowerCase();
+  if (
+    lowered === "consultant dermatologist" ||
+    lowered === "dermatologist" ||
+    lowered === "doctor" ||
+    lowered === "clinic branch"
+  ) {
+    return "";
+  }
+
+  return text;
+}
+
+function getDisplayDoctorNames(signalFacts: SignalFacts | null | undefined) {
+  const names = [
+    ...(signalFacts?.doctor_names || []),
+    ...((signalFacts?.doctor_profiles || []).map((profile) => profile.name || "")),
+  ];
+
+  return dedupeStringValues(names.map((value) => normalizeDoctorDisplayName(value)));
+}
+
+function getSignalFactConfidence(signalFacts: SignalFacts | null | undefined, key: string) {
+  const confidence = signalFacts?.confidence_by_signal?.[key];
+  return typeof confidence === "number" ? confidence : 0;
+}
+
+function isSourceBackedSignal(signalFacts: SignalFacts | null | undefined, key: string) {
+  const evidenceLevel = String(signalFacts?.evidence_levels?.[key] || "").toLowerCase();
+  return (
+    evidenceLevel === "verified" ||
+    evidenceLevel === "confirmed" ||
+    getSignalFactConfidence(signalFacts, key) >= 0.9
+  );
+}
+
+function getFactSourceLabel(signalFacts: SignalFacts | null | undefined, key: string) {
+  const source = String(signalFacts?.fact_sources?.[key] || "").toLowerCase();
+  const evidence = String(signalFacts?.evidence_levels?.[key] || "").toLowerCase();
+
+  if (!source || source === "not_verified" || evidence === "unknown") {
+    return "not verified";
+  }
+  if (source === "google_maps") {
+    return "Google Maps";
+  }
+  if (source === "website_contact_page") {
+    return "website contact page";
+  }
+  if (source === "website_corroborated") {
+    return "website corroborated";
+  }
+  if (source === "website_doctor_profile") {
+    return "website doctor profile";
+  }
+  if (source === "website_text") {
+    return "website text";
+  }
+  if (source === "website_or_maps") {
+    return "website or Maps";
+  }
+  if (source === "website_instagram_link") {
+    return "website Instagram link";
+  }
+  if (source === "apify_instagram_profile_scraper") {
+    return "Instagram profile scrape";
+  }
+  if (source === "apify_instagram_bio_extractor") {
+    return "Instagram bio scrape";
+  }
+  if (source === "website_youtube_link") {
+    return "website YouTube link";
+  }
+  if (source === "apify_youtube_scraper") {
+    return "YouTube scrape";
+  }
+  return source.replace(/_/g, " ");
+}
+
+function sanitizeSignalFactsForDisplay(signalFacts: SignalFacts | null | undefined) {
+  if (!signalFacts) {
+    return null;
+  }
+
+  const multiClinicSourceBacked = isSourceBackedSignal(signalFacts, "multi_clinic");
+  const doctorsSourceBacked = isSourceBackedSignal(signalFacts, "doctors");
+  const branchNames = multiClinicSourceBacked ? getDisplayBranchNames(signalFacts) : [];
+  const doctorNames = doctorsSourceBacked ? getDisplayDoctorNames(signalFacts) : [];
+  const rawBranchCount = Number(signalFacts.branch_count || 0);
+  const rawDoctorCount = Number(signalFacts.doctor_count || 0);
+  const branchCount =
+    branchNames.length > 0
+      ? branchNames.length
+      : multiClinicSourceBacked
+        ? rawBranchCount
+        : 0;
+  const doctorCount =
+    doctorNames.length > 0
+      ? doctorNames.length
+      : doctorsSourceBacked
+        ? rawDoctorCount
+        : 0;
+
+  return {
+    ...signalFacts,
+    branch_names: branchNames,
+    branch_count: branchCount,
+    multi_clinic: branchCount > 1,
+    doctor_names: doctorNames,
+    doctor_count: doctorCount,
+  };
+}
+
+function sanitizeLeadRecord(lead: Lead): Lead {
+  const canonicalName = pickCanonicalLeadName(lead);
+  const cleanedBusinessName =
+    !isLikelyGenericLeadName(lead.business_name) && normalizeWhitespace(lead.business_name)
+      ? normalizeWhitespace(lead.business_name)
+      : canonicalName || normalizeWhitespace(lead.business_name);
+  const cleanedCompanyName =
+    !isLikelyGenericLeadName(lead.company_name) && normalizeWhitespace(lead.company_name)
+      ? normalizeWhitespace(lead.company_name)
+      : canonicalName || normalizeWhitespace(lead.company_name);
+
+  return {
+    ...lead,
+    business_name: cleanedBusinessName || undefined,
+    company_name:
+      cleanedCompanyName ||
+      cleanedBusinessName ||
+      formatLeadHostLabel(getLeadWebsiteHostValue(lead) || lead.domain) ||
+      lead.company_name,
+    contacts: sanitizeLeadContacts(lead.contacts),
+    contact_paths: dedupeStringValues(lead.contact_paths || []),
+    signal_facts: sanitizeSignalFactsForDisplay(lead.signal_facts) || undefined,
+  };
+}
+
 function normalizeLeadUrlValue(value: string | null | undefined) {
   const raw = String(value || "").trim().toLowerCase();
   if (!raw) {
@@ -160,24 +536,19 @@ function getLeadDisplayName(lead: Lead | null | undefined) {
     return "unknown lead";
   }
 
-  const businessName = String(lead.business_name || "").trim();
-  if (businessName) {
-    return businessName;
-  }
-
-  const companyName = String(lead.company_name || "").trim();
-  if (companyName) {
-    return companyName;
+  const canonicalName = pickCanonicalLeadName(lead);
+  if (canonicalName) {
+    return canonicalName;
   }
 
   const websiteHost = getLeadWebsiteHostValue(lead);
   if (websiteHost) {
-    return websiteHost;
+    return formatLeadHostLabel(websiteHost) || websiteHost;
   }
 
   const domain = normalizeLeadDomainValue(lead.domain);
   if (domain) {
-    return domain;
+    return formatLeadHostLabel(domain) || domain;
   }
 
   return lead.id || "unknown lead";
@@ -283,7 +654,7 @@ function getSignalFacts(
   lead: Lead | null | undefined,
   processedDetails: ProcessedLeadDetails | undefined
 ): SignalFacts | null {
-  return (
+  return sanitizeSignalFactsForDisplay(
     processedDetails?.signal_facts ||
     lead?.signal_facts ||
     null
@@ -378,14 +749,15 @@ function getCanonicalProofInsights(
 }
 
 function formatLocationFact(signalFacts: SignalFacts) {
-  const branchCount = signalFacts.branch_count || signalFacts.branch_names?.length || 0;
-  if (signalFacts.multi_clinic || branchCount > 1) {
-    return `${branchCount || 2}+`;
+  const cleanedBranchNames = getDisplayBranchNames(signalFacts);
+  const branchCount = cleanedBranchNames.length || signalFacts.branch_count || 0;
+  if (branchCount > 1) {
+    return String(branchCount);
   }
   if (branchCount === 1) {
-    return "Single";
+    return "1";
   }
-  return "Single / unknown";
+  return "-";
 }
 
 function formatAdsFact(signalFacts: SignalFacts) {
@@ -402,7 +774,76 @@ function formatSocialCount(value: number | null | undefined, noun: string) {
   if (value == null) {
     return "-";
   }
-  return `${value} ${noun}`;
+  return `${new Intl.NumberFormat("en-US", { notation: value >= 1000 ? "compact" : "standard" }).format(value)} ${noun}`;
+}
+
+function formatSocialMetric(value: number | null | undefined) {
+  if (value == null) {
+    return "-";
+  }
+  return new Intl.NumberFormat("en-US", { notation: value >= 1000 ? "compact" : "standard" }).format(value);
+}
+
+function formatSocialDate(value: string | null | undefined) {
+  if (!value) {
+    return "-";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return date.toLocaleDateString("en-IN", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function buildInstagramBehaviorSummary(signalFacts: SignalFacts) {
+  const profile = signalFacts.instagram_profile;
+  if (!profile) {
+    return signalFacts.instagram_present ? "Instagram profile detected" : "No Instagram profile";
+  }
+  const notes = [
+    profile.verified ? "verified profile" : null,
+    profile.is_business_account ? "business account" : null,
+    profile.business_category ? profile.business_category : null,
+    profile.latest_post_count != null && profile.latest_post_count > 0
+      ? `${profile.latest_post_count} recent posts captured`
+      : null,
+    profile.posts_count != null && profile.posts_count >= 150
+      ? "large content archive"
+      : profile.posts_count != null && profile.posts_count >= 40
+        ? "steady publishing history"
+        : profile.posts_count != null && profile.posts_count > 0
+          ? "light content history"
+          : null,
+  ].filter(Boolean);
+  return notes.length ? notes.join(" | ") : "Instagram profile linked";
+}
+
+function buildYouTubeBehaviorSummary(signalFacts: SignalFacts) {
+  const channel = signalFacts.youtube_channel;
+  if (!channel) {
+    return signalFacts.youtube_present ? "YouTube channel detected" : "No YouTube channel";
+  }
+  const notes = [
+    channel.recent_video_count != null && channel.recent_video_count > 0
+      ? `${channel.recent_video_count} recent videos scraped`
+      : null,
+    channel.avg_recent_views != null && channel.avg_recent_views > 0
+      ? `${formatSocialMetric(channel.avg_recent_views)} avg recent views`
+      : null,
+    channel.total_videos != null && channel.total_videos >= 100
+      ? "large video library"
+      : channel.total_videos != null && channel.total_videos >= 20
+        ? "consistent publishing history"
+        : channel.total_videos != null && channel.total_videos > 0
+          ? "small video library"
+          : null,
+    channel.latest_video_date ? `latest upload ${formatSocialDate(channel.latest_video_date)}` : null,
+  ].filter(Boolean);
+  return notes.length ? notes.join(" | ") : "YouTube channel linked";
 }
 
 function buildSocialResearchSummary(signalFacts: SignalFacts) {
@@ -537,15 +978,18 @@ function hydrateLeadFromStoredAnalysis(
   const scoring = (processedDetails?.scoring || {}) as Record<string, unknown>;
   const scores = analysisBundle?.scores || {};
   const scoreBreakdown = (scoring.score_breakdown || scoring.breakdown || {}) as Record<string, unknown>;
-  const finalScore =
-    lead.final_score ??
-    lead.score ??
+  const storedFinalScore =
     (scores.final_score as number | undefined) ??
     (scores.total_score as number | undefined) ??
     (scoreBreakdown.total_score as number | undefined) ??
     null;
+  const finalScore =
+    storedFinalScore ??
+    lead.final_score ??
+    lead.score ??
+    null;
 
-  return {
+  return sanitizeLeadRecord({
     ...lead,
     score: finalScore ?? lead.score,
     final_score: finalScore ?? lead.final_score,
@@ -554,7 +998,7 @@ function hydrateLeadFromStoredAnalysis(
     analysis_updated_at: processedDetails.analysis_updated_at || lead.analysis_updated_at,
     signals_version: processedDetails.signals_version || lead.signals_version,
     signal_facts: processedDetails.signal_facts || lead.signal_facts,
-  };
+  }) as Lead;
 }
 
 function getScoreSnapshot(
@@ -565,12 +1009,15 @@ function getScoreSnapshot(
   const scoring = (processedDetails?.scoring || {}) as Record<string, unknown>;
   const scoreBreakdown = (scoring.score_breakdown || scoring.breakdown || {}) as Record<string, unknown>;
   const scores = analysisBundle?.scores || {};
-  const finalScore =
-    lead?.final_score ??
-    lead?.score ??
+  const storedFinalScore =
     (scores.final_score as number | undefined) ??
     (scores.total_score as number | undefined) ??
     (scoreBreakdown.total_score as number | undefined) ??
+    null;
+  const finalScore =
+    storedFinalScore ??
+    lead?.final_score ??
+    lead?.score ??
     null;
 
   return {
@@ -609,10 +1056,28 @@ function getContactIntelligence(
   const rankedContacts = buildRankedContactModel(lead, processedDetails || null);
   const scoreNarrative = buildLeadScoreNarrative(lead, processedDetails || null);
   const topContact = rankedContacts.topContact;
-  const doctorNames = signalFacts?.doctor_names || [];
+  const doctorNames = getDisplayDoctorNames(signalFacts);
   const decisionMakerCandidates =
-    signalFacts?.decision_maker_candidates || analysisBundle?.agent_context?.decision_maker_candidates || [];
-  const branchContacts = signalFacts?.branch_contacts || analysisBundle?.agent_context?.branch_contacts || [];
+    (signalFacts?.decision_maker_candidates || analysisBundle?.agent_context?.decision_maker_candidates || []).map((candidate) => ({
+      ...candidate,
+      phones: dedupeStringValues((candidate.phones || []).map((value) => sanitizeLeadPhoneValue(value))),
+      emails: dedupeStringValues((candidate.emails || []).map((value) => sanitizeLeadEmailValue(value))),
+      email: sanitizeLeadEmailValue((candidate as { email?: string | null }).email),
+      phone: sanitizeLeadPhoneValue((candidate as { phone?: string | null }).phone),
+    })).filter((candidate) => Boolean(
+      normalizeDoctorDisplayName(String(candidate.name || "")) ||
+      candidate.phones?.length ||
+      candidate.emails?.length ||
+      candidate.phone ||
+      candidate.email
+    ));
+  const branchContacts = (signalFacts?.branch_contacts || analysisBundle?.agent_context?.branch_contacts || [])
+    .map((contact) => ({
+      ...contact,
+      name: normalizeBranchDisplayName(contact.name || "Clinic branch") || "Clinic branch",
+      phone: sanitizeLeadPhoneValue(contact.phone),
+    }))
+    .filter((contact) => Boolean(contact.phone));
 
   return {
     ...rankedContacts,
@@ -692,12 +1157,28 @@ function getLeadRowPriority(lead: Lead) {
 
 function mergeLeadRecord(existing: Lead | null | undefined, incoming: Lead) {
   if (!existing) {
-    return incoming;
+    return sanitizeLeadRecord(incoming);
   }
 
-  return getLeadRowPriority(existing) > getLeadRowPriority(incoming)
-    ? ({ ...incoming, ...existing } as Lead)
-    : ({ ...existing, ...incoming } as Lead);
+  const cleanedExisting = sanitizeLeadRecord(existing);
+  const cleanedIncoming = sanitizeLeadRecord(incoming);
+  const existingWins = getLeadRowPriority(cleanedExisting) > getLeadRowPriority(cleanedIncoming);
+  const primary = existingWins ? cleanedExisting : cleanedIncoming;
+  const secondary = existingWins ? cleanedIncoming : cleanedExisting;
+
+  return sanitizeLeadRecord({
+    ...secondary,
+    ...primary,
+    business_name: pickCanonicalLeadName(primary) || pickCanonicalLeadName(secondary) || primary.business_name || secondary.business_name,
+    company_name: pickCanonicalLeadName(primary) || pickCanonicalLeadName(secondary) || primary.company_name || secondary.company_name,
+    contacts:
+      sanitizeLeadContacts(primary.contacts).length > 0
+        ? sanitizeLeadContacts(primary.contacts)
+        : sanitizeLeadContacts(secondary.contacts),
+    contact_paths: dedupeStringValues([...(secondary.contact_paths || []), ...(primary.contact_paths || [])]),
+    signal_facts: sanitizeSignalFactsForDisplay(primary.signal_facts) || sanitizeSignalFactsForDisplay(secondary.signal_facts) || undefined,
+    analysis_bundle: primary.analysis_bundle ?? secondary.analysis_bundle,
+  });
 }
 
 function isSameLeadEntity(a: Lead | null | undefined, b: Lead | null | undefined) {
@@ -817,7 +1298,9 @@ function dedupeLeadRows(leads: Lead[]) {
 }
 
 function sanitizeLeadRows(leads: Lead[]) {
-  return leads.filter((lead) => Boolean(lead?.id || hasLeadIdentity(lead)));
+  return leads
+    .map((lead) => sanitizeLeadRecord(lead))
+    .filter((lead) => Boolean(lead.id || hasLeadIdentity(lead)));
 }
 
 function normalizeLeadDomainValue(value: string | null | undefined) {
@@ -941,12 +1424,32 @@ function findProcessedDetailsByEntity(
   return undefined;
 }
 
+function getExactProcessedDetailsForLead(
+  detailsMap: Record<string, ProcessedLeadDetails> | undefined,
+  target: Lead | null | undefined
+) {
+  if (!target?.id || !detailsMap) {
+    return undefined;
+  }
+
+  return detailsMap[target.id];
+}
+
 function getProcessedDetailsForLead(
   detailsMap: Record<string, ProcessedLeadDetails> | undefined,
   leads: Lead[],
   target: Lead | null | undefined
 ) {
-  return findProcessedDetailsByEntity(detailsMap, leads, target) || null;
+  const exactMatch = getExactProcessedDetailsForLead(detailsMap, target);
+  if (exactMatch) {
+    return exactMatch;
+  }
+
+  if (!target?.id) {
+    return findProcessedDetailsByEntity(detailsMap, leads, target) || undefined;
+  }
+
+  return undefined;
 }
 
 function replaceLeadRow(existing: Lead[], previousLeadId: string, incoming: Lead) {
@@ -1146,14 +1649,10 @@ function canonicalizeLeadListState({
   const canonicalProcessedDetails: Record<string, ProcessedLeadDetails> = {};
 
   for (const lead of canonicalLeads) {
-    const mergedDetails = collectProcessedDetailsForLeadEntity(
-      processedDetails,
-      sanitizedLeads,
-      lead
-    );
+    const exactDetails = getExactProcessedDetailsForLead(processedDetails, lead);
 
-    if (mergedDetails && Object.keys(mergedDetails).length > 0) {
-      canonicalProcessedDetails[lead.id] = mergedDetails;
+    if (exactDetails && Object.keys(exactDetails).length > 0) {
+      canonicalProcessedDetails[lead.id] = exactDetails;
     }
   }
 
@@ -2342,7 +2841,7 @@ function LeadListContent({
     toast.success("Analysis is still running. Use Refresh truth in a moment.");
   };
 
-  const analyzeSelectedLead = async (forceRefresh: boolean = false) => {
+  const analyzeSelectedLead = async (forceRefresh: boolean = true) => {
     if (!selectedLead?.id) {
       return;
     }
@@ -2512,7 +3011,7 @@ function LeadListContent({
     selectedLeadLiveDetails ||
     metadata?.liveSelectedLeadDetails ||
     (liveInspectorLead?.id ? processedDetails?.[liveInspectorLead.id] || null : null);
-  const selectedLeadDetailsFromStore = findProcessedDetailsByEntity(
+  const selectedLeadDetailsFromStore = getProcessedDetailsForLead(
     processedDetails,
     leads,
     resolvedSelectedLead
@@ -2525,7 +3024,7 @@ function LeadListContent({
   const selectedLeadDetails =
     (inspectorLead?.id && liveInspectorLead?.id === inspectorLead.id
       ? liveInspectorDetails
-      : null) || findProcessedDetailsByEntity(processedDetails, leads, inspectorLead);
+      : null) || getProcessedDetailsForLead(processedDetails, leads, inspectorLead);
   const selectedLeadEffectiveState = getResolvedAnalysisState(inspectorLead, selectedLeadDetails);
   const selectedLeadEntityIds = inspectorLead
     ? Array.from(
@@ -3015,23 +3514,35 @@ function LeadListContent({
                   <div className="rounded-md bg-zinc-100 p-2 dark:bg-zinc-900">
                     <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Reviews</div>
                     <div className="mt-1">{signalFacts.reviews_count ?? "-"}</div>
+                    <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                      {getFactSourceLabel(signalFacts, "reviews")}
+                    </div>
                   </div>
                   <div className="rounded-md bg-zinc-100 p-2 dark:bg-zinc-900">
                     <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Rating</div>
                     <div className="mt-1">{signalFacts.rating ?? "-"}</div>
+                    <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                      {getFactSourceLabel(signalFacts, "rating")}
+                    </div>
                   </div>
                   <div className="rounded-md bg-zinc-100 p-2 dark:bg-zinc-900">
                     <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Doctors</div>
-                    <div className="mt-1">{signalFacts.doctor_count ?? 0}</div>
+                    <div className="mt-1">{signalFacts.doctor_count || "-"}</div>
                     {!!contactIntel.doctorNames.length && (
                       <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
                         {contactIntel.doctorNames.slice(0, 4).join(", ")}
                       </div>
                     )}
+                    <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                      {getFactSourceLabel(signalFacts, "doctors")}
+                    </div>
                   </div>
                   <div className="rounded-md bg-zinc-100 p-2 dark:bg-zinc-900">
                     <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Locations</div>
                     <div className="mt-1">{formatLocationFact(signalFacts)}</div>
+                    <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                      {getFactSourceLabel(signalFacts, "locations")}
+                    </div>
                   </div>
                   <div className="rounded-md bg-zinc-100 p-2 dark:bg-zinc-900">
                     <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Ads</div>
@@ -3051,6 +3562,9 @@ function LeadListContent({
                           ? "Present"
                           : "No"}
                     </div>
+                    <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                      {getFactSourceLabel(signalFacts, "instagram")}
+                    </div>
                   </div>
                   <div className="rounded-md bg-zinc-100 p-2 dark:bg-zinc-900">
                     <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">YouTube</div>
@@ -3061,8 +3575,137 @@ function LeadListContent({
                           ? "Present"
                           : "No"}
                     </div>
+                    <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                      {getFactSourceLabel(signalFacts, "youtube")}
+                    </div>
                   </div>
                 </div>
+                {(signalFacts.instagram_profile || signalFacts.youtube_channel) && (
+                  <div className="mt-3 space-y-3">
+                    {signalFacts.instagram_profile && (
+                      <div className="rounded-md bg-zinc-100 p-3 dark:bg-zinc-900">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Instagram demand</div>
+                            <div className="mt-1 text-sm font-medium">
+                              {signalFacts.instagram_profile.full_name ||
+                                (signalFacts.instagram_profile.username
+                                  ? `@${signalFacts.instagram_profile.username}`
+                                  : "Instagram profile")}
+                            </div>
+                            <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                              {getFactSourceLabel(signalFacts, "instagram")}
+                            </div>
+                          </div>
+                          {signalFacts.instagram_profile.profile_url && (
+                            <a
+                              className="text-xs text-blue-500 hover:underline"
+                              href={signalFacts.instagram_profile.profile_url}
+                              rel="noreferrer"
+                              target="_blank"
+                            >
+                              Open profile
+                            </a>
+                          )}
+                        </div>
+                        <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
+                          <div className="rounded-md border border-zinc-200 p-2 dark:border-zinc-700">
+                            <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Followers</div>
+                            <div className="mt-1">{formatSocialMetric(signalFacts.instagram_profile.followers_count)}</div>
+                          </div>
+                          <div className="rounded-md border border-zinc-200 p-2 dark:border-zinc-700">
+                            <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Posts</div>
+                            <div className="mt-1">{formatSocialMetric(signalFacts.instagram_profile.posts_count)}</div>
+                          </div>
+                          <div className="rounded-md border border-zinc-200 p-2 dark:border-zinc-700">
+                            <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Following</div>
+                            <div className="mt-1">{formatSocialMetric(signalFacts.instagram_profile.following_count)}</div>
+                          </div>
+                          <div className="rounded-md border border-zinc-200 p-2 dark:border-zinc-700">
+                            <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Recent posts</div>
+                            <div className="mt-1">{formatSocialMetric(signalFacts.instagram_profile.latest_post_count)}</div>
+                          </div>
+                        </div>
+                        <div className="mt-2 text-sm text-zinc-500">
+                          {buildInstagramBehaviorSummary(signalFacts)}
+                        </div>
+                        {(signalFacts.instagram_profile.business_category ||
+                          signalFacts.instagram_profile.email ||
+                          signalFacts.instagram_profile.external_url) && (
+                          <div className="mt-2 space-y-1 text-sm text-zinc-500">
+                            {signalFacts.instagram_profile.business_category && (
+                              <div>Category: {signalFacts.instagram_profile.business_category}</div>
+                            )}
+                            {signalFacts.instagram_profile.email && (
+                              <div className="break-all">Email: {signalFacts.instagram_profile.email}</div>
+                            )}
+                            {signalFacts.instagram_profile.external_url && (
+                              <a
+                                className="break-all text-blue-500 hover:underline"
+                                href={signalFacts.instagram_profile.external_url}
+                                rel="noreferrer"
+                                target="_blank"
+                              >
+                                {signalFacts.instagram_profile.external_url}
+                              </a>
+                            )}
+                          </div>
+                        )}
+                        {signalFacts.instagram_profile.bio && (
+                          <div className="mt-2 rounded-md border border-zinc-200 p-2 text-sm text-zinc-500 dark:border-zinc-700">
+                            {signalFacts.instagram_profile.bio}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {signalFacts.youtube_channel && (
+                      <div className="rounded-md bg-zinc-100 p-3 dark:bg-zinc-900">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">YouTube demand</div>
+                            <div className="mt-1 text-sm font-medium">
+                              {signalFacts.youtube_channel.channel_name || "YouTube channel"}
+                            </div>
+                            <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                              {getFactSourceLabel(signalFacts, "youtube")}
+                            </div>
+                          </div>
+                          {signalFacts.youtube_channel.channel_url && (
+                            <a
+                              className="text-xs text-blue-500 hover:underline"
+                              href={signalFacts.youtube_channel.channel_url}
+                              rel="noreferrer"
+                              target="_blank"
+                            >
+                              Open channel
+                            </a>
+                          )}
+                        </div>
+                        <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
+                          <div className="rounded-md border border-zinc-200 p-2 dark:border-zinc-700">
+                            <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Subscribers</div>
+                            <div className="mt-1">{formatSocialMetric(signalFacts.youtube_channel.subscriber_count)}</div>
+                          </div>
+                          <div className="rounded-md border border-zinc-200 p-2 dark:border-zinc-700">
+                            <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Total views</div>
+                            <div className="mt-1">{formatSocialMetric(signalFacts.youtube_channel.total_views)}</div>
+                          </div>
+                          <div className="rounded-md border border-zinc-200 p-2 dark:border-zinc-700">
+                            <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Videos</div>
+                            <div className="mt-1">{formatSocialMetric(signalFacts.youtube_channel.total_videos)}</div>
+                          </div>
+                          <div className="rounded-md border border-zinc-200 p-2 dark:border-zinc-700">
+                            <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Avg recent views</div>
+                            <div className="mt-1">{formatSocialMetric(signalFacts.youtube_channel.avg_recent_views)}</div>
+                          </div>
+                        </div>
+                        <div className="mt-2 text-sm text-zinc-500">
+                          {buildYouTubeBehaviorSummary(signalFacts)}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
             <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
@@ -3228,7 +3871,7 @@ function LeadListContent({
                 <button
                   className="rounded-md bg-emerald-600 px-3 py-2 text-sm text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
                   disabled={isSelectedLeadProcessing}
-                  onClick={() => void analyzeSelectedLead()}
+                  onClick={() => void analyzeSelectedLead(true)}
                   type="button"
                 >
                   Analyze lead

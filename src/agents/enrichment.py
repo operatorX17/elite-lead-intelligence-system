@@ -42,6 +42,31 @@ PUBLIC_DIRECTORY_HOST_HINTS = {
     "1mg.com",
 }
 
+INSTAGRAM_RESERVED_PATHS = {
+    "accounts",
+    "developer",
+    "directory",
+    "explore",
+    "p",
+    "reel",
+    "reels",
+    "share",
+    "stories",
+    "tv",
+}
+
+YOUTUBE_ALLOWED_CHANNEL_PREFIXES = {"@", "c", "channel", "user"}
+YOUTUBE_RESERVED_PATHS = {
+    "embed",
+    "feed",
+    "hashtag",
+    "live",
+    "playlist",
+    "results",
+    "shorts",
+    "watch",
+}
+
 BRANCH_LOCALITY_ALIASES = {
     "jp nagar": "JP Nagar",
     "j p nagar": "JP Nagar",
@@ -53,6 +78,11 @@ BRANCH_LOCALITY_ALIASES = {
     "hsr layout": "HSR Layout",
     "electronic city": "Electronic City",
     "sarjapur": "Sarjapur",
+    "sarjapur road": "Sarjapur",
+    "thanisandra": "Thanisandra",
+    "thannisandra": "Thanisandra",
+    "thanisandra main road": "Thanisandra",
+    "chikkabellandur": "Chikkabellandur",
 }
 
 
@@ -390,9 +420,66 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
 
         lightweight_profile: Dict[str, Any] = {
             "username": username,
-            "profile_url": profile_url or f"https://www.instagram.com/{username}/",
+            "profile_url": self._normalize_instagram_profile_url(profile_url)
+            or f"https://www.instagram.com/{username}/",
             "source": "website_instagram_link",
         }
+        profile: Dict[str, Any] = {}
+        if self._env_feature_enabled("ZRAI_ENABLE_INSTAGRAM_PROFILE_ACTOR", default=True):
+            profile = self._apify.run_instagram_profile_scraper(lightweight_profile["profile_url"])
+
+        if profile:
+            biography = (
+                profile.get("biography")
+                or profile.get("bio")
+                or profile.get("biographyText")
+                or profile.get("description")
+            )
+            full_name = (
+                profile.get("fullName")
+                or profile.get("full_name")
+                or profile.get("name")
+            )
+            external_url = (
+                profile.get("externalUrl")
+                or profile.get("external_url")
+                or profile.get("website")
+                or profile.get("link")
+            )
+            follower_count = (
+                profile.get("followersCount")
+                or profile.get("followers")
+                or profile.get("follower_count")
+            )
+
+            normalized_profile: Dict[str, Any] = {
+                **lightweight_profile,
+                "full_name": full_name,
+                "bio": biography,
+                "external_url": external_url,
+                "followers_count": follower_count,
+                "following_count": (
+                    profile.get("followsCount")
+                    or profile.get("followingCount")
+                    or profile.get("following")
+                ),
+                "verified": profile.get("verified"),
+                "email": profile.get("email"),
+                "is_business_account": profile.get("isBusinessAccount"),
+                "business_category": profile.get("businessCategoryName")
+                or profile.get("business_category_name")
+                or profile.get("category"),
+                "posts_count": profile.get("postsCount") or profile.get("posts_count"),
+                "latest_post_count": len(profile.get("latestPosts") or []),
+                "profile_pic_url": profile.get("profilePicUrl") or profile.get("profile_pic_url"),
+                "source": "apify_instagram_profile_scraper",
+            }
+            return {
+                key: value
+                for key, value in normalized_profile.items()
+                if value not in (None, "", [], {})
+            }
+
         if not self._env_feature_enabled("ZRAI_ENABLE_INSTAGRAM_BIO_ACTOR", default=True):
             return lightweight_profile
 
@@ -445,9 +532,13 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
 
         channel_url = next(
             (
-                str(candidate).strip()
-                for candidate in youtube_candidates
-                if isinstance(candidate, str) and str(candidate).strip()
+                normalized
+                for normalized in (
+                    self._normalize_youtube_channel_url(str(candidate).strip())
+                    for candidate in youtube_candidates
+                    if isinstance(candidate, str) and str(candidate).strip()
+                )
+                if normalized
             ),
             None,
         )
@@ -541,6 +632,8 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             return None
         if "instagram.com" not in raw.lower():
             candidate = raw.lstrip("@").strip("/")
+            if not re.fullmatch(r"[A-Za-z0-9._]{1,30}", candidate or ""):
+                return None
             return candidate or None
 
         parsed = urlparse(raw if raw.startswith(("http://", "https://")) else f"https://{raw}")
@@ -548,9 +641,40 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         if not segments:
             return None
         candidate = segments[0].lstrip("@").strip()
-        if candidate.lower() in {"reel", "p", "stories", "explore"}:
+        if candidate.lower() in INSTAGRAM_RESERVED_PATHS:
+            return None
+        if not re.fullmatch(r"[A-Za-z0-9._]{1,30}", candidate or ""):
             return None
         return candidate or None
+
+    def _normalize_instagram_profile_url(self, value: Optional[str]) -> Optional[str]:
+        username = self._extract_instagram_username(value)
+        if not username:
+            return None
+        return f"https://www.instagram.com/{username}/"
+
+    def _normalize_youtube_channel_url(self, value: Optional[str]) -> Optional[str]:
+        raw = (value or "").strip()
+        if not raw:
+            return None
+
+        parsed = urlparse(raw if raw.startswith(("http://", "https://")) else f"https://{raw}")
+        hostname = parsed.netloc.lower().replace("www.", "").replace("m.", "")
+        if hostname != "youtube.com":
+            return None
+
+        segments = [segment.strip() for segment in parsed.path.split("/") if segment.strip()]
+        if not segments:
+            return None
+
+        first = segments[0]
+        if first.lower() in YOUTUBE_RESERVED_PATHS:
+            return None
+        if first.startswith("@") and len(first) > 1:
+            return f"https://www.youtube.com/{first}"
+        if first in YOUTUBE_ALLOWED_CHANNEL_PREFIXES and len(segments) > 1:
+            return f"https://www.youtube.com/{first}/{segments[1]}"
+        return None
 
     def _fetch_embedded_asset_content(self, raw_html: str, base_url: str) -> str:
         """Fetch a small bounded set of same-origin JS assets to recover data from JS-shell sites."""
@@ -881,6 +1005,7 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             web_results=list(lead.get("webResults") or lead.get("web_results") or []),
             related_places=list(lead.get("relatedPlaces") or lead.get("related_places") or []),
             maps_title=lead.get("maps_title"),
+            maps_address=lead.get("maps_address") or lead.get("address"),
         )
         for branch_hint in branch_hints:
             if branch_hint not in branch_names:
@@ -1031,26 +1156,26 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         web_results: List[Dict[str, Any]],
         related_places: List[Dict[str, Any]],
         maps_title: Optional[str],
+        maps_address: Optional[str],
     ) -> List[str]:
         candidates: List[str] = []
-        if maps_title:
-            candidates.append(str(maps_title))
-        for supporting_url in list(website_context.get("supporting_urls") or []):
-            candidates.append(str(supporting_url))
-        for result in web_results:
-            if not isinstance(result, dict):
-                continue
-            if result.get("url"):
-                candidates.append(str(result.get("url")))
-            if result.get("title"):
-                candidates.append(str(result.get("title")))
+        if maps_address:
+            candidates.append(str(maps_address))
         for result in related_places:
             if not isinstance(result, dict):
                 continue
-            if result.get("url"):
-                candidates.append(str(result.get("url")))
-            if result.get("title"):
-                candidates.append(str(result.get("title")))
+            if not self._source_text_matches_business(
+                " ".join(
+                    [
+                        str(result.get("title") or result.get("name") or ""),
+                        str(result.get("website") or ""),
+                        str(result.get("url") or ""),
+                        str(result.get("address") or ""),
+                    ]
+                ),
+                business_name,
+            ):
+                continue
             if result.get("address"):
                 candidates.append(str(result.get("address")))
 
@@ -1065,7 +1190,45 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
                 continue
             seen.add(key)
             hints.append(hint)
-        return hints[:8]
+        return hints[:4]
+
+    def _source_text_matches_business(self, text: str, business_name: str) -> bool:
+        haystack = str(text or "").lower()
+        if not haystack.strip():
+            return False
+
+        blocked = {
+            "clinic",
+            "clinics",
+            "skin",
+            "hair",
+            "laser",
+            "care",
+            "center",
+            "centre",
+            "aesthetic",
+            "aesthetics",
+            "cosmetic",
+            "doctor",
+            "doctors",
+            "specialist",
+            "specialists",
+            "best",
+            "top",
+            "premium",
+            "bangalore",
+            "bengaluru",
+        }
+        tokens = [
+            token
+            for token in re.findall(r"[a-z0-9]+", business_name.lower())
+            if len(token) > 2 and token not in blocked
+        ]
+        if not tokens:
+            return True
+        matched = sum(1 for token in tokens if token in haystack)
+        required = 1 if len(tokens) <= 2 else 2
+        return matched >= required
 
     def _extract_branch_hint_from_text(self, text: str, business_name: str) -> Optional[str]:
         value = str(text or "").strip()
@@ -1255,6 +1418,7 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
 
         lower_context = str(raw_context or "").lower()
         lower_specialty = str(specialty or "").lower()
+        explicit_dr_prefix = bool(re.search(r"\bdr\.?\s+", str(name or ""), flags=re.IGNORECASE))
         role = "doctor"
         score = 64
         if "co-founder" in lower_specialty or "co founder" in lower_specialty:
@@ -1305,11 +1469,13 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             "name": normalized_name,
             "role": role,
             "clinic": clinic,
+            "specialty": specialty,
             "experience": experience,
             "source": source,
             "score": score,
             "phones": phones,
             "emails": emails,
+            "explicit_dr_prefix": explicit_dr_prefix,
         }
 
     def _extract_branch_contacts(self, raw_content: str) -> List[Dict[str, Any]]:
@@ -1326,9 +1492,10 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             phone = self._normalize_phone(match.group("phone"))
             if not name or not phone or not self._is_plausible_branch_name(name):
                 continue
+            canonical_name = self._normalize_branch_hint_candidate(name) or name
             contacts.append(
                 {
-                    "name": name,
+                    "name": canonical_name,
                     "phone": phone,
                     "source": "website_asset",
                 }
@@ -1348,9 +1515,10 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             )
             if not phones:
                 continue
+            canonical_name = self._normalize_branch_hint_candidate(line) or line
             contacts.append(
                 {
-                    "name": line,
+                    "name": canonical_name,
                     "phone": phones[0],
                     "source": "website_page",
                 }
@@ -1361,7 +1529,7 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         for contact in contacts:
             phone_key = str(contact.get("phone") or "")
             name_key = str(contact.get("name") or "").lower()
-            key = ("phone", phone_key) if phone_key else ("name", name_key)
+            key = ("name", name_key) if name_key else ("phone", phone_key)
             if key in seen:
                 continue
             seen.add(key)
@@ -1375,21 +1543,12 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         lowered = normalized.lower()
         if "@" in lowered or lowered.startswith("http"):
             return False
-        if len(normalized) > 60 or re.search(r"\b\d{5,6}\b", lowered):
+        has_known_locality = any(alias in lowered for alias in BRANCH_LOCALITY_ALIASES)
+        if len(normalized) > 140:
             return False
-        if re.search(r"\b(?:bangalore|bengaluru)\b", lowered) and not any(
-            token in lowered
-            for token in (
-                "jp nagar",
-                "koramangala",
-                "jayanagar",
-                "indiranagar",
-                "whitefield",
-                "hsr",
-                "electronic city",
-                "sarjapur",
-            )
-        ):
+        if re.search(r"\b\d{5,6}\b", lowered) and not has_known_locality:
+            return False
+        if re.search(r"\b(?:bangalore|bengaluru)\b", lowered) and not has_known_locality:
             return False
         blocked_terms = {
             "about us",
@@ -1445,10 +1604,13 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             "bangalore",
             "clinic",
             "branch",
+            "sarjapur",
+            "thanisandra",
+            "chikkabellandur",
         )
-        if not any(token in lowered for token in location_tokens):
+        if not has_known_locality and not any(token in lowered for token in location_tokens):
             return False
-        if any(token in lowered for token in ("road", "rd", "cross", "main", "block", "phase")):
+        if not has_known_locality and any(token in lowered for token in ("road", "rd", "cross", "main", "block", "phase")):
             return False
         return True
 

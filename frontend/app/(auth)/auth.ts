@@ -2,6 +2,12 @@ import { compare } from "bcrypt-ts";
 import NextAuth, { type DefaultSession } from "next-auth";
 import type { DefaultJWT } from "next-auth/jwt";
 import Credentials from "next-auth/providers/credentials";
+import {
+  clearAuthFailures,
+  isAuthRateLimited,
+  normalizeAuthEmail,
+  recordAuthFailure,
+} from "@/lib/auth/security";
 import { DUMMY_PASSWORD } from "@/lib/constants";
 import {
   createGuestUser,
@@ -52,17 +58,21 @@ export const {
         email: { label: "Email", type: "email" },
         password: { label: "Password", type: "password" },
       },
-      async authorize(credentials) {
-        const email =
-          typeof credentials?.email === "string" ? credentials.email : "";
+      async authorize(credentials, request) {
+        const email = normalizeAuthEmail(credentials?.email);
         const password =
           typeof credentials?.password === "string"
             ? credentials.password
             : "";
 
+        if (!email || !password || isAuthRateLimited(email, request)) {
+          await compare(password || DUMMY_PASSWORD, DUMMY_PASSWORD);
+          return null;
+        }
+
         if (
           isSingleUserMode &&
-          email.toLowerCase() === ownerEmail &&
+          email === ownerEmail &&
           password === ownerPassword
         ) {
           const ensuredOwner = await ensureUserRecord({
@@ -74,6 +84,7 @@ export const {
             return null;
           }
 
+          clearAuthFailures(email, request);
           return { ...ensuredOwner, type: "regular" };
         }
 
@@ -81,6 +92,7 @@ export const {
 
         if (users.length === 0) {
           await compare(password, DUMMY_PASSWORD);
+          recordAuthFailure(email, request);
           return null;
         }
 
@@ -88,15 +100,18 @@ export const {
 
         if (!user.password) {
           await compare(password, DUMMY_PASSWORD);
+          recordAuthFailure(email, request);
           return null;
         }
 
         const passwordsMatch = await compare(password, user.password);
 
         if (!passwordsMatch) {
+          recordAuthFailure(email, request);
           return null;
         }
 
+        clearAuthFailures(email, request);
         return { ...user, type: "regular" };
       },
     }),
