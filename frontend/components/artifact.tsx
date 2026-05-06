@@ -492,6 +492,7 @@ function PureArtifact({
                 isCurrentVersion={isCurrentVersion}
                 metadata={metadata}
                 mode={mode}
+                setArtifact={setArtifact}
                 setMetadata={setMetadata}
               />
             </div>

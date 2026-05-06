@@ -6,12 +6,14 @@ import type { ChatMessage, CustomUIDataTypes } from "@/lib/types";
 import type { UIArtifact } from "./artifact";
 
 export type ArtifactActionContext<M = any> = {
+  artifact: UIArtifact;
   content: string;
   handleVersionChange: (type: "next" | "prev" | "toggle" | "latest") => void;
   currentVersionIndex: number;
   isCurrentVersion: boolean;
   mode: "edit" | "diff";
   metadata: M;
+  setArtifact: Dispatch<SetStateAction<UIArtifact>>;
   setMetadata: Dispatch<SetStateAction<M>>;
 };
 

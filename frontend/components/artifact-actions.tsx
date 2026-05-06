@@ -13,6 +13,7 @@ type ArtifactActionsProps = {
   isCurrentVersion: boolean;
   mode: "edit" | "diff";
   metadata: any;
+  setArtifact: Dispatch<SetStateAction<UIArtifact>>;
   setMetadata: Dispatch<SetStateAction<any>>;
 };
 
@@ -23,6 +24,7 @@ function PureArtifactActions({
   isCurrentVersion,
   mode,
   metadata,
+  setArtifact,
   setMetadata,
 }: ArtifactActionsProps) {
   const [isLoading, setIsLoading] = useState(false);
@@ -36,12 +38,14 @@ function PureArtifactActions({
   }
 
   const actionContext: ArtifactActionContext = {
+    artifact,
     content: artifact.content,
     handleVersionChange,
     currentVersionIndex,
     isCurrentVersion,
     mode,
     metadata,
+    setArtifact,
     setMetadata,
   };
 
