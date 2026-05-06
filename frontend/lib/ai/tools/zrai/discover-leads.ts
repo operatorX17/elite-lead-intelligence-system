@@ -110,7 +110,9 @@ const SEO_BRAND_BLOCKLIST = [
   "hospital in ",
   "dermatologist in ",
   "skin clinic in ",
+  "skin specialist in ",
   "hair clinic in ",
+  "beauty clinic for ",
   "cosmetic clinic in ",
   "multispecialty hospital in ",
 ];
@@ -328,10 +330,31 @@ function isBudgetConstraint(detail: string | undefined): boolean {
   const message = String(detail || "").toLowerCase();
   return (
     message.includes("remaining usage") ||
+    message.includes("monthly usage hard limit exceeded") ||
+    message.includes("usage hard limit exceeded") ||
     message.includes("billing/subscription") ||
     message.includes("budget exceeded") ||
     message.includes("paid plan")
   );
+}
+
+function buildLeadListArtifactData({
+  geo,
+  leads,
+  niche,
+}: {
+  geo: string;
+  leads: Array<{ id?: string }>;
+  niche: string;
+}) {
+  return {
+    autoAnalyzeCompletedToken: null,
+    autoAnalyzeEnabled: true,
+    geo,
+    leads,
+    niche,
+    selectedLeadId: leads[0]?.id || null,
+  };
 }
 
 export const discoverLeads = ({
@@ -342,7 +365,7 @@ export const discoverLeads = ({
   tool({
     description: `Discover new leads based on niche and geographic location. 
 Use this tool when the user wants to find new prospects or leads in a specific industry or region.
-Returns a list of discovered leads with basic company information.
+Returns a focused list of discovered leads with basic company information. Default to 5 strong leads unless the user asks for more.
 
 NOTE: Discovery can take 2-5 minutes as it scrapes real data from Google Maps. 
 Only set mock=true when the user explicitly asks for mock, fake, or test data.`,
@@ -362,8 +385,8 @@ Only set mock=true when the user explicitly asks for mock, fake, or test data.`,
         .min(1)
         .max(MAX_DISCOVERY_LIMIT)
         .optional()
-        .default(20)
-        .describe("Maximum number of leads to discover (1-200)"),
+        .default(5)
+        .describe("Maximum number of leads to discover (1-200). Default to 5 unless the user asks for more."),
       mock: z
         .boolean()
         .optional()
@@ -454,11 +477,11 @@ Only set mock=true when the user explicitly asks for mock, fake, or test data.`,
                     : `Discovery completed for ${normalizedNiche} in ${geo}, but no verified leads matched the current filters yet.`,
                 artifactTrigger: {
                   kind: "lead-list" as const,
-                  data: {
+                  data: buildLeadListArtifactData({
+                    geo,
                     leads: retryData.leads,
                     niche: normalizedNiche,
-                    geo,
-                  },
+                  }),
                 },
               };
             }
@@ -524,11 +547,11 @@ Only set mock=true when the user explicitly asks for mock, fake, or test data.`,
               summary: `Discovered ${fallbackData.count} real leads in ${geo} after broadening the clinic search from "${niche}" to "${fallbackNiche}".`,
               artifactTrigger: {
                 kind: "lead-list" as const,
-                data: {
+                data: buildLeadListArtifactData({
+                  geo,
                   leads: fallbackData.leads,
                   niche: fallbackNiche,
-                  geo,
-                },
+                }),
               },
             };
           }
@@ -560,11 +583,11 @@ Only set mock=true when the user explicitly asks for mock, fake, or test data.`,
               summary: `Discovered ${firecrawlLeads.length} clinic leads in ${geo} using Firecrawl search fallback after the primary discovery service returned no verified matches.`,
               artifactTrigger: {
                 kind: "lead-list" as const,
-                data: {
+                data: buildLeadListArtifactData({
+                  geo,
                   leads: firecrawlLeads,
                   niche,
-                  geo,
-                },
+                }),
               },
             };
           }
@@ -590,11 +613,11 @@ Only set mock=true when the user explicitly asks for mock, fake, or test data.`,
             : `Discovered ${data.count} real leads in the ${niche} niche (${geo}) using the live discovery backend.`,
           artifactTrigger: {
             kind: "lead-list" as const,
-            data: {
+            data: buildLeadListArtifactData({
+              geo,
               leads: data.leads,
               niche,
-              geo,
-            },
+            }),
           },
         };
       } catch (error) {

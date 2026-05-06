@@ -33,6 +33,8 @@ type LeadListMetadata = {
   sortBy: string;
   sortOrder: "asc" | "desc";
   filter: string;
+  autoAnalyzeEnabled?: boolean;
+  autoAnalyzeCompletedToken?: string | null;
   selectedLeadId?: string | null;
   processedDetails?: Record<string, ProcessedLeadDetails>;
   liveSelectedLead?: Lead | null;
@@ -40,6 +42,8 @@ type LeadListMetadata = {
 };
 
 type LeadListPayload = {
+  autoAnalyzeEnabled?: boolean;
+  autoAnalyzeCompletedToken?: string | null;
   filter?: string;
   leads?: Lead[];
   processedDetails?: Record<string, ProcessedLeadDetails>;
@@ -1682,10 +1686,18 @@ function serializeLeadListPayload(
   leads: Lead[],
   metadata?: Pick<
     LeadListMetadata,
-    "filter" | "processedDetails" | "selectedLeadId" | "sortBy" | "sortOrder"
+    | "autoAnalyzeCompletedToken"
+    | "autoAnalyzeEnabled"
+    | "filter"
+    | "processedDetails"
+    | "selectedLeadId"
+    | "sortBy"
+    | "sortOrder"
   >
 ) {
   return JSON.stringify({
+    autoAnalyzeCompletedToken: metadata?.autoAnalyzeCompletedToken || null,
+    autoAnalyzeEnabled: metadata?.autoAnalyzeEnabled ?? true,
     filter: metadata?.filter || "",
     leads,
     processedDetails: metadata?.processedDetails || {},
@@ -1696,6 +1708,7 @@ function serializeLeadListPayload(
 }
 
 const LEAD_LIST_SNAPSHOT_PREFIX = "zrai:lead-list-snapshot:";
+const AUTO_ANALYZE_MAX_LEADS = 10;
 
 function getLeadListSnapshotKey(documentId: string | null | undefined) {
   if (!documentId || documentId === "init") {
@@ -1921,6 +1934,8 @@ function parseLeadListPayload(content: string): {
   filter: string;
   leads: Lead[];
   processedDetails: Record<string, ProcessedLeadDetails>;
+  autoAnalyzeCompletedToken: string | null;
+  autoAnalyzeEnabled: boolean;
   selectedLeadId: string | null;
   sortBy: string;
   sortOrder: "asc" | "desc";
@@ -1930,6 +1945,8 @@ function parseLeadListPayload(content: string): {
       filter: "",
       leads: [],
       processedDetails: {},
+      autoAnalyzeCompletedToken: null,
+      autoAnalyzeEnabled: true,
       selectedLeadId: null,
       sortBy: "score",
       sortOrder: "desc",
@@ -1949,6 +1966,8 @@ function parseLeadListPayload(content: string): {
       filter: payload.filter || "",
       leads: canonical.leads,
       processedDetails: canonical.processedDetails,
+      autoAnalyzeCompletedToken: payload.autoAnalyzeCompletedToken || null,
+      autoAnalyzeEnabled: payload.autoAnalyzeEnabled ?? true,
       selectedLeadId: canonical.selectedLeadId,
       sortBy: payload.sortBy || "score",
       sortOrder: payload.sortOrder === "asc" ? "asc" : "desc",
@@ -1958,6 +1977,8 @@ function parseLeadListPayload(content: string): {
       filter: "",
       leads: [],
       processedDetails: {},
+      autoAnalyzeCompletedToken: null,
+      autoAnalyzeEnabled: true,
       selectedLeadId: null,
       sortBy: "score",
       sortOrder: "desc",
@@ -1988,6 +2009,7 @@ function LeadListContent({
   const persistTimeoutRef = useRef<number | null>(null);
   const snapshotRestoreRef = useRef<string | null>(null);
   const truthRecoveryRef = useRef<string | null>(null);
+  const autoAnalyzeRunRef = useRef<string | null>(null);
   const { artifact, setArtifact } = useArtifact();
 
   const contentPayload = parseLeadListPayload(content);
@@ -2015,6 +2037,12 @@ function LeadListContent({
   const sortOrder = metadata?.sortOrder || contentPayload.sortOrder || "desc";
   const sortedLeads = sortLeads(filteredLeads, sortBy, sortOrder);
   const persistedSelectedLeadId = canonicalState.selectedLeadId || null;
+  const autoAnalyzeEnabled =
+    metadata?.autoAnalyzeEnabled ?? contentPayload.autoAnalyzeEnabled ?? true;
+  const autoAnalyzeCompletedToken =
+    metadata?.autoAnalyzeCompletedToken ||
+    contentPayload.autoAnalyzeCompletedToken ||
+    null;
 
   const queueLeadListDocumentSave = (nextContent: string) => {
     if (persistTimeoutRef.current) {
@@ -2085,6 +2113,16 @@ function LeadListContent({
         null,
     });
     const nextContent = serializeLeadListPayload(canonicalSnapshotState.leads, {
+      autoAnalyzeCompletedToken:
+        metadata?.autoAnalyzeCompletedToken ||
+        snapshotPayload.autoAnalyzeCompletedToken ||
+        currentPayload.autoAnalyzeCompletedToken ||
+        null,
+      autoAnalyzeEnabled:
+        metadata?.autoAnalyzeEnabled ??
+        snapshotPayload.autoAnalyzeEnabled ??
+        currentPayload.autoAnalyzeEnabled ??
+        true,
       filter: metadata?.filter || snapshotPayload.filter || currentPayload.filter || "",
       processedDetails: canonicalSnapshotState.processedDetails,
       selectedLeadId: canonicalSnapshotState.selectedLeadId,
@@ -2098,6 +2136,16 @@ function LeadListContent({
       leads: canonicalSnapshotState.leads,
       processedDetails: canonicalSnapshotState.processedDetails,
       selectedLeadId: canonicalSnapshotState.selectedLeadId,
+      autoAnalyzeCompletedToken:
+        prev.autoAnalyzeCompletedToken ||
+        snapshotPayload.autoAnalyzeCompletedToken ||
+        currentPayload.autoAnalyzeCompletedToken ||
+        null,
+      autoAnalyzeEnabled:
+        prev.autoAnalyzeEnabled ??
+        snapshotPayload.autoAnalyzeEnabled ??
+        currentPayload.autoAnalyzeEnabled ??
+        true,
       filter: prev.filter || snapshotPayload.filter || currentPayload.filter || "",
       sortBy: prev.sortBy || snapshotPayload.sortBy || currentPayload.sortBy || "score",
       sortOrder:
@@ -2115,6 +2163,8 @@ function LeadListContent({
     metadata?.leads,
     metadata?.processedDetails,
     metadata?.selectedLeadId,
+    metadata?.autoAnalyzeCompletedToken,
+    metadata?.autoAnalyzeEnabled,
     metadata?.sortBy,
     metadata?.sortOrder,
     setArtifact,
@@ -2122,6 +2172,8 @@ function LeadListContent({
   ]);
 
   const persistLeadListContent = ({
+    nextAutoAnalyzeCompletedToken,
+    nextAutoAnalyzeEnabled,
     nextFilter,
     nextLeads,
     nextProcessedDetails,
@@ -2129,6 +2181,8 @@ function LeadListContent({
     nextSortBy,
     nextSortOrder,
   }: {
+    nextAutoAnalyzeCompletedToken?: string | null;
+    nextAutoAnalyzeEnabled?: boolean;
     nextFilter?: string;
     nextLeads?: Lead[];
     nextProcessedDetails?: Record<string, ProcessedLeadDetails>;
@@ -2143,6 +2197,14 @@ function LeadListContent({
         nextSelectedLeadId !== undefined ? nextSelectedLeadId : persistedSelectedLeadId,
     });
     const nextContent = serializeLeadListPayload(canonical.leads, {
+      autoAnalyzeCompletedToken:
+        nextAutoAnalyzeCompletedToken !== undefined
+          ? nextAutoAnalyzeCompletedToken
+          : autoAnalyzeCompletedToken,
+      autoAnalyzeEnabled:
+        nextAutoAnalyzeEnabled !== undefined
+          ? nextAutoAnalyzeEnabled
+          : autoAnalyzeEnabled,
       filter: nextFilter ?? filter,
       processedDetails: canonical.processedDetails,
       selectedLeadId: canonical.selectedLeadId,
@@ -2164,6 +2226,8 @@ function LeadListContent({
       selectedLeadId: persistedSelectedLeadId,
     });
     const nextContent = serializeLeadListPayload(canonical.leads, {
+      autoAnalyzeCompletedToken,
+      autoAnalyzeEnabled,
       filter,
       processedDetails: canonical.processedDetails,
       selectedLeadId: canonical.selectedLeadId,
@@ -2184,6 +2248,8 @@ function LeadListContent({
     artifact.documentId,
     artifact.kind,
     artifact.title,
+    autoAnalyzeCompletedToken,
+    autoAnalyzeEnabled,
     content,
     filter,
     leads,
@@ -2275,6 +2341,8 @@ function LeadListContent({
         };
 
         persistLeadListContent({
+          nextAutoAnalyzeCompletedToken: updated.autoAnalyzeCompletedToken,
+          nextAutoAnalyzeEnabled: updated.autoAnalyzeEnabled,
           nextFilter: updated.filter,
           nextLeads: updated.leads,
           nextProcessedDetails: updated.processedDetails,
@@ -2545,12 +2613,12 @@ function LeadListContent({
     }
   ) => {
     if (leadIds.length === 0) {
-      return;
+      return false;
     }
 
     const freshLeadIds = leadIds.filter((leadId) => !processingIds.includes(leadId));
     if (freshLeadIds.length === 0) {
-      return;
+      return false;
     }
 
     const controller = new AbortController();
@@ -2666,7 +2734,7 @@ function LeadListContent({
 
       if (processedLeads.length === 0) {
         toast.error(options?.emptyMessage || "No leads were processed successfully.");
-        return;
+        return false;
       }
 
       const mergedLeads = dedupeLeadRows(mergeLeadRows(workingLeadRows, processedLeads));
@@ -2701,18 +2769,97 @@ function LeadListContent({
 
       toast.success(
         options?.successMessage ||
-          `Processed ${processedLeads.length} lead${processedLeads.length === 1 ? "" : "s"} through enrich, intent, proof, and outreach.`
+          `Processed ${processedLeads.length} lead${processedLeads.length === 1 ? "" : "s"} through enrichment, intent, proof, and scoring.`
       );
+      return true;
       } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
         toast.success("Lead processing stopped.");
-        return;
+        return false;
       }
       toast.error(error instanceof Error ? error.message : "Lead processing failed");
+      return false;
     } finally {
       clearProcessing(activeLeadIds);
     }
   };
+
+  useEffect(() => {
+    if (!autoAnalyzeEnabled || !leads.length || processingIds.length) {
+      return;
+    }
+
+    const visibleLeads = dedupeLeadRows(sortedLeads);
+    const preferredLead = visibleLeads[0] || leads[0];
+    if (!persistedSelectedLeadId && preferredLead) {
+      selectedLeadIdRef.current = preferredLead.id;
+      setSelectedLead(preferredLead);
+      setSelectedLeadLive(null);
+      setSelectedLeadLiveDetails(null);
+      setMetadata((prev: LeadListMetadata) => ({
+        ...prev,
+        selectedLeadId: preferredLead.id,
+        liveSelectedLead: null,
+        liveSelectedLeadDetails: null,
+      }));
+      persistLeadListContent({
+        nextSelectedLeadId: preferredLead.id,
+      });
+    }
+
+    const candidates = visibleLeads
+      .filter(
+        (lead) =>
+          !isTerminalAnalysisState(
+            lead,
+            getProcessedDetailsForLead(processedDetails, leads, lead)
+          )
+      )
+      .slice(0, AUTO_ANALYZE_MAX_LEADS);
+
+    if (!candidates.length) {
+      return;
+    }
+
+    const token = `${artifact?.documentId || "draft"}:${candidates
+      .map((lead) => lead.id)
+      .join("|")}`;
+    if (autoAnalyzeRunRef.current === token || autoAnalyzeCompletedToken === token) {
+      return;
+    }
+    autoAnalyzeRunRef.current = token;
+
+    void processLeads(
+      candidates.map((lead) => lead.id),
+      {
+        includeOutreach: false,
+        forceRefresh: false,
+        successMessage: `Auto-analyzed ${candidates.length} lead${candidates.length === 1 ? "" : "s"} for the inspector.`,
+        emptyMessage: "Auto-analysis did not finish any leads yet. Use Analyze visible to retry.",
+      }
+    ).then((completed) => {
+      if (!completed) {
+        return;
+      }
+      setMetadata((prev: LeadListMetadata) => ({
+        ...prev,
+        autoAnalyzeCompletedToken: token,
+      }));
+      persistLeadListContent({
+        nextAutoAnalyzeCompletedToken: token,
+      });
+    });
+  }, [
+    artifact?.documentId,
+    autoAnalyzeCompletedToken,
+    autoAnalyzeEnabled,
+    leads,
+    persistedSelectedLeadId,
+    processedDetails,
+    processingIds.length,
+    setMetadata,
+    sortedLeads,
+  ]);
 
   useEffect(() => {
     if (!processingIds.length) {
@@ -3104,6 +3251,33 @@ function LeadListContent({
             ) || 0}
           </span>
           <div className="ml-auto flex items-center gap-2">
+            <label className="flex items-center gap-2 rounded-md border border-zinc-300 px-3 py-2 text-xs text-zinc-600 dark:border-zinc-700 dark:text-zinc-300">
+              <input
+                checked={autoAnalyzeEnabled}
+                className="accent-emerald-500"
+                onChange={(event) => {
+                  const nextAutoAnalyzeEnabled = event.target.checked;
+                  setMetadata((prev: LeadListMetadata) => ({
+                    ...prev,
+                    autoAnalyzeCompletedToken: nextAutoAnalyzeEnabled
+                      ? null
+                      : prev.autoAnalyzeCompletedToken,
+                    autoAnalyzeEnabled: nextAutoAnalyzeEnabled,
+                  }));
+                  persistLeadListContent({
+                    nextAutoAnalyzeCompletedToken: nextAutoAnalyzeEnabled
+                      ? null
+                      : autoAnalyzeCompletedToken,
+                    nextAutoAnalyzeEnabled,
+                  });
+                  if (nextAutoAnalyzeEnabled) {
+                    autoAnalyzeRunRef.current = null;
+                  }
+                }}
+                type="checkbox"
+              />
+              Auto fast analyze
+            </label>
             <button
               className="rounded-md bg-emerald-600 px-3 py-2 text-xs text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
               disabled={!dedupeLeadRows(sortedLeads).length || !!processingIds.length}
@@ -3932,6 +4106,8 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
       sortBy: prev?.sortBy ?? "score",
       sortOrder: prev?.sortOrder ?? "desc",
       filter: prev?.filter ?? "",
+      autoAnalyzeCompletedToken: prev?.autoAnalyzeCompletedToken ?? null,
+      autoAnalyzeEnabled: prev?.autoAnalyzeEnabled ?? true,
       selectedLeadId: prev?.selectedLeadId ?? null,
       processedDetails: prev?.processedDetails ?? {},
     }));
@@ -3950,6 +4126,9 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
         return {
           ...prev,
           filter: payload.filter || prev.filter || "",
+          autoAnalyzeCompletedToken:
+            payload.autoAnalyzeCompletedToken || prev.autoAnalyzeCompletedToken || null,
+          autoAnalyzeEnabled: payload.autoAnalyzeEnabled ?? prev.autoAnalyzeEnabled ?? true,
           leads: dedupeLeadRows(
             mergeLeadRows(
               dedupeLeadRows(sanitizeLeadRows(prev?.leads || [])),
@@ -3998,6 +4177,12 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
             )
           );
           return serializeLeadListPayload(mergedLeads, {
+            autoAnalyzeCompletedToken:
+              payload.autoAnalyzeCompletedToken ||
+              currentPayload.autoAnalyzeCompletedToken ||
+              null,
+            autoAnalyzeEnabled:
+              payload.autoAnalyzeEnabled ?? currentPayload.autoAnalyzeEnabled ?? true,
             filter: payload.filter || currentPayload.filter || "",
             processedDetails: mergedDetails,
             selectedLeadId:
