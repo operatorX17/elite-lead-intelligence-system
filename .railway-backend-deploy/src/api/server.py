@@ -868,11 +868,27 @@ def build_contact_rows(lead_data: Dict[str, Any], enrichment: Optional[Dict[str,
     """Build lightweight frontend contact rows from lead/enrichment data."""
     contact_intelligence = (enrichment or {}).get("contact_intelligence") or {}
     contact_points = list(contact_intelligence.get("contact_points") or [])
-    contacts: List[Dict[str, Any]] = []
-    seen_contact_keys = set()
+    contacts_by_identity: Dict[tuple[str, str], Dict[str, Any]] = {}
+
+    def _contact_row_quality(row: Dict[str, Any]) -> int:
+        score = 0
+        if row.get("phone"):
+            score += 5
+        if row.get("email"):
+            score += 4 if not _is_generic_email(str(row.get("email"))) else 2
+        if row.get("linkedin_url"):
+            score += 3
+        if _is_plausible_person_name(str(row.get("name") or "")):
+            score += 2
+        if row.get("title"):
+            score += 1
+        return score
+
     for index, point in enumerate(contact_points):
         if not isinstance(point, dict):
             continue
+        contact_type = str(point.get("contact_type") or "").strip().lower()
+        point_confidence = _coerce_float(point.get("confidence"))
         email = point.get("email")
         if _is_junk_contact_email(email):
             email = None
@@ -880,27 +896,37 @@ def build_contact_rows(lead_data: Dict[str, Any], enrichment: Optional[Dict[str,
         linkedin_url = str(point.get("linkedin") or "").strip() or None
         if not any([email, phone, linkedin_url]):
             continue
-        contact_key = (email or "", phone or "", linkedin_url or "")
-        if contact_key in seen_contact_keys:
+        has_direct_path = bool(email or phone or linkedin_url)
+        is_frontend_worthy = contact_type in {"founder_direct", "doctor_direct", "actual_contact"} or point_confidence >= 85
+        if not has_direct_path or not is_frontend_worthy:
             continue
-        seen_contact_keys.add(contact_key)
         point_name = str(point.get("name") or "").strip()
+        point_owner_scope = str(point.get("owner_scope") or "").strip().lower()
+        use_person_name = _is_plausible_person_name(point_name) and point_owner_scope == "person"
         point_role = str(point.get("role") or "").strip() or None
-        contacts.append(
-            {
-                "id": f"{lead_data.get('lead_id')}-ci-contact-{index}",
-                "lead_id": str(lead_data.get("lead_id")),
-                "name": point_name if _is_plausible_person_name(point_name) else (lead_data.get("business_name") or "Clinic contact"),
-                "title": point_role or ("Clinic contact" if not _is_plausible_person_name(point_name) else None),
-                "email": email,
-                "phone": phone,
-                "linkedin_url": linkedin_url,
-                "is_primary": index == 0,
-                "created_at": lead_data.get("created_at") or datetime.utcnow().isoformat(),
-            }
+        row = {
+            "id": f"{lead_data.get('lead_id')}-ci-contact-{index}",
+            "lead_id": str(lead_data.get("lead_id")),
+            "name": point_name if use_person_name else (lead_data.get("business_name") or "Clinic contact"),
+            "title": point_role if use_person_name else "Clinic contact",
+            "email": email,
+            "phone": phone,
+            "linkedin_url": linkedin_url,
+            "is_primary": index == 0,
+            "created_at": lead_data.get("created_at") or datetime.utcnow().isoformat(),
+        }
+        contact_key = (
+            ("linkedin", str(linkedin_url).strip().lower())
+            if linkedin_url
+            else ("phone", str(phone or ""))
+            if phone
+            else ("email", str(email or "").strip().lower())
         )
-    if contacts:
-        return contacts
+        existing = contacts_by_identity.get(contact_key)
+        if not existing or _contact_row_quality(row) > _contact_row_quality(existing):
+            contacts_by_identity[contact_key] = row
+    if contacts_by_identity:
+        return list(contacts_by_identity.values())
 
     emails = []
     if enrichment:
@@ -914,6 +940,8 @@ def build_contact_rows(lead_data: Dict[str, Any], enrichment: Optional[Dict[str,
         decision_maker_confidence = float((enrichment or {}).get("decision_maker_confidence") or 0)
     except (TypeError, ValueError):
         decision_maker_confidence = 0.0
+    if not _is_plausible_person_name(contact_name) or decision_maker_confidence < 85:
+        contact_name = None
     decision_maker_role = str((enrichment or {}).get("decision_maker_role") or "").strip() or None
     fallback_contact_title = None
     if contact_name:
@@ -923,38 +951,38 @@ def build_contact_rows(lead_data: Dict[str, Any], enrichment: Optional[Dict[str,
             fallback_contact_title = decision_maker_role or "Likely contact"
     phone = _normalize_contact_phone((enrichment or {}).get("normalized_phone") or lead_data.get("phone"))
 
-    contacts = []
+    contacts_by_identity = {}
     for index, email in enumerate(emails):
-        contacts.append(
-            {
-                "id": f"{lead_data.get('lead_id')}-contact-{index}",
-                "lead_id": str(lead_data.get("lead_id")),
-                "name": contact_name or lead_data.get("business_name") or "Primary contact",
-                "title": fallback_contact_title,
-                "email": email,
-                "phone": phone,
-                "linkedin_url": (enrichment or {}).get("decision_maker_linkedin"),
-                "is_primary": index == 0,
-                "created_at": lead_data.get("created_at") or datetime.utcnow().isoformat(),
-            }
-        )
+        row = {
+            "id": f"{lead_data.get('lead_id')}-contact-{index}",
+            "lead_id": str(lead_data.get("lead_id")),
+            "name": contact_name or lead_data.get("business_name") or "Primary contact",
+            "title": fallback_contact_title,
+            "email": email,
+            "phone": phone,
+            "linkedin_url": (enrichment or {}).get("decision_maker_linkedin") if contact_name else None,
+            "is_primary": index == 0,
+            "created_at": lead_data.get("created_at") or datetime.utcnow().isoformat(),
+        }
+        identity = ("phone", str(phone)) if phone else ("email", str(email).strip().lower())
+        existing = contacts_by_identity.get(identity)
+        if not existing or _contact_row_quality(row) > _contact_row_quality(existing):
+            contacts_by_identity[identity] = row
 
-    if not contacts and phone:
-        contacts.append(
-            {
-                "id": f"{lead_data.get('lead_id')}-phone",
-                "lead_id": str(lead_data.get("lead_id")),
-                "name": contact_name or lead_data.get("business_name") or "Primary contact",
-                "title": "Phone contact",
-                "email": None,
-                "phone": phone,
-                "linkedin_url": (enrichment or {}).get("decision_maker_linkedin"),
-                "is_primary": True,
-                "created_at": lead_data.get("created_at") or datetime.utcnow().isoformat(),
-            }
-        )
+    if not contacts_by_identity and phone:
+        contacts_by_identity[("phone", str(phone))] = {
+            "id": f"{lead_data.get('lead_id')}-phone",
+            "lead_id": str(lead_data.get("lead_id")),
+            "name": contact_name or lead_data.get("business_name") or "Primary contact",
+            "title": "Phone contact",
+            "email": None,
+            "phone": phone,
+            "linkedin_url": (enrichment or {}).get("decision_maker_linkedin") if contact_name else None,
+            "is_primary": True,
+            "created_at": lead_data.get("created_at") or datetime.utcnow().isoformat(),
+        }
 
-    return contacts
+    return list(contacts_by_identity.values())
 
 
 def build_intent_signals(intent: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -1188,6 +1216,135 @@ def _normalize_branch_label(value: Optional[str]) -> Optional[str]:
     return text
 
 
+def _extract_business_tokens(*values: Any) -> List[str]:
+    blocked = {
+        "clinic",
+        "clinics",
+        "skin",
+        "hair",
+        "laser",
+        "care",
+        "center",
+        "centre",
+        "hospital",
+        "dermatology",
+        "aesthetic",
+        "aesthetics",
+        "cosmetic",
+        "doctor",
+        "doctors",
+        "specialist",
+        "specialists",
+        "best",
+        "top",
+        "premium",
+        "beauty",
+        "weight",
+        "loss",
+        "bangalore",
+        "bengaluru",
+    }
+    tokens: List[str] = []
+    seen = set()
+    for value in values:
+        for token in re.findall(r"[a-z0-9]+", str(value or "").lower()):
+            if len(token) < 3 or token in blocked or token in seen:
+                continue
+            seen.add(token)
+            tokens.append(token)
+    return tokens
+
+
+def _maps_candidate_matches_business(
+    candidate: Dict[str, Any],
+    *,
+    business_name: Optional[str],
+    website: Optional[str],
+) -> bool:
+    haystack = " ".join(
+        [
+            str(candidate.get("title") or candidate.get("name") or ""),
+            str(candidate.get("website") or ""),
+            str(candidate.get("url") or ""),
+            str(candidate.get("address") or ""),
+        ]
+    ).lower()
+    if not haystack.strip():
+        return False
+
+    brand_hint = _domain_brand_hint(str(website or "")) if website else ""
+    business_tokens = _extract_business_tokens(business_name, brand_hint)
+    if not business_tokens:
+        return True
+
+    matched = sum(1 for token in business_tokens if token in haystack)
+    required = 1 if len(business_tokens) <= 2 else 2
+    return matched >= required
+
+
+def _extract_maps_branch_names(
+    raw_apify_data: Dict[str, Any],
+    *,
+    business_name: Optional[str],
+    website: Optional[str],
+) -> List[str]:
+    if not isinstance(raw_apify_data, dict):
+        return []
+
+    branch_names: List[str] = []
+    seen = set()
+
+    def _append_candidate(value: Any) -> None:
+        normalized = _normalize_branch_label(value)
+        if not normalized:
+            return
+        key = normalized.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        branch_names.append(normalized)
+
+    related_places = list(raw_apify_data.get("relatedPlaces") or [])
+    for place in related_places:
+        if not isinstance(place, dict):
+            continue
+        if not _maps_candidate_matches_business(
+            place,
+            business_name=business_name,
+            website=website,
+        ):
+            continue
+        _append_candidate(place.get("address"))
+
+    if not branch_names:
+        title_candidate = {
+            "title": raw_apify_data.get("maps_title"),
+            "address": raw_apify_data.get("maps_address"),
+            "website": raw_apify_data.get("maps_website") or website,
+        }
+        if _maps_candidate_matches_business(
+            title_candidate,
+            business_name=business_name,
+            website=website,
+        ):
+            _append_candidate(raw_apify_data.get("maps_address"))
+
+    return branch_names[:4]
+
+
+def _is_strong_doctor_profile(profile: Dict[str, Any]) -> bool:
+    if not isinstance(profile, dict):
+        return False
+    if profile.get("phones") or profile.get("emails") or profile.get("linkedin"):
+        return True
+    role = str(profile.get("role") or "").strip().lower()
+    source = str(profile.get("source") or "").strip().lower()
+    return any(
+        token in role or token in source
+        for token in ("founder", "director", "senior doctor", "senior_doctor", "doctor roster", "doctor_roster")
+    )
+
+
 def _sanitize_branch_contacts(values: List[Any]) -> List[Dict[str, Any]]:
     deduped: List[Dict[str, Any]] = []
     seen = set()
@@ -1201,7 +1358,7 @@ def _sanitize_branch_contacts(values: List[Any]) -> List[Dict[str, Any]]:
         phone = _normalize_contact_phone(value.get("phone"))
         if not name and not phone:
             continue
-        key = (str(name or "").lower(), phone or "")
+        key = ("name", str(name or "").lower()) if name else ("phone", phone or "")
         if key in seen:
             continue
         seen.add(key)
@@ -1246,7 +1403,6 @@ def _sanitize_doctor_profiles(values: List[Any]) -> List[Dict[str, Any]]:
 def _sanitize_decision_maker_candidates(values: List[Any]) -> List[Dict[str, Any]]:
     cleaned_candidates: List[Dict[str, Any]] = []
     seen = set()
-    strong_roles = {"founder", "co_founder", "co-founder", "director", "senior_doctor", "senior doctor"}
     for value in values:
         if not isinstance(value, dict):
             continue
@@ -1263,9 +1419,8 @@ def _sanitize_decision_maker_candidates(values: List[Any]) -> List[Dict[str, Any
             for phone in (_normalize_contact_phone(item) for item in list(value.get("phones") or []))
             if phone
         ]
-        role = str(value.get("role") or "").strip().lower()
         has_direct_evidence = bool(emails or phones or value.get("linkedin"))
-        if not has_direct_evidence and role not in strong_roles:
+        if not has_direct_evidence:
             continue
         key = name.lower()
         if key in seen:
@@ -1468,16 +1623,26 @@ def build_signal_facts(
         or {}
     )
     stored_signal_facts = dict(stored_analysis_bundle.get("facts") or {})
+    raw_apify_data = dict(lead_state_metadata.get("raw_apify_data") or {})
     ads_verification = lead_state_metadata.get("ads_verification") or {}
     people_intelligence = dict(lead_state_metadata.get("people_intelligence") or {})
+    allow_stored_signal_fallback = not any(
+        [
+            enrichment_payload,
+            intent_payload,
+            proof_extraction,
+            raw_apify_data,
+            people_intelligence,
+        ]
+    )
     instagram_profile = dict(
         people_intelligence.get("instagram_profile")
-        or stored_signal_facts.get("instagram_profile")
+        or (stored_signal_facts.get("instagram_profile") if allow_stored_signal_fallback else None)
         or {}
     )
     youtube_channel = dict(
         people_intelligence.get("youtube_channel")
-        or stored_signal_facts.get("youtube_channel")
+        or (stored_signal_facts.get("youtube_channel") if allow_stored_signal_fallback else None)
         or {}
     )
 
@@ -1562,18 +1727,27 @@ def build_signal_facts(
         enrichment_payload.get("social_profiles") or {},
         proof_extraction.get("social_profiles") or {},
         people_intelligence.get("social_profiles") or {},
-        stored_signal_facts.get("social_profiles") or {},
+        (stored_signal_facts.get("social_profiles") if allow_stored_signal_fallback else None) or {},
     )
     if instagram_profile and not social_profiles.get("instagram_profile"):
         social_profiles["instagram_profile"] = instagram_profile
     if youtube_channel and not social_profiles.get("youtube_channel"):
         social_profiles["youtube_channel"] = youtube_channel
-    fresh_doctor_profiles = _sanitize_doctor_profiles(list(people_intelligence.get("doctor_profiles") or []))
+    fresh_doctor_profiles = [
+        profile
+        for profile in _sanitize_doctor_profiles(list(people_intelligence.get("doctor_profiles") or []))
+        if _is_strong_doctor_profile(profile)
+    ]
     fresh_decision_maker_candidates = _sanitize_decision_maker_candidates(
         list(people_intelligence.get("decision_maker_candidates") or [])
     )
     fresh_branch_contacts = _sanitize_branch_contacts(list(people_intelligence.get("branch_contacts") or []))
     fresh_contact_evidence = list(people_intelligence.get("contact_evidence") or [])
+    maps_branch_names = _extract_maps_branch_names(
+        raw_apify_data,
+        business_name=lead_data.get("business_name"),
+        website=lead_data.get("website") or lead_data.get("landing_page_url"),
+    )
     fresh_branch_name_values = (
         list(proof_extraction.get("branch_names") or [])
         + list(people_intelligence.get("branch_names") or [])
@@ -1611,15 +1785,23 @@ def build_signal_facts(
     )
     doctor_profiles = (
         fresh_doctor_profiles
-        or ([] if has_fresh_doctor_evidence else list(stored_signal_facts.get("doctor_profiles") or []))
+        or (
+            []
+            if (has_fresh_doctor_evidence or not allow_stored_signal_fallback)
+            else list(stored_signal_facts.get("doctor_profiles") or [])
+        )
     )
     if doctor_profiles and doctor_profiles is not fresh_doctor_profiles:
-        doctor_profiles = _sanitize_doctor_profiles(doctor_profiles)
+        doctor_profiles = [
+            profile
+            for profile in _sanitize_doctor_profiles(doctor_profiles)
+            if _is_strong_doctor_profile(profile)
+        ]
     decision_maker_candidates = (
         fresh_decision_maker_candidates
         or (
             []
-            if has_fresh_decision_maker_evidence
+            if (has_fresh_decision_maker_evidence or not allow_stored_signal_fallback)
             else list(stored_signal_facts.get("decision_maker_candidates") or [])
         )
     )
@@ -1627,7 +1809,11 @@ def build_signal_facts(
         decision_maker_candidates = _sanitize_decision_maker_candidates(decision_maker_candidates)
     branch_contacts = (
         fresh_branch_contacts
-        or ([] if has_fresh_branch_evidence else list(stored_signal_facts.get("branch_contacts") or []))
+        or (
+            []
+            if (has_fresh_branch_evidence or not allow_stored_signal_fallback)
+            else list(stored_signal_facts.get("branch_contacts") or [])
+        )
     )
     if branch_contacts and branch_contacts is not fresh_branch_contacts:
         branch_contacts = _sanitize_branch_contacts(branch_contacts)
@@ -1635,7 +1821,12 @@ def build_signal_facts(
         fresh_contact_evidence
         + (
             []
-            if (has_fresh_branch_evidence or has_fresh_doctor_evidence or has_fresh_decision_maker_evidence)
+            if (
+                has_fresh_branch_evidence
+                or has_fresh_doctor_evidence
+                or has_fresh_decision_maker_evidence
+                or not allow_stored_signal_fallback
+            )
             else list(stored_signal_facts.get("contact_evidence") or [])
         )
     )
@@ -1646,40 +1837,46 @@ def build_signal_facts(
             if isinstance(contact, dict) and contact.get("name")
         ]
     )
-    branch_names = branch_contact_names or _dedupe_strings(
-        sanitized_fresh_branch_names
-        + (
+    stored_branch_names = [
+        normalized
+        for normalized in (
+            _normalize_branch_label(name)
+            for name in list(stored_signal_facts.get("branch_names") or [])
+        )
+        if normalized
+    ]
+    corroborated_fresh_branch_names = [
+        name
+        for name in sanitized_fresh_branch_names
+        if name in set(branch_contact_names or maps_branch_names)
+    ]
+    verified_branch_names = branch_contact_names or corroborated_fresh_branch_names
+    branch_names = (
+        verified_branch_names
+        or (
             []
-            if has_fresh_branch_evidence
-            else [
-                normalized
-                for normalized in (
-                    _normalize_branch_label(name)
-                    for name in list(stored_signal_facts.get("branch_names") or [])
-                )
-                if normalized
-            ]
+            if (has_fresh_branch_evidence or not allow_stored_signal_fallback)
+            else _dedupe_strings(stored_branch_names)
         )
     )
-    doctor_names = _dedupe_strings(
+    verified_doctor_names = _dedupe_strings(
         [
             profile.get("name")
             for profile in doctor_profiles
             if isinstance(profile, dict) and profile.get("name")
         ]
-    ) or _dedupe_strings(
-        sanitized_fresh_doctor_names
-        + (
-            []
-            if has_fresh_doctor_evidence
-            else [
-                str(name).strip()
-                for name in list(stored_signal_facts.get("doctor_names") or [])
-                if _is_plausible_person_name(str(name).strip())
-            ]
-        )
     )
-    branch_count = len(branch_contact_names) if branch_contact_names else len(branch_names)
+    stored_verified_doctor_names = (
+        []
+        if (has_fresh_doctor_evidence or not allow_stored_signal_fallback)
+        else [
+            str(name).strip()
+            for name in list(stored_signal_facts.get("doctor_names") or [])
+            if _is_plausible_person_name(str(name).strip())
+        ]
+    )
+    doctor_names = verified_doctor_names or _dedupe_strings(stored_verified_doctor_names)
+    branch_count = len(branch_names)
     doctor_count = len(doctor_profiles) if doctor_profiles else len(doctor_names)
     multi_clinic = bool(branch_count > 1)
     instagram_present = bool(
@@ -1691,12 +1888,6 @@ def build_signal_facts(
     testimonials_present = bool(proof_extraction.get("testimonials_present"))
     gallery_present = bool(proof_extraction.get("gallery_present"))
     after_hours_capture = bool(proof_extraction.get("after_hours_capture"))
-    instant_response_path = bool(
-        proof_extraction.get("instant_response_path")
-        or whatsapp_detected
-        or chat_widget_type
-    )
-    content_ready_score = proof_extraction.get("content_ready_score")
     raw_booking_flow_quality = str(proof_extraction.get("booking_flow_quality") or "").strip().lower()
     if booking_detected and raw_booking_flow_quality in {"", "none", "unknown", "n/a"}:
         booking_flow_quality = "basic" if contact_form_detected else "weak"
@@ -1706,6 +1897,13 @@ def build_signal_facts(
         booking_flow_quality = (
             "basic" if booking_detected and contact_form_detected else "weak" if booking_detected else "none"
         )
+    instant_response_path = bool(
+        proof_extraction.get("instant_response_path")
+        or whatsapp_detected
+        or chat_widget_type in {"whatsapp", "intercom", "drift", "livechat", "crisp", "tawk", "tawk.to", "zendesk"}
+        or (booking_detected and contact_form_detected and booking_flow_quality == "strong")
+    )
+    content_ready_score = proof_extraction.get("content_ready_score")
 
     email_contacts = _dedupe_strings(
         list(lead_data.get("emails_found") or [])
@@ -1717,7 +1915,11 @@ def build_signal_facts(
             if isinstance(candidate, dict)
             for email in list(candidate.get("emails") or [])
         ]
-        + ([stored_signal_facts.get("best_contact_email")] if stored_signal_facts.get("best_contact_email") else [])
+        + (
+            [stored_signal_facts.get("best_contact_email")]
+            if allow_stored_signal_fallback and stored_signal_facts.get("best_contact_email")
+            else []
+        )
     )
     email_contacts = [email for email in email_contacts if not _is_junk_contact_email(email)]
     ranked_candidate = next(
@@ -1732,30 +1934,50 @@ def build_signal_facts(
         enrichment_payload.get("decision_maker_name")
         or people_intelligence.get("decision_maker_name")
         or ranked_candidate.get("name")
-        or (None if has_fresh_decision_maker_evidence else stored_signal_facts.get("decision_maker_name"))
+        or (
+            None
+            if (has_fresh_decision_maker_evidence or not allow_stored_signal_fallback)
+            else stored_signal_facts.get("decision_maker_name")
+        )
     )
     decision_maker_linkedin = (
         enrichment_payload.get("decision_maker_linkedin")
         or people_intelligence.get("decision_maker_linkedin")
         or people_intelligence.get("best_contact_linkedin")
         or ranked_candidate.get("linkedin")
-        or (None if has_fresh_decision_maker_evidence else stored_signal_facts.get("decision_maker_linkedin"))
+        or (
+            None
+            if (has_fresh_decision_maker_evidence or not allow_stored_signal_fallback)
+            else stored_signal_facts.get("decision_maker_linkedin")
+        )
     )
     decision_maker_role = (
         enrichment_payload.get("decision_maker_role")
         or people_intelligence.get("decision_maker_role")
         or ranked_candidate.get("role")
-        or (None if has_fresh_decision_maker_evidence else stored_signal_facts.get("decision_maker_role"))
+        or (
+            None
+            if (has_fresh_decision_maker_evidence or not allow_stored_signal_fallback)
+            else stored_signal_facts.get("decision_maker_role")
+        )
     )
     decision_maker_source = (
         enrichment_payload.get("decision_maker_source")
         or ranked_candidate.get("source")
-        or (None if has_fresh_decision_maker_evidence else stored_signal_facts.get("decision_maker_source"))
+        or (
+            None
+            if (has_fresh_decision_maker_evidence or not allow_stored_signal_fallback)
+            else stored_signal_facts.get("decision_maker_source")
+        )
     )
     decision_maker_confidence = (
         enrichment_payload.get("decision_maker_confidence")
         or (min(float(ranked_candidate.get("score", 0)) / 100.0, 0.98) if ranked_candidate else None)
-        or (None if has_fresh_decision_maker_evidence else stored_signal_facts.get("decision_maker_confidence"))
+        or (
+            None
+            if (has_fresh_decision_maker_evidence or not allow_stored_signal_fallback)
+            else stored_signal_facts.get("decision_maker_confidence")
+        )
     )
     if decision_maker_name and not _is_plausible_person_name(str(decision_maker_name)):
         decision_maker_name = None
@@ -1767,7 +1989,7 @@ def build_signal_facts(
         or (phone_numbers[0] if phone_numbers else None)
         or (
             None
-            if (people_intelligence.get("best_contact_phone") or phone_numbers)
+            if (people_intelligence.get("best_contact_phone") or phone_numbers or not allow_stored_signal_fallback)
             else stored_signal_facts.get("best_contact_phone")
         )
     )
@@ -1780,7 +2002,7 @@ def build_signal_facts(
         )
         or (
             None
-            if (people_intelligence.get("best_contact_email") or email_contacts)
+            if (people_intelligence.get("best_contact_email") or email_contacts or not allow_stored_signal_fallback)
             else stored_signal_facts.get("best_contact_email")
         )
     )
@@ -1796,6 +2018,7 @@ def build_signal_facts(
                 people_intelligence.get("best_contact_linkedin")
                 or ranked_candidate.get("linkedin")
                 or decision_maker_linkedin
+                or not allow_stored_signal_fallback
             )
             else stored_signal_facts.get("best_contact_linkedin")
         )
@@ -1821,9 +2044,9 @@ def build_signal_facts(
         decision_maker_linkedin=str(best_contact_linkedin or decision_maker_linkedin) if (best_contact_linkedin or decision_maker_linkedin) else None,
     )
     if not recommended_channel:
-        recommended_channel = stored_signal_facts.get("best_contact_channel")
+        recommended_channel = stored_signal_facts.get("best_contact_channel") if allow_stored_signal_fallback else None
     if not best_contact_reason:
-        best_contact_reason = stored_signal_facts.get("best_contact_reason")
+        best_contact_reason = stored_signal_facts.get("best_contact_reason") if allow_stored_signal_fallback else None
 
     confidence_by_signal = {
         "phone": 1.0 if phone_numbers else 0.0,
@@ -1833,8 +2056,8 @@ def build_signal_facts(
         "ads": 1.0 if ads_status in {"yes", "no"} else 0.25,
         "reviews": 0.95 if lead_data.get("reviews_count") is not None else 0.0,
         "services": 0.8 if services else 0.0,
-        "multi_clinic": 0.95 if branch_contact_names else 0.85 if multi_clinic else 0.5 if branch_count else 0.0,
-        "doctors": 0.95 if doctor_profiles else 0.85 if doctor_names else 0.0,
+        "multi_clinic": 0.98 if branch_contact_names else 0.91 if corroborated_fresh_branch_names else 0.0,
+        "doctors": 0.95 if doctor_profiles else 0.82 if doctor_names else 0.0,
         "social": 0.75 if social_profiles else 0.0,
         "decision_maker": float(decision_maker_confidence) if decision_maker_confidence is not None else 0.0,
     }
@@ -1899,6 +2122,7 @@ def build_signal_facts(
         "multi_clinic": multi_clinic,
         "branch_count": branch_count,
         "branch_names": branch_names,
+        "maps_branch_names": maps_branch_names,
         "doctor_count": doctor_count,
         "doctor_names": doctor_names,
         "doctor_profiles": doctor_profiles,
@@ -2178,12 +2402,13 @@ def build_commercial_reason_from_signal_facts(
         positives.append("content-ready brand")
     contact_intelligence = signal_facts.get("contact_intelligence") or {}
     top_contact = contact_intelligence.get("top_contact") or {}
+    top_contact_name = _clean_company_name_candidate(str(top_contact.get("name") or "")).strip() or None
     if top_contact.get("name") and (
         top_contact.get("contact_type") in {"founder_direct", "doctor_direct", "actual_contact"}
         or float(top_contact.get("confidence") or 0) >= 70
     ):
         contact_label = str(top_contact.get("contact_type") or top_contact.get("owner_scope") or "contact").replace("_", " ")
-        positives.append(f"{top_contact.get('name')} ({contact_label})")
+        positives.append(f"{top_contact_name or top_contact.get('name')} ({contact_label})")
     contact_quality_score = signal_facts.get("contact_quality_score")
     if contact_quality_score is not None:
         try:
@@ -2354,6 +2579,7 @@ def build_frontend_lead(
     updated_at = lead_data.get("updated_at") or created_at
     website = lead_data.get("website") or lead_data.get("landing_page_url")
     company_name = str(lead_data.get("business_name") or "").strip() or "Unknown"
+    company_name = _clean_company_name_candidate(company_name) or company_name
     if website:
         brand_hint = _domain_brand_hint(str(website)) or infer_company_name_from_url(str(website))
         if _looks_like_seo_brand_noise(company_name) or _is_generic_company_title(
@@ -2362,11 +2588,24 @@ def build_frontend_lead(
             brand_hint=brand_hint,
         ):
             company_name = infer_company_name_from_title(str(website), company_name) or brand_hint or company_name
+        elif (
+            brand_hint
+            and _normalize_brand_token(company_name) == _normalize_brand_token(brand_hint)
+            and " " not in company_name
+            and " " in brand_hint
+        ):
+            company_name = brand_hint
+    company_name = _clean_company_name_candidate(company_name) or company_name
 
     return {
         "id": str(lead_data.get("lead_id")),
         "company_name": company_name,
+        "business_name": company_name,
         "domain": extract_domain(lead_data.get("website") or lead_data.get("landing_page_url")) or "",
+        "website": lead_data.get("website") or None,
+        "landing_page_url": lead_data.get("landing_page_url") or None,
+        "source_url": lead_data.get("source_url") or lead_data.get("landing_page_url") or lead_data.get("website") or None,
+        "url": lead_data.get("landing_page_url") or lead_data.get("website") or None,
         "niche": lead_data.get("category") or "",
         "geo": lead_data.get("location") or "",
         "status": normalize_lead_status(lead_data.get("lead_lifecycle_state")),
@@ -2569,6 +2808,7 @@ def build_analysis_bundle(
     contact_evidence = signal_facts.get("contact_evidence") or []
     contact_intelligence = signal_facts.get("contact_intelligence") or {}
     top_contact = contact_intelligence.get("top_contact") or {}
+    top_contact_name = _clean_company_name_candidate(str(top_contact.get("name") or "")).strip() or None
     capture_path_kind = _classify_capture_path(signal_facts)
     after_hours_status = _classify_after_hours_capture(signal_facts)
     decision_maker_status = signal_facts.get("decision_maker_status")
@@ -2598,7 +2838,7 @@ def build_analysis_bundle(
         or float(top_contact.get("confidence") or 0) >= 70
     ):
         contact_label = str(top_contact.get("contact_type") or top_contact.get("owner_scope") or "contact").replace("_", " ")
-        trust_markers.append(f"{top_contact.get('name')} ({contact_label})")
+        trust_markers.append(f"{top_contact_name or top_contact.get('name')} ({contact_label})")
     contact_quality_score = signal_facts.get("contact_quality_score")
     if contact_quality_score is not None:
         try:
@@ -3469,19 +3709,93 @@ def serialize_lead_for_storage(lead: Lead, raw_niche: str) -> Dict[str, Any]:
 
 def get_or_create_discovered_lead(db, lead: Lead, raw_niche: str) -> Dict[str, Any]:
     """Persist a discovered lead or return the existing canonical row."""
-    existing_query = (
-        db.client.table("leads")
-        .select("*")
-        .eq("business_name", lead.business_name)
-        .eq("location", lead.location or "")
-    )
-    if lead.website:
-        existing_query = existing_query.eq("website", lead.website)
-    existing_result = existing_query.limit(1).execute()
-    if existing_result.data:
-        return existing_result.data[0]
+    serialized = serialize_lead_for_storage(lead, raw_niche)
+    canonical_website = canonicalize_company_website(str(lead.website or "")).strip() or None
 
-    return db.create_lead(serialize_lead_for_storage(lead, raw_niche))
+    existing_row: Optional[Dict[str, Any]] = None
+    if canonical_website:
+        for field in ("website", "landing_page_url"):
+            existing_result = (
+                db.client.table("leads")
+                .select("*")
+                .eq(field, canonical_website)
+                .limit(1)
+                .execute()
+            )
+            if existing_result.data:
+                existing_row = existing_result.data[0]
+                break
+
+    if existing_row is None:
+        existing_result = (
+            db.client.table("leads")
+            .select("*")
+            .eq("business_name", lead.business_name)
+            .eq("location", lead.location or "")
+            .limit(1)
+            .execute()
+        )
+        if existing_result.data:
+            existing_row = existing_result.data[0]
+
+    if existing_row:
+        current_name = str(existing_row.get("business_name") or "").strip()
+        current_website = str(existing_row.get("website") or existing_row.get("landing_page_url") or "").strip()
+        current_brand_hint = _domain_brand_hint(current_website)
+        incoming_brand = _clean_company_name_candidate(
+            infer_company_name_from_title(
+                str(canonical_website or lead.website or ""),
+                str(lead.business_name or ""),
+            )
+            or infer_company_name_from_url(str(canonical_website or lead.website or ""))
+        )
+
+        updates: Dict[str, Any] = {}
+        if canonical_website and not current_website:
+            updates["website"] = canonical_website
+            updates["landing_page_url"] = canonical_website
+
+        if incoming_brand and (
+            _looks_like_seo_brand_noise(current_name)
+            or _is_generic_company_title(
+                current_name,
+                raw_geo=str(existing_row.get("location") or lead.location or ""),
+                brand_hint=current_brand_hint,
+            )
+            or _looks_like_search_query_name(current_name)
+            or current_name.lower() in GENERIC_BRAND_TITLES
+            or (
+                current_brand_hint
+                and _normalize_brand_token(current_name) == _normalize_brand_token(current_brand_hint)
+                and " " not in current_name
+                and " " in current_brand_hint
+            )
+        ):
+            updates["business_name"] = incoming_brand
+
+        if lead.phone and not existing_row.get("phone"):
+            updates["phone"] = lead.phone
+        if lead.location and not existing_row.get("location"):
+            updates["location"] = lead.location
+        if lead.category and not existing_row.get("category"):
+            updates["category"] = lead.category
+        if lead.reviews_count is not None and existing_row.get("reviews_count") is None:
+            updates["reviews_count"] = lead.reviews_count
+        if lead.rating is not None and existing_row.get("rating") is None:
+            updates["rating"] = lead.rating
+        if lead.emails_found and not existing_row.get("emails_found"):
+            updates["emails_found"] = lead.emails_found
+        if lead.instagram and not existing_row.get("instagram"):
+            updates["instagram"] = lead.instagram
+        if lead.facebook_page and not existing_row.get("facebook_page"):
+            updates["facebook_page"] = lead.facebook_page
+
+        if updates:
+            updated = db.update_lead(UUID(str(existing_row["lead_id"])), updates)
+            return updated or {**existing_row, **updates}
+        return existing_row
+
+    return db.create_lead(serialized)
 
 
 def run_discovery_followup_pipeline(db, lead_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -3954,6 +4268,8 @@ def refresh_google_maps_truth(
         return existing_metadata.get("raw_apify_data") or {}
 
     related_places = _collect_related_google_maps_places(lead_data, items, matched)
+    matched_website = matched.get("website") or website
+    matched_title = matched.get("title") or matched.get("name") or business_name
     raw_apify_data = {
         "reviewsCount": matched.get("reviewsCount"),
         "totalScore": matched.get("totalScore") or matched.get("rating"),
@@ -3967,10 +4283,10 @@ def refresh_google_maps_truth(
         "tableReservationLinks": matched.get("tableReservationLinks"),
         "placeId": matched.get("placeId"),
         "maps_url": matched.get("url"),
-        "maps_title": matched.get("title") or matched.get("name"),
+        "maps_title": matched_title,
         "maps_address": matched.get("address"),
         "maps_phone": matched.get("phone"),
-        "maps_website": matched.get("website"),
+        "maps_website": matched_website,
         "maps_category": matched.get("categoryName") or matched.get("category"),
         "relatedPlaces": related_places,
         "maps_refreshed_at": datetime.utcnow().isoformat(),
@@ -3979,6 +4295,16 @@ def refresh_google_maps_truth(
     branch_landing_page = _select_branch_landing_page(lead_data, matched)
     if branch_landing_page:
         raw_apify_data["branchLandingPage"] = branch_landing_page
+
+    existing_raw_apify_data = dict(existing_metadata.get("raw_apify_data") or {})
+    maps_truth_changed = any(
+        str(existing_raw_apify_data.get(key) or "").strip() != str(raw_apify_data.get(key) or "").strip()
+        for key in ["placeId", "maps_title", "maps_address", "maps_phone", "maps_website", "branchLandingPage"]
+    ) or len(existing_raw_apify_data.get("relatedPlaces") or []) != len(raw_apify_data.get("relatedPlaces") or [])
+    if maps_truth_changed and any(existing_metadata.get(key) for key in ["analysis_bundle", "signal_facts", "analysis_state"]):
+        db.clear_lead_analysis_cache(lead_uuid)
+        lead_state = db.get_lead_state(lead_uuid) or {}
+        existing_metadata = dict(lead_state.get("metadata") or {})
 
     metadata = dict(existing_metadata)
     metadata["raw_apify_data"] = raw_apify_data
@@ -3996,10 +4322,26 @@ def refresh_google_maps_truth(
     )
 
     lead_updates: Dict[str, Any] = {}
+    current_brand_hint = _domain_brand_hint(str(website)) if website else None
+    canonical_maps_name = (
+        infer_company_name_from_title(str(matched_website or website or ""), str(matched_title))
+        or _domain_brand_hint(str(matched_website or website or ""))
+        or infer_company_name_from_url(str(matched_website or website or ""))
+        or business_name
+    )
     if raw_apify_data.get("reviewsCount") is not None:
         lead_updates["reviews_count"] = raw_apify_data.get("reviewsCount")
     if raw_apify_data.get("totalScore") is not None:
         lead_updates["rating"] = raw_apify_data.get("totalScore")
+    if canonical_maps_name and (
+        _looks_like_seo_brand_noise(business_name)
+        or _is_generic_company_title(
+            business_name,
+            raw_geo=str(lead_data.get("location") or ""),
+            brand_hint=current_brand_hint,
+        )
+    ):
+        lead_updates["business_name"] = canonical_maps_name
     if matched.get("phone") and not lead_data.get("phone"):
         lead_updates["phone"] = matched.get("phone")
     if matched.get("website") and not lead_data.get("website"):
@@ -4434,9 +4776,52 @@ def fetch_search_results(query: str, max_results: int = 10) -> List[Dict[str, st
 def infer_company_name_from_url(url: str) -> str:
     """Infer a readable company name from a domain."""
     domain = extract_domain(url) or url
-    hostname = domain.lower().replace("www.", "")
-    stem = hostname.split(".")[0].replace("-", " ").replace("_", " ").strip()
-    return " ".join(part.capitalize() for part in stem.split()) or domain
+    return _clean_company_name_candidate(_humanize_domain_stem(domain) or domain)
+
+
+AGGREGATOR_DOMAINS = (
+    "whatclinic.com",
+    "practo.com",
+    "justdial.com",
+    "sulekha.com",
+    "lybrate.com",
+    "credihealth.com",
+)
+
+GENERIC_BRAND_SUFFIXES = (
+    "premium",
+    "clinic",
+    "clinics",
+    "hospital",
+    "hospitals",
+    "skin",
+    "hair",
+    "aesthetic",
+    "aesthetics",
+    "cosmetic",
+    "cosmetics",
+    "derma",
+    "dermatology",
+    "care",
+    "vision",
+    "laser",
+    "center",
+    "centre",
+    "wellness",
+    "medspa",
+    "med",
+    "spa",
+)
+
+GENERIC_BRAND_TITLES = (
+    "home",
+    "our clinic",
+    "welcome",
+    "welcome to our clinic",
+    "our team",
+    "book appointment",
+    "contact us",
+)
 
 
 SEO_BRAND_BLOCKLIST = (
@@ -4477,6 +4862,57 @@ def _normalize_brand_token(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", (value or "").lower())
 
 
+def _strip_phone_like_suffix(value: str) -> str:
+    return re.sub(r"\s*\+?\d[\d\s().-]{6,}$", "", str(value or "")).strip(" -:\u2013\u2014,")
+
+
+def _clean_company_name_candidate(value: str) -> str:
+    text = _strip_phone_like_suffix(str(value or ""))
+    text = re.sub(r"(?i)%20", " ", text.replace("+", " "))
+    text = re.sub(r"\s+", " ", text).strip(" -:\u2013\u2014,")
+    return text
+
+
+def _is_aggregator_domain(url: str) -> bool:
+    hostname = (extract_domain(url) or "").lower().replace("www.", "")
+    return any(
+        hostname == blocked or hostname.endswith(f".{blocked}")
+        for blocked in AGGREGATOR_DOMAINS
+    )
+
+
+def _humanize_domain_stem(url: str) -> str:
+    hostname = (extract_domain(url) or str(url or "").strip().lower()).replace("www.", "")
+    stem = hostname.split(".")[0].replace("-", " ").replace("_", " ").strip()
+    if not stem:
+        return ""
+
+    raw_stem = re.sub(r"\s+", "", stem.lower())
+    words: List[str] = []
+    remaining = raw_stem
+
+    while remaining:
+        matched_suffix = None
+        for suffix in sorted(GENERIC_BRAND_SUFFIXES, key=len, reverse=True):
+            suffix_token = _normalize_brand_token(suffix)
+            if remaining.endswith(suffix_token) and len(remaining) > len(suffix_token) + 2:
+                matched_suffix = suffix
+                brand_root = remaining[: -len(suffix_token)]
+                if brand_root:
+                    words.insert(0, matched_suffix)
+                    remaining = brand_root
+                break
+        if not matched_suffix:
+            words.insert(0, remaining)
+            break
+
+    humanized = " ".join(word for word in words if word).strip()
+    if not humanized:
+        humanized = stem
+
+    return " ".join(part.capitalize() for part in humanized.split())
+
+
 def _looks_like_seo_brand_noise(value: str) -> bool:
     lowered = (value or "").strip().lower()
     if not lowered:
@@ -4486,7 +4922,7 @@ def _looks_like_seo_brand_noise(value: str) -> bool:
 
 def infer_company_name_from_title(url: str, title: str) -> str:
     """Infer a likely real brand name from a search result title."""
-    fallback = infer_company_name_from_url(url)
+    fallback = _clean_company_name_candidate(infer_company_name_from_url(url))
     title = (title or "").strip()
     if not title:
         return fallback
@@ -4498,15 +4934,15 @@ def infer_company_name_from_title(url: str, title: str) -> str:
 
     raw_segments: List[str] = []
     for segment in re.split(r"\|", title):
-        cleaned = segment.strip(" -:\u2013\u2014,")
+        cleaned = _clean_company_name_candidate(segment)
         if cleaned:
             raw_segments.append(cleaned)
         for subsegment in re.split(r"\s[-\u2013\u2014]\s", cleaned):
-            normalized = subsegment.strip(" -:\u2013\u2014,")
+            normalized = _clean_company_name_candidate(subsegment)
             if normalized:
                 raw_segments.append(normalized)
         if ":" in cleaned:
-            prefix = cleaned.split(":", 1)[0].strip(" -:\u2013\u2014,")
+            prefix = _clean_company_name_candidate(cleaned.split(":", 1)[0])
             if prefix:
                 raw_segments.append(prefix)
 
@@ -4519,6 +4955,8 @@ def infer_company_name_from_title(url: str, title: str) -> str:
 
         if _looks_like_seo_brand_noise(segment):
             score -= 6
+        if re.search(r"\+?\d[\d\s().-]{6,}", segment):
+            score -= 5
         if any(hint in lowered for hint in SEO_GEO_HINTS):
             score -= 3
         if len(segment.split()) > 8:
@@ -4538,8 +4976,18 @@ def infer_company_name_from_title(url: str, title: str) -> str:
             best_segment = segment
             best_score = score
 
+    cleaned_best = _clean_company_name_candidate(best_segment)
+    if cleaned_best and cleaned_best.lower() in GENERIC_BRAND_TITLES:
+        return fallback
+
+    if cleaned_best:
+        normalized_best = _normalize_brand_token(cleaned_best)
+        normalized_fallback = _normalize_brand_token(fallback)
+        if normalized_best == normalized_fallback and " " not in cleaned_best and " " in fallback:
+            return fallback
+
     if best_segment and best_score >= 2:
-        return best_segment
+        return _clean_company_name_candidate(cleaned_best or best_segment)
 
     return fallback
 
@@ -4657,22 +5105,21 @@ def extract_official_website_from_tracxn_company_page(profile_url: str) -> Optio
 
 
 def _domain_brand_hint(website: Optional[str]) -> Optional[str]:
-    domain = (extract_domain(website) or "").lower().replace("www.", "")
-    if not domain:
+    if not website or _is_aggregator_domain(str(website)):
         return None
-    root = domain.split(".")[0].strip()
-    if not root:
-        return None
-    cleaned = re.sub(r"[-_]+", " ", root).strip()
-    return cleaned.title() if cleaned else None
+    brand = infer_company_name_from_url(str(website))
+    return brand or None
 
 
 def _is_generic_company_title(title: str, *, raw_geo: str, brand_hint: Optional[str]) -> bool:
-    lowered = (title or "").strip().lower()
+    cleaned_title = _clean_company_name_candidate(title)
+    lowered = cleaned_title.lower()
     if not lowered:
         return True
-    if brand_hint and brand_hint.lower() in lowered:
-        return False
+    if lowered in GENERIC_BRAND_TITLES:
+        return True
+    if cleaned_title != str(title or "").strip():
+        return True
 
     geo = (raw_geo or "").strip().lower()
     geo_tokens = [geo] if geo else []
@@ -4695,8 +5142,16 @@ def _is_generic_company_title(title: str, *, raw_geo: str, brand_hint: Optional[
         "centre",
     ]
     generic_hit = any(token in lowered for token in generic_tokens)
+    branded_seo_hit = bool(
+        brand_hint
+        and brand_hint.lower() in lowered
+        and generic_hit
+        and (":" in lowered or "|" in lowered or len(lowered.split()) > 6)
+    )
+    if brand_hint and brand_hint.lower() in lowered and not branded_seo_hit and not (geo_hit and generic_hit):
+        return False
 
-    return geo_hit and generic_hit
+    return (geo_hit and generic_hit) or branded_seo_hit
 
 
 def discover_company_candidates_osint(raw_niche: str, raw_geo: str, limit: int) -> List[Lead]:
@@ -4886,6 +5341,8 @@ def should_keep_discovered_lead(raw_niche: str, lead: Lead) -> bool:
     niche = (raw_niche or "").strip().lower()
     if not niche:
         return True
+    if lead.website and _is_aggregator_domain(str(lead.website)):
+        return False
 
     haystack = " ".join(
         part
@@ -5179,7 +5636,7 @@ def build_discovery_preview(raw_niche: str, lead: Lead) -> Dict[str, Any]:
     base_score = score_niche_relevance(raw_niche, lead)
     website_score = score_website_relevance(raw_niche, lead, website_text)
     combined_score = max(base_score + website_score, 0)
-    preview_score = min(combined_score * 5, 100)
+    preview_score = min(combined_score * 4, 100)
     emails = extract_website_emails(website_text)
     phones = extract_website_phones(website_text)
 
@@ -5310,6 +5767,8 @@ def _is_apify_budget_error(exc: Exception) -> bool:
         or "billing/subscription" in message
         or "consider upgrading to a paid plan" in message
         or "budget exceeded" in message
+        or "monthly usage hard limit exceeded" in message
+        or "usage hard limit exceeded" in message
     )
 
 # ============================================================================
@@ -5520,7 +5979,119 @@ async def discover_leads(
             run_id=run_id,
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
+        if _is_apify_budget_error(e):
+            logger.warning(
+                "Discovery budget error escaped primary path for niche=%s geo=%s; forcing OSINT fallback",
+                request.niche,
+                request.geo,
+            )
+            try:
+                db = get_db()
+                run_id = str(uuid4())
+                loop = asyncio.get_event_loop()
+                query_limit = min(request.limit, 15)
+                if not should_use_osint_discovery(request.niche):
+                    query_limit = min(max(request.limit * 2, 10), 30)
+
+                leads = await loop.run_in_executor(
+                    None,
+                    lambda: discover_company_candidates_osint(request.niche, request.geo, query_limit),
+                )
+                geo_filter = build_discovery_geo(request.geo)
+                if geo_filter.get("city"):
+                    leads = [lead for lead in leads if matches_requested_geo(request.geo, lead)]
+
+                leads = dedupe_discovered_leads(leads)
+                leads = rank_discovered_leads(request.niche, leads, request.limit)
+                leads = await loop.run_in_executor(
+                    None,
+                    lambda: verify_discovered_leads(request.niche, leads, request.limit),
+                )
+
+                discovery_source = "osint"
+                lead_responses = []
+                for lead in leads:
+                    preview = await loop.run_in_executor(
+                        None,
+                        lambda current_lead=lead: build_discovery_preview(request.niche, current_lead),
+                    )
+                    lead_data = await loop.run_in_executor(
+                        None,
+                        lambda current_lead=lead: get_or_create_discovered_lead(db, current_lead, request.niche),
+                    )
+                    frontend_lead = build_frontend_lead(lead_data)
+                    preview_signals = [
+                        signal
+                        for signal in [
+                            {
+                                "id": f"{lead.lead_id}-verified-fit",
+                                "lead_id": str(lead.lead_id),
+                                "signal_type": "verified_fit",
+                                "signal_value": preview.get("verified_fit") or "",
+                                "confidence": 0.8,
+                                "source": "homepage+maps",
+                                "detected_at": datetime.utcnow().isoformat(),
+                            },
+                            {
+                                "id": f"{lead.lead_id}-contact-paths",
+                                "lead_id": str(lead.lead_id),
+                                "signal_type": "contact_paths",
+                                "signal_value": ", ".join(preview.get("contact_paths") or []),
+                                "confidence": 0.7,
+                                "source": "homepage",
+                                "detected_at": datetime.utcnow().isoformat(),
+                            },
+                            {
+                                "id": f"{lead.lead_id}-summary",
+                                "lead_id": str(lead.lead_id),
+                                "signal_type": "summary",
+                                "signal_value": preview.get("summary") or "",
+                                "confidence": 0.7,
+                                "source": "qualified_preview",
+                                "detected_at": datetime.utcnow().isoformat(),
+                            },
+                            {
+                                "id": f"{lead.lead_id}-source",
+                                "lead_id": str(lead.lead_id),
+                                "signal_type": "discovery_source",
+                                "signal_value": discovery_source,
+                                "confidence": 1.0,
+                                "source": discovery_source,
+                                "detected_at": datetime.utcnow().isoformat(),
+                            },
+                        ]
+                        if signal["signal_value"]
+                    ]
+                    lead_responses.append(LeadResponse(
+                        id=frontend_lead["id"],
+                        company_name=frontend_lead["company_name"],
+                        domain=frontend_lead["domain"],
+                        niche=preview.get("verified_fit") or request.niche,
+                        geo=frontend_lead["geo"] or request.geo,
+                        status=preview.get("status") or "candidate_preview",
+                        score=preview.get("score"),
+                        contacts=preview.get("contacts") or frontend_lead.get("contacts") or [{"email": e} for e in (lead.emails_found or [])],
+                        intent_signals=preview_signals,
+                        verified_fit=preview.get("verified_fit"),
+                        source=discovery_source,
+                        source_label="OSINT web discovery",
+                        score_kind="preview_match",
+                        preview_summary=preview.get("summary"),
+                        contact_paths=preview.get("contact_paths") or [],
+                    ))
+
+                return DiscoverResponse(
+                    leads=lead_responses,
+                    count=len(lead_responses),
+                    run_id=run_id,
+                )
+            except Exception as fallback_exc:
+                logger.error("Forced OSINT fallback failed: %s", fallback_exc)
+                raise HTTPException(status_code=402, detail="Monthly usage hard limit exceeded")
+
         logger.error(f"Discovery error: {e}")
         import traceback
         traceback.print_exc()

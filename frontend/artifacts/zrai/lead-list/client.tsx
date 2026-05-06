@@ -57,6 +57,7 @@ type ProcessedLeadDetails = {
   enrichment?: Record<string, unknown>;
   intent?: Record<string, unknown>;
   scoring?: Record<string, unknown>;
+  error?: string;
   proof?: {
     hero_screenshot_url?: string;
     cta_screenshot_url?: string;
@@ -119,7 +120,18 @@ function getLeadSource(lead: Lead) {
 }
 
 function getLeadFit(lead: Lead) {
-  return lead.verified_fit || lead.niche || "Candidate";
+  const rawFit = normalizeWhitespace(lead.verified_fit || lead.niche || "");
+  if (!rawFit) {
+    return "Candidate";
+  }
+
+  return rawFit
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\bwhatsapp\b/gi, "WhatsApp")
+    .replace(/\bosint\b/gi, "OSINT")
+    .replace(/\b([a-z])/g, (match: string) => match.toUpperCase());
 }
 
 function getLeadSummary(lead: Lead) {
@@ -133,6 +145,50 @@ function getLeadSummary(lead: Lead) {
 
 function normalizeWhitespace(value: string | null | undefined) {
   return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+const LEAD_HOST_SUFFIX_TOKENS = [
+  "clinics",
+  "clinic",
+  "premium",
+  "aesthetics",
+  "aesthetic",
+  "dermatology",
+  "cosmetics",
+  "cosmetic",
+  "vision",
+  "laser",
+  "medspa",
+  "skin",
+  "hair",
+  "care",
+  "center",
+  "centre",
+  "med",
+  "spa",
+];
+
+function splitCompactLeadToken(token: string): string[] {
+  const normalized = String(token || "").trim().toLowerCase();
+  if (!normalized) {
+    return [];
+  }
+
+  for (const suffix of LEAD_HOST_SUFFIX_TOKENS) {
+    if (
+      normalized.endsWith(suffix) &&
+      normalized.length > suffix.length + 2
+    ) {
+      const prefix = normalized.slice(0, -suffix.length);
+      return [...splitCompactLeadToken(prefix), suffix];
+    }
+  }
+
+  return [normalized];
+}
+
+function stripLeadPhoneSuffix(value: string | null | undefined) {
+  return normalizeWhitespace(value).replace(/\s*\+?\d[\d\s().-]{6,}$/g, "").trim();
 }
 
 function sanitizeLeadEmailValue(value: string | null | undefined) {
@@ -177,6 +233,7 @@ function titleCaseLeadHostLabel(value: string) {
   return value
     .split(/[\s.-]+/)
     .filter(Boolean)
+    .flatMap((part) => splitCompactLeadToken(part))
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
 }
@@ -192,7 +249,7 @@ function formatLeadHostLabel(host: string | null | undefined) {
 }
 
 function extractLeadBrandPrefix(value: string | null | undefined) {
-  const raw = normalizeWhitespace(value);
+  const raw = stripLeadPhoneSuffix(value);
   if (!raw) {
     return "";
   }
@@ -202,9 +259,14 @@ function extractLeadBrandPrefix(value: string | null | undefined) {
 }
 
 function isLikelyGenericLeadName(value: string | null | undefined) {
-  const normalized = normalizeLeadCompanyValue(value);
+  const raw = normalizeWhitespace(value);
+  const normalized = normalizeLeadCompanyValue(stripLeadPhoneSuffix(value));
   if (!normalized) {
     return false;
+  }
+
+  if (stripLeadPhoneSuffix(raw) !== raw) {
+    return true;
   }
 
   if (/(^|\s)(best|top|premium|leading|number 1|no 1|#1)(\s|$)/.test(normalized)) {
@@ -227,8 +289,8 @@ function pickCanonicalLeadName(lead: Lead | null | undefined) {
     return "";
   }
 
-  const businessName = normalizeWhitespace(lead.business_name);
-  const companyName = normalizeWhitespace(lead.company_name);
+  const businessName = stripLeadPhoneSuffix(lead.business_name);
+  const companyName = stripLeadPhoneSuffix(lead.company_name);
   const businessPrefix = extractLeadBrandPrefix(businessName);
   const companyPrefix = extractLeadBrandPrefix(companyName);
   const hostLabel = formatLeadHostLabel(getLeadWebsiteHostValue(lead) || lead.domain);
@@ -236,6 +298,14 @@ function pickCanonicalLeadName(lead: Lead | null | undefined) {
 
   for (const candidate of directCandidates) {
     if (candidate && !isLikelyGenericLeadName(candidate)) {
+      if (
+        hostLabel &&
+        normalizeLeadCompanyValue(candidate) === normalizeLeadCompanyValue(hostLabel) &&
+        !candidate.includes(" ") &&
+        hostLabel.includes(" ")
+      ) {
+        return hostLabel;
+      }
       return candidate;
     }
   }
@@ -484,12 +554,22 @@ function sanitizeSignalFactsForDisplay(signalFacts: SignalFacts | null | undefin
 
 function sanitizeLeadRecord(lead: Lead): Lead {
   const canonicalName = pickCanonicalLeadName(lead);
+  const businessNameMatchesCanonical =
+    canonicalName &&
+    normalizeLeadCompanyValue(lead.business_name) === normalizeLeadCompanyValue(canonicalName);
+  const companyNameMatchesCanonical =
+    canonicalName &&
+    normalizeLeadCompanyValue(lead.company_name) === normalizeLeadCompanyValue(canonicalName);
   const cleanedBusinessName =
-    !isLikelyGenericLeadName(lead.business_name) && normalizeWhitespace(lead.business_name)
+    !isLikelyGenericLeadName(lead.business_name) &&
+    normalizeWhitespace(lead.business_name) &&
+    !(businessNameMatchesCanonical && !normalizeWhitespace(lead.business_name).includes(" ") && canonicalName.includes(" "))
       ? normalizeWhitespace(lead.business_name)
       : canonicalName || normalizeWhitespace(lead.business_name);
   const cleanedCompanyName =
-    !isLikelyGenericLeadName(lead.company_name) && normalizeWhitespace(lead.company_name)
+    !isLikelyGenericLeadName(lead.company_name) &&
+    normalizeWhitespace(lead.company_name) &&
+    !(companyNameMatchesCanonical && !normalizeWhitespace(lead.company_name).includes(" ") && canonicalName.includes(" "))
       ? normalizeWhitespace(lead.company_name)
       : canonicalName || normalizeWhitespace(lead.company_name);
 
@@ -579,6 +659,12 @@ function getScoreLabel(lead: Lead) {
 }
 
 function getAnalysisLabel(lead: Lead) {
+  if (lead.analysis_state === "failed") {
+    return "Failed";
+  }
+  if (lead.analysis_state === "analyzing") {
+    return "Analyzing";
+  }
   return lead.analysis_state === "analyzed" || lead.score_kind === "final_score"
     ? "Analyzed"
     : "Preview";
@@ -974,8 +1060,16 @@ function hydrateLeadFromStoredAnalysis(
     return null;
   }
 
-  if (processedDetails?.analysis_state !== "analyzed") {
+  if (!processedDetails?.analysis_state) {
     return lead;
+  }
+
+  if (processedDetails.analysis_state !== "analyzed") {
+    return sanitizeLeadRecord({
+      ...lead,
+      analysis_state: processedDetails.analysis_state as Lead["analysis_state"],
+      analysis_updated_at: processedDetails.analysis_updated_at || lead.analysis_updated_at,
+    }) as Lead;
   }
 
   const analysisBundle = getAnalysisBundle(lead, processedDetails || undefined);
@@ -1560,6 +1654,7 @@ function mergeProcessedLeadDetailsRecords(
     analysis_state: primary.analysis_state ?? secondary.analysis_state,
     analysis_updated_at: primary.analysis_updated_at ?? secondary.analysis_updated_at,
     signals_version: primary.signals_version ?? secondary.signals_version,
+    error: primary.error ?? secondary.error,
     outreach: primary.outreach ?? secondary.outreach ?? [],
   };
 }
@@ -1597,6 +1692,7 @@ function buildQueuedProcessedDetails(
 
   return {
     enrichment: {},
+    error: undefined,
     intent: {},
     proof: {},
     scoring: {},
@@ -2697,15 +2793,16 @@ function LeadListContent({
         throw new Error(errorText || "Processing selected leads failed");
       }
 
-        const payload = getPayloadData((await response.json()) as {
-          processed?: ProcessedLeadResponseItem[];
-        });
-        const processedLeads = (payload.processed || [])
-          .filter((item: ProcessedLeadResponseItem) => item.success && item.lead)
-          .map((item: ProcessedLeadResponseItem) => item.lead as Lead);
-        const processedDetailEntries = (payload.processed || [])
-          .filter((item: ProcessedLeadResponseItem) => item.success && item.lead)
-          .map((item: ProcessedLeadResponseItem) => [
+      const payload = getPayloadData((await response.json()) as {
+        processed?: ProcessedLeadResponseItem[];
+      });
+      const processedItems = payload.processed || [];
+      const processedLeads = processedItems
+        .filter((item: ProcessedLeadResponseItem) => item.success && item.lead)
+        .map((item: ProcessedLeadResponseItem) => item.lead as Lead);
+      const processedDetailEntries = processedItems
+        .filter((item: ProcessedLeadResponseItem) => item.success && item.lead)
+        .map((item: ProcessedLeadResponseItem) => [
           item.lead!.id,
           {
             enrichment: item.enrichment || {},
@@ -2718,18 +2815,26 @@ function LeadListContent({
             analysis_state: item.analysis_state,
             analysis_updated_at: item.analysis_updated_at,
             signals_version: item.signals_version,
+            error: undefined,
           } satisfies ProcessedLeadDetails,
         ] as const);
-
-      if (processedLeads.length === 0) {
-        toast.error(options?.emptyMessage || "No leads were processed successfully.");
-        return false;
-      }
+      const failedDetailEntries = processedItems
+        .filter((item: ProcessedLeadResponseItem) => !item.success)
+        .map((item: ProcessedLeadResponseItem) => [
+          item.lead_id,
+          {
+            ...(workingProcessedDetails?.[item.lead_id] || {}),
+            analysis_state: "failed",
+            analysis_updated_at: new Date().toISOString(),
+            error: item.error || "Lead analysis failed",
+          } satisfies ProcessedLeadDetails,
+        ] as const);
 
       const mergedLeads = dedupeLeadRows(mergeLeadRows(workingLeadRows, processedLeads));
       const mergedDetails = {
         ...workingProcessedDetails,
         ...Object.fromEntries(processedDetailEntries),
+        ...Object.fromEntries(failedDetailEntries),
       };
       const resolvedSelectedLeadId = selectedLead
         ? resolveSelectedLeadId(
@@ -2749,11 +2854,13 @@ function LeadListContent({
         if (updatedLead) {
           setSelectedLead(updatedLead);
           setSelectedLeadLive(updatedLead);
-          const updatedDetails = mergedDetails[updatedLead.id];
-          if (updatedDetails) {
-            setSelectedLeadLiveDetails(updatedDetails);
-          }
+          setSelectedLeadLiveDetails(mergedDetails[updatedLead.id] || null);
         }
+      }
+
+      if (processedLeads.length === 0) {
+        toast.error(options?.emptyMessage || "No leads were processed successfully.");
+        return false;
       }
 
       toast.success(
@@ -2761,7 +2868,7 @@ function LeadListContent({
           `Processed ${processedLeads.length} lead${processedLeads.length === 1 ? "" : "s"} through enrichment, intent, proof, and scoring.`
       );
       return true;
-      } catch (error) {
+    } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
         toast.success("Lead processing stopped.");
         return false;
@@ -2982,6 +3089,8 @@ function LeadListContent({
       return;
     }
 
+    let activeLeadId = selectedLead.id;
+
     try {
       let workingLeadRows = leadsRef.current;
       let workingProcessedDetails = processedDetailsRef.current;
@@ -2999,6 +3108,7 @@ function LeadListContent({
               source: resolvedLead.source || selectedLead.source,
               source_label: resolvedLead.source_label || selectedLead.source_label,
             } as Lead);
+      activeLeadId = effectiveLead.id;
 
       if (effectiveLead.id !== selectedLead.id) {
         const nextLeadRows = replaceLeadRow(workingLeadRows, selectedLead.id, effectiveLead);
@@ -3124,9 +3234,24 @@ function LeadListContent({
       if (error instanceof DOMException && error.name === "AbortError") {
         toast.success("Lead analysis stopped.");
       } else {
+        const failedDetails = {
+          ...(processedDetailsRef.current?.[activeLeadId] || {}),
+          analysis_state: "failed",
+          analysis_updated_at: new Date().toISOString(),
+          error: error instanceof Error ? error.message : "Lead analysis failed",
+        } satisfies ProcessedLeadDetails;
+        syncLeadListState({
+          nextLeads: leadsRef.current,
+          nextProcessedDetails: {
+            ...(processedDetailsRef.current || {}),
+            [activeLeadId]: failedDetails,
+          },
+          nextSelectedLeadId: activeLeadId,
+        });
+        setSelectedLeadLiveDetails(failedDetails);
         toast.error(error instanceof Error ? error.message : "Lead analysis failed");
       }
-      } finally {
+    } finally {
       const currentLeadIds = Array.from(
         new Set(
           [
@@ -3415,6 +3540,11 @@ function LeadListContent({
                   Saved analysis
                 </div>
               )}
+              {selectedLeadEffectiveState === "failed" && (
+                <div className="mt-2 inline-flex rounded-full bg-red-100 px-2.5 py-1 text-[11px] text-red-800 dark:bg-red-950 dark:text-red-300">
+                  Analysis failed
+                </div>
+              )}
               {selectedLeadEffectiveState !== "analyzed" && (selectedLeadLive || metadata?.liveSelectedLead) && (
                 <div className="mt-2 inline-flex rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
                   Live backend state
@@ -3446,6 +3576,11 @@ function LeadListContent({
               {getLeadSummary(inspectorLead) && (
                 <div className="mt-2 text-sm text-zinc-500">
                   {getLeadSummary(inspectorLead)}
+                </div>
+              )}
+              {selectedLeadDetails?.error && (
+                <div className="mt-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+                  {selectedLeadDetails.error}
                 </div>
               )}
               <div className="mt-2 text-sm text-zinc-500">
@@ -4337,10 +4472,11 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
           const payload = getPayloadData((await response.json()) as {
             processed?: ProcessedLeadResponseItem[];
           });
-          const processedLeads = (payload.processed || [])
+          const processedItems = payload.processed || [];
+          const processedLeads = processedItems
             .filter((item: ProcessedLeadResponseItem) => item.success && item.lead)
             .map((item: ProcessedLeadResponseItem) => item.lead as Lead);
-          const processedDetailEntries = (payload.processed || [])
+          const processedDetailEntries = processedItems
             .filter((item: ProcessedLeadResponseItem) => item.success && item.lead)
             .map((item: ProcessedLeadResponseItem) => [
               item.lead!.id,
@@ -4355,9 +4491,28 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
                 analysis_state: item.analysis_state,
                 analysis_updated_at: item.analysis_updated_at,
                 signals_version: item.signals_version,
+                error: undefined,
+              } satisfies ProcessedLeadDetails,
+            ] as const);
+          const failedDetailEntries = processedItems
+            .filter((item: ProcessedLeadResponseItem) => !item.success)
+            .map((item: ProcessedLeadResponseItem) => [
+              item.lead_id,
+              {
+                ...(replacedProcessedDetails?.[item.lead_id] || {}),
+                analysis_state: "failed",
+                analysis_updated_at: new Date().toISOString(),
+                error: item.error || "Lead analysis failed",
               } satisfies ProcessedLeadDetails,
             ] as const);
           if (processedLeads.length === 0) {
+            setMetadata((prev: LeadListMetadata) => ({
+              ...prev,
+              processedDetails: {
+                ...(prev.processedDetails || {}),
+                ...Object.fromEntries(failedDetailEntries),
+              },
+            }));
             toast.error("No leads were processed successfully.");
             return;
           }
@@ -4366,6 +4521,7 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
           const nextProcessedDetails = {
             ...(replacedProcessedDetails || {}),
             ...Object.fromEntries(processedDetailEntries),
+            ...Object.fromEntries(failedDetailEntries),
           };
           const nextSelectedLeadId = resolveSelectedLeadId(
             baseMetadata.selectedLeadId || null,

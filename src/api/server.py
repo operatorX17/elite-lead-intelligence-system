@@ -2585,12 +2585,13 @@ def build_commercial_reason_from_signal_facts(
         positives.append("content-ready brand")
     contact_intelligence = signal_facts.get("contact_intelligence") or {}
     top_contact = contact_intelligence.get("top_contact") or {}
+    top_contact_name = _clean_company_name_candidate(str(top_contact.get("name") or "")).strip() or None
     if top_contact.get("name") and (
         top_contact.get("contact_type") in {"founder_direct", "doctor_direct", "actual_contact"}
         or float(top_contact.get("confidence") or 0) >= 70
     ):
         contact_label = str(top_contact.get("contact_type") or top_contact.get("owner_scope") or "contact").replace("_", " ")
-        positives.append(f"{top_contact.get('name')} ({contact_label})")
+        positives.append(f"{top_contact_name or top_contact.get('name')} ({contact_label})")
     contact_quality_score = signal_facts.get("contact_quality_score")
     if contact_quality_score is not None:
         try:
@@ -2761,6 +2762,7 @@ def build_frontend_lead(
     updated_at = lead_data.get("updated_at") or created_at
     website = lead_data.get("website") or lead_data.get("landing_page_url")
     company_name = str(lead_data.get("business_name") or "").strip() or "Unknown"
+    company_name = _clean_company_name_candidate(company_name) or company_name
     if website:
         brand_hint = _domain_brand_hint(str(website)) or infer_company_name_from_url(str(website))
         if _looks_like_seo_brand_noise(company_name) or _is_generic_company_title(
@@ -2769,17 +2771,30 @@ def build_frontend_lead(
             brand_hint=brand_hint,
         ):
             company_name = brand_hint or infer_company_name_from_title(str(website), company_name) or company_name
+        elif (
+            brand_hint
+            and _normalize_brand_token(company_name) == _normalize_brand_token(brand_hint)
+            and " " not in company_name
+            and " " in brand_hint
+        ):
+            company_name = brand_hint
     if _looks_like_search_query_name(company_name):
         company_name = (
             _domain_brand_hint(str(website or ""))
             or infer_company_name_from_url(str(website or ""))
             or "Unverified Maps candidate"
         )
+    company_name = _clean_company_name_candidate(company_name) or company_name
 
     return {
         "id": str(lead_data.get("lead_id")),
         "company_name": company_name,
+        "business_name": company_name,
         "domain": extract_domain(lead_data.get("website") or lead_data.get("landing_page_url")) or "",
+        "website": lead_data.get("website") or None,
+        "landing_page_url": lead_data.get("landing_page_url") or None,
+        "source_url": lead_data.get("source_url") or lead_data.get("landing_page_url") or lead_data.get("website") or None,
+        "url": lead_data.get("landing_page_url") or lead_data.get("website") or None,
         "niche": lead_data.get("category") or "",
         "geo": lead_data.get("location") or "",
         "status": normalize_lead_status(lead_data.get("lead_lifecycle_state")),
@@ -2982,6 +2997,7 @@ def build_analysis_bundle(
     contact_evidence = signal_facts.get("contact_evidence") or []
     contact_intelligence = signal_facts.get("contact_intelligence") or {}
     top_contact = contact_intelligence.get("top_contact") or {}
+    top_contact_name = _clean_company_name_candidate(str(top_contact.get("name") or "")).strip() or None
     capture_path_kind = _classify_capture_path(signal_facts)
     after_hours_status = _classify_after_hours_capture(signal_facts)
     decision_maker_status = signal_facts.get("decision_maker_status")
@@ -3011,7 +3027,7 @@ def build_analysis_bundle(
         or float(top_contact.get("confidence") or 0) >= 70
     ):
         contact_label = str(top_contact.get("contact_type") or top_contact.get("owner_scope") or "contact").replace("_", " ")
-        trust_markers.append(f"{top_contact.get('name')} ({contact_label})")
+        trust_markers.append(f"{top_contact_name or top_contact.get('name')} ({contact_label})")
     contact_quality_score = signal_facts.get("contact_quality_score")
     if contact_quality_score is not None:
         try:
@@ -3915,7 +3931,7 @@ def get_or_create_discovered_lead(db, lead: Lead, raw_niche: str) -> Dict[str, A
         current_name = str(existing_row.get("business_name") or "").strip()
         current_website = str(existing_row.get("website") or existing_row.get("landing_page_url") or "").strip()
         current_brand_hint = _domain_brand_hint(current_website)
-        incoming_brand = (
+        incoming_brand = _clean_company_name_candidate(
             (_domain_brand_hint(str(canonical_website or lead.website or "")) or "")
             or infer_company_name_from_title(
                 str(canonical_website or lead.website or ""),
@@ -3936,7 +3952,14 @@ def get_or_create_discovered_lead(db, lead: Lead, raw_niche: str) -> Dict[str, A
                 raw_geo=str(existing_row.get("location") or lead.location or ""),
                 brand_hint=current_brand_hint,
             )
+            or _looks_like_search_query_name(current_name)
             or current_name.lower() in GENERIC_BRAND_TITLES
+            or (
+                current_brand_hint
+                and _normalize_brand_token(current_name) == _normalize_brand_token(current_brand_hint)
+                and " " not in current_name
+                and " " in current_brand_hint
+            )
         ):
             updates["business_name"] = incoming_brand
 
@@ -4956,7 +4979,7 @@ def fetch_search_results(query: str, max_results: int = 10) -> List[Dict[str, st
 def infer_company_name_from_url(url: str) -> str:
     """Infer a readable company name from a domain."""
     domain = extract_domain(url) or url
-    return _humanize_domain_stem(domain) or domain
+    return _clean_company_name_candidate(_humanize_domain_stem(domain) or domain)
 
 
 AGGREGATOR_DOMAINS = (
@@ -4969,6 +4992,7 @@ AGGREGATOR_DOMAINS = (
 )
 
 GENERIC_BRAND_SUFFIXES = (
+    "premium",
     "clinic",
     "clinics",
     "hospital",
@@ -4982,9 +5006,14 @@ GENERIC_BRAND_SUFFIXES = (
     "derma",
     "dermatology",
     "care",
+    "vision",
+    "laser",
     "center",
     "centre",
     "wellness",
+    "medspa",
+    "med",
+    "spa",
 )
 
 GENERIC_BRAND_TITLES = (
@@ -5058,6 +5087,17 @@ def _normalize_brand_token(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", (value or "").lower())
 
 
+def _strip_phone_like_suffix(value: str) -> str:
+    return re.sub(r"\s*\+?\d[\d\s().-]{6,}$", "", str(value or "")).strip(" -:\u2013\u2014,")
+
+
+def _clean_company_name_candidate(value: str) -> str:
+    text = _strip_phone_like_suffix(str(value or ""))
+    text = re.sub(r"(?i)%20", " ", text.replace("+", " "))
+    text = re.sub(r"\s+", " ", text).strip(" -:\u2013\u2014,")
+    return text
+
+
 def _is_aggregator_domain(url: str) -> bool:
     hostname = (extract_domain(url) or "").lower().replace("www.", "")
     return any(
@@ -5125,7 +5165,7 @@ def _looks_like_search_query_name(value: str) -> bool:
 
 def infer_company_name_from_title(url: str, title: str) -> str:
     """Infer a likely real brand name from a search result title."""
-    fallback = infer_company_name_from_url(url)
+    fallback = _clean_company_name_candidate(infer_company_name_from_url(url))
     title = (title or "").strip()
     if not title:
         return fallback
@@ -5137,15 +5177,15 @@ def infer_company_name_from_title(url: str, title: str) -> str:
 
     raw_segments: List[str] = []
     for segment in re.split(r"\|", title):
-        cleaned = segment.strip(" -:\u2013\u2014,")
+        cleaned = _clean_company_name_candidate(segment)
         if cleaned:
             raw_segments.append(cleaned)
         for subsegment in re.split(r"\s[-\u2013\u2014]\s", cleaned):
-            normalized = subsegment.strip(" -:\u2013\u2014,")
+            normalized = _clean_company_name_candidate(subsegment)
             if normalized:
                 raw_segments.append(normalized)
         if ":" in cleaned:
-            prefix = cleaned.split(":", 1)[0].strip(" -:\u2013\u2014,")
+            prefix = _clean_company_name_candidate(cleaned.split(":", 1)[0])
             if prefix:
                 raw_segments.append(prefix)
 
@@ -5158,6 +5198,8 @@ def infer_company_name_from_title(url: str, title: str) -> str:
 
         if _looks_like_seo_brand_noise(segment):
             score -= 6
+        if re.search(r"\+?\d[\d\s().-]{6,}", segment):
+            score -= 5
         if any(hint in lowered for hint in SEO_GEO_HINTS):
             score -= 3
         if len(segment.split()) > 8:
@@ -5177,8 +5219,7 @@ def infer_company_name_from_title(url: str, title: str) -> str:
             best_segment = segment
             best_score = score
 
-    cleaned_best = best_segment.strip(" -:\u2013\u2014,")
-    cleaned_best = re.sub(r"\s*\+?\d[\d\s-]{6,}$", "", cleaned_best).strip(" -:\u2013\u2014,")
+    cleaned_best = _clean_company_name_candidate(best_segment)
     if cleaned_best and cleaned_best.lower() in GENERIC_BRAND_TITLES:
         return fallback
 
@@ -5189,7 +5230,7 @@ def infer_company_name_from_title(url: str, title: str) -> str:
             return fallback
 
     if best_segment and best_score >= 2:
-        return cleaned_best or best_segment
+        return _clean_company_name_candidate(cleaned_best or best_segment)
 
     return fallback
 
@@ -5314,10 +5355,13 @@ def _domain_brand_hint(website: Optional[str]) -> Optional[str]:
 
 
 def _is_generic_company_title(title: str, *, raw_geo: str, brand_hint: Optional[str]) -> bool:
-    lowered = (title or "").strip().lower()
+    cleaned_title = _clean_company_name_candidate(title)
+    lowered = cleaned_title.lower()
     if not lowered:
         return True
     if lowered in GENERIC_BRAND_TITLES:
+        return True
+    if cleaned_title != str(title or "").strip():
         return True
 
     geo = (raw_geo or "").strip().lower()

@@ -114,6 +114,14 @@ function sanitizePhone(value: string | null | undefined) {
   return digits.length >= 7 ? `+${digits}`.replace("++", "+") : null;
 }
 
+function sanitizeDisplayContactName(value: string | null | undefined) {
+  const cleaned = String(value || "")
+    .replace(/\s*\+?\d[\d\s().-]{6,}$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned || null;
+}
+
 function formatConfidence(value: number | null | undefined) {
   if (value == null || Number.isNaN(value)) {
     return null;
@@ -329,6 +337,8 @@ export function buildLeadScoreNarrative(
   const topIssue = signalFacts?.top_issue || guidance.top_issue || null;
   const capturePath = classifyCapturePath(signalFacts);
   const afterHoursStatus = classifyAfterHours(signalFacts);
+  const topContact = signalFacts?.contact_intelligence?.top_contact || null;
+  const sanitizedTopContactName = sanitizeDisplayContactName(topContact?.name);
   const trustSignals = trustMarkers.length
     ? `Trust signals: ${trustMarkers.slice(0, 4).join(", ")}`
     : joinNonEmpty([
@@ -347,11 +357,11 @@ export function buildLeadScoreNarrative(
         signalFacts?.youtube_channel?.subscriber_count
           ? `YouTube ${signalFacts.youtube_channel.subscriber_count} subscribers`
           : null,
-        signalFacts?.contact_intelligence?.top_contact?.name
-          && Number(signalFacts.contact_intelligence.top_contact.confidence || 0) >= 70
-          ? `${signalFacts.contact_intelligence.top_contact.name} (${
-              signalFacts.contact_intelligence.top_contact.contact_type ||
-              signalFacts.contact_intelligence.top_contact.owner_scope ||
+        sanitizedTopContactName
+          && Number(topContact?.confidence || 0) >= 70
+          ? `${sanitizedTopContactName} (${
+              topContact?.contact_type ||
+              topContact?.owner_scope ||
               "contact"
             })`
           : null,
