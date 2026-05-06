@@ -204,7 +204,7 @@ function shouldRenderZRAIToolPart(part: ChatMessage["parts"][number]) {
 }
 
 function getZRAIArtifactToolPart(message: ChatMessage) {
-  return [...getMessageParts(message)].reverse().find((part) => {
+  const artifactParts = getMessageParts(message).filter((part) => {
     if (!hasZRAIArtifactTrigger(part)) {
       return false;
     }
@@ -212,7 +212,16 @@ function getZRAIArtifactToolPart(message: ChatMessage) {
     const candidate = asZRAIToolPart(part);
 
     return candidate.state === "output-available";
-  }) as
+  });
+
+  return (
+    [...artifactParts]
+      .reverse()
+      .find(
+        (part) =>
+          asZRAIToolPart(part).output?.artifactTrigger?.kind === "lead-list"
+      ) ?? artifactParts.at(-1)
+  ) as
     | {
         toolCallId: string;
         output: {
@@ -301,7 +310,14 @@ function mergeLeadListWithLeadCard(
   currentContent: string,
   leadCardData: unknown
 ) {
-  const currentParsed = currentContent ? JSON.parse(currentContent) : {};
+  let currentParsed: unknown = {};
+
+  try {
+    currentParsed = currentContent ? JSON.parse(currentContent) : {};
+  } catch {
+    currentParsed = {};
+  }
+
   const currentPayload = Array.isArray(currentParsed)
     ? { leads: currentParsed }
     : currentParsed && typeof currentParsed === "object"
@@ -363,6 +379,26 @@ function mergeLeadListWithLeadCard(
   };
 }
 
+function normalizeLeadCardArtifactTrigger(artifactTrigger: {
+  data?: unknown;
+  kind: string;
+}) {
+  if (artifactTrigger.kind !== "lead-card") {
+    return artifactTrigger;
+  }
+
+  const leadListPayload = mergeLeadListWithLeadCard("", artifactTrigger.data);
+
+  if (!leadListPayload) {
+    return artifactTrigger;
+  }
+
+  return {
+    data: leadListPayload,
+    kind: "lead-list",
+  };
+}
+
 function openZRAIArtifact({
   artifactTrigger,
   chatId,
@@ -376,6 +412,8 @@ function openZRAIArtifact({
   setArtifact: ReturnType<typeof useArtifact>["setArtifact"];
   toolCallId?: string;
 }) {
+  const effectiveArtifactTrigger =
+    normalizeLeadCardArtifactTrigger(artifactTrigger);
   const resolvedToolCallId =
     toolCallId ||
     artifactTrigger &&
@@ -387,13 +425,16 @@ function openZRAIArtifact({
       : "manual";
   const artifactId = buildStableArtifactDocumentId({
     chatId,
-    kind: artifactTrigger.kind,
+    kind: effectiveArtifactTrigger.kind,
     toolCallId: resolvedToolCallId,
   });
 
   mutate(
     `artifact-metadata-${artifactId}`,
-    getArtifactMetadataPayload(artifactTrigger.kind, artifactTrigger.data),
+    getArtifactMetadataPayload(
+      effectiveArtifactTrigger.kind,
+      effectiveArtifactTrigger.data
+    ),
     {
       revalidate: false,
     }
@@ -411,13 +452,15 @@ function openZRAIArtifact({
         );
 
         if (mergedLeadListPayload) {
-          mutate(
-            `artifact-metadata-${currentArtifact.documentId}`,
-            mergedLeadListPayload,
-            {
-              revalidate: false,
-            }
-          );
+          if (currentArtifact.documentId) {
+            mutate(
+              `artifact-metadata-${currentArtifact.documentId}`,
+              mergedLeadListPayload,
+              {
+                revalidate: false,
+              }
+            );
+          }
 
           return {
             ...currentArtifact,
@@ -431,9 +474,12 @@ function openZRAIArtifact({
       return {
         ...currentArtifact,
         documentId: artifactId,
-        title: getArtifactTitle(artifactTrigger.kind, artifactTrigger.data),
-        kind: artifactTrigger.kind as any,
-        content: JSON.stringify(artifactTrigger.data ?? null),
+        title: getArtifactTitle(
+          effectiveArtifactTrigger.kind,
+          effectiveArtifactTrigger.data
+        ),
+        kind: effectiveArtifactTrigger.kind as any,
+        content: JSON.stringify(effectiveArtifactTrigger.data ?? null),
         isVisible: true,
         status: "idle",
         boundingBox:
