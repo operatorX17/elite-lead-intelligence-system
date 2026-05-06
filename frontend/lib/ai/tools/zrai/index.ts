@@ -5,6 +5,7 @@
  */
 
 // Discovery & Enrichment
+export { dailyOperator } from './daily-operator';
 export { discoverLeads } from './discover-leads';
 export { enrichLead } from './enrich-lead';
 export { analyzeIntent } from './analyze-intent';
@@ -43,6 +44,7 @@ export { analyzeScreenshot } from './analyze-screenshot';
  */
 export const zraiTools = {
   // Discovery & Enrichment
+  dailyOperator: require('./daily-operator').dailyOperator,
   discoverLeads: require('./discover-leads').discoverLeads,
   enrichLead: require('./enrich-lead').enrichLead,
   analyzeIntent: require('./analyze-intent').analyzeIntent,
@@ -85,6 +87,7 @@ export const APPROVAL_REQUIRED_TOOLS = [
  * List of all ZRAI tool names for experimental_activeTools.
  */
 export const ZRAI_TOOL_NAMES = [
+  'dailyOperator',
   'discoverLeads',
   'enrichLead',
   'analyzeIntent',

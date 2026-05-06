@@ -329,10 +329,16 @@ export const CIRCUIT_BREAKER_COLORS: Record<string, string> = {
  */
 export const ZRAI_SUGGESTED_ACTIONS = [
   {
+    title: "Daily operator",
+    label: "5 leads + auto-analysis",
+    action:
+      "Run daily operator mode for 5 aesthetic clinics in Bangalore. Find real leads, open the lead-list canvas, auto-analyze visible leads, and give me the outreach and follow-up plan.",
+  },
+  {
     title: "Discover leads",
     label: "live discovery",
     action:
-      "Discover 15 SaaS leads in Bangalore and show them in the lead-list artifact",
+      "Discover 5 real aesthetic clinics in Bangalore and show them in the lead-list artifact",
   },
   {
     title: "Run full workflow",
@@ -362,8 +368,8 @@ export const ZRAI_SUGGESTED_ACTIONS = [
  * ZRAI greeting message configuration.
  */
 export const ZRAI_GREETING = {
-  title: "Welcome to ZRAI Lead OS",
-  subtitle: "Chat-native control room for autonomous lead operations",
+  title: "ZRAI Daily Operator",
+  subtitle: "Focused lead discovery, verified analysis, outreach prep, and follow-up control",
   description:
-    "Use chat to discover leads, inspect intent and proof, score priority, draft outreach, and validate governance before sending anything.",
+    "Run a daily batch, inspect the lead-list canvas, score real buying signals, draft outreach, and keep follow-up moving without losing source truth.",
 } as const;

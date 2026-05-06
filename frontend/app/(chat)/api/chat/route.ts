@@ -27,6 +27,7 @@ import {
   analyzeScreenshot,
   approveEscalation,
   checkGovernance,
+  dailyOperator,
   discoverLeads,
   draftOutreach,
   enrichLead,
@@ -283,6 +284,7 @@ export async function POST(request: Request) {
                 "updateDocument",
                 "requestSuggestions",
                 // ZRAI Tools
+                "dailyOperator",
                 "discoverLeads",
                 "enrichLead",
                 "analyzeIntent",
@@ -319,6 +321,7 @@ export async function POST(request: Request) {
                   dataStream,
                 }),
                 // ZRAI Tools
+                dailyOperator: dailyOperator({ dataStream }),
                 discoverLeads: discoverLeads({ dataStream }),
                 enrichLead: enrichLead({ dataStream }),
                 analyzeIntent: analyzeIntent({ dataStream }),

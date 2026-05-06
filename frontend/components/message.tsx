@@ -91,6 +91,7 @@ const artifactTitles: Record<string, string> = {
 };
 
 const zraiToolTypes = new Set([
+  "tool-dailyOperator",
   "tool-discoverLeads",
   "tool-enrichLead",
   "tool-analyzeIntent",
