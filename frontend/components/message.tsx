@@ -31,6 +31,54 @@ import { MessageReasoning } from "./message-reasoning";
 import { PreviewAttachment } from "./preview-attachment";
 import { Weather } from "./weather";
 
+function hashArtifactSeed(input: string, seed: number) {
+  let hash = seed >>> 0;
+
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return hash >>> 0;
+}
+
+function buildStableArtifactDocumentId({
+  chatId,
+  kind,
+  toolCallId,
+}: {
+  chatId?: string;
+  kind: string;
+  toolCallId: string;
+}) {
+  const seed = `${chatId || "global"}:${kind}:${toolCallId}`;
+  const chunks = [
+    hashArtifactSeed(`${seed}:0`, 0x811c9dc5),
+    hashArtifactSeed(`${seed}:1`, 0x9e3779b9),
+    hashArtifactSeed(`${seed}:2`, 0x85ebca6b),
+    hashArtifactSeed(`${seed}:3`, 0xc2b2ae35),
+  ];
+
+  const hex = chunks
+    .map((chunk) => chunk.toString(16).padStart(8, "0"))
+    .join("");
+
+  const versioned = `${hex.slice(0, 12)}4${hex.slice(13, 16)}${(
+    (Number.parseInt(hex.slice(16, 18), 16) & 0x3f) |
+    0x80
+  )
+    .toString(16)
+    .padStart(2, "0")}${hex.slice(18)}`;
+
+  return [
+    versioned.slice(0, 8),
+    versioned.slice(8, 12),
+    versioned.slice(12, 16),
+    versioned.slice(16, 20),
+    versioned.slice(20, 32),
+  ].join("-");
+}
+
 const artifactTitles: Record<string, string> = {
   "lead-list": "Lead List",
   "lead-card": "Lead Details",
@@ -248,13 +296,81 @@ function getArtifactMetadataPayload(kind: string, data: unknown) {
   return data ?? null;
 }
 
+function mergeLeadListWithLeadCard(
+  currentContent: string,
+  leadCardData: unknown
+) {
+  const currentParsed = currentContent ? JSON.parse(currentContent) : {};
+  const currentPayload = Array.isArray(currentParsed)
+    ? { leads: currentParsed }
+    : currentParsed && typeof currentParsed === "object"
+      ? (currentParsed as Record<string, unknown>)
+      : {};
+  const nextCardPayload =
+    leadCardData && typeof leadCardData === "object"
+      ? (leadCardData as Record<string, unknown>)
+      : {};
+  const nextLead =
+    nextCardPayload.lead && typeof nextCardPayload.lead === "object"
+      ? (nextCardPayload.lead as Record<string, unknown>)
+      : null;
+
+  if (!nextLead || typeof nextLead.id !== "string") {
+    return null;
+  }
+
+  const currentLeads = Array.isArray(currentPayload.leads)
+    ? (currentPayload.leads as Array<Record<string, unknown>>)
+    : [];
+  const currentProcessedDetails =
+    currentPayload.processedDetails &&
+    typeof currentPayload.processedDetails === "object"
+      ? (currentPayload.processedDetails as Record<string, unknown>)
+      : currentPayload.processed_details &&
+          typeof currentPayload.processed_details === "object"
+        ? (currentPayload.processed_details as Record<string, unknown>)
+        : {};
+
+  const mergedLeads = [
+    nextLead,
+    ...currentLeads.filter(
+      (lead) =>
+        !lead ||
+        typeof lead !== "object" ||
+        String(lead.id || "") !== String(nextLead.id)
+    ),
+  ];
+
+  const mergedProcessedDetails = {
+    ...currentProcessedDetails,
+    ...(nextCardPayload.processed_details &&
+    typeof nextCardPayload.processed_details === "object"
+      ? { [nextLead.id]: nextCardPayload.processed_details }
+      : {}),
+  };
+
+  return {
+    autoAnalyzeCompletedToken:
+      currentPayload.autoAnalyzeCompletedToken || null,
+    autoAnalyzeEnabled: currentPayload.autoAnalyzeEnabled ?? true,
+    filter: typeof currentPayload.filter === "string" ? currentPayload.filter : "",
+    leads: mergedLeads,
+    processedDetails: mergedProcessedDetails,
+    selectedLeadId: nextLead.id,
+    sortBy: typeof currentPayload.sortBy === "string" ? currentPayload.sortBy : "score",
+    sortOrder: currentPayload.sortOrder === "asc" ? "asc" : "desc",
+  };
+}
+
 function openZRAIArtifact({
   artifactTrigger,
+  chatId,
   mutate,
   setArtifact,
   toolCallId,
 }: {
   artifactTrigger: { data?: unknown; kind: string };
+  chatId?: string;
   mutate: ReturnType<typeof useSWRConfig>["mutate"];
   setArtifact: ReturnType<typeof useArtifact>["setArtifact"];
   toolCallId?: string;
@@ -268,7 +384,11 @@ function openZRAIArtifact({
     typeof (artifactTrigger.data as { toolCallId?: unknown }).toolCallId === "string"
       ? String((artifactTrigger.data as { toolCallId: string }).toolCallId)
       : "manual";
-  const artifactId = `zrai-${artifactTrigger.kind}-${resolvedToolCallId}`;
+  const artifactId = buildStableArtifactDocumentId({
+    chatId,
+    kind: artifactTrigger.kind,
+    toolCallId: resolvedToolCallId,
+  });
 
   mutate(
     `artifact-metadata-${artifactId}`,
@@ -279,17 +399,48 @@ function openZRAIArtifact({
   );
 
   setArtifact((currentArtifact) => ({
-    ...currentArtifact,
-    documentId: artifactId,
-    title: getArtifactTitle(artifactTrigger.kind, artifactTrigger.data),
-    kind: artifactTrigger.kind as any,
-    content: JSON.stringify(artifactTrigger.data ?? null),
-    isVisible: true,
-    status: "idle",
-    boundingBox:
-      currentArtifact.boundingBox.width > 0
-        ? currentArtifact.boundingBox
-        : getDefaultBoundingBox(),
+    ...(() => {
+      if (
+        currentArtifact.kind === "lead-list" &&
+        artifactTrigger.kind === "lead-card"
+      ) {
+        const mergedLeadListPayload = mergeLeadListWithLeadCard(
+          currentArtifact.content || "",
+          artifactTrigger.data
+        );
+
+        if (mergedLeadListPayload) {
+          mutate(
+            `artifact-metadata-${currentArtifact.documentId}`,
+            mergedLeadListPayload,
+            {
+              revalidate: false,
+            }
+          );
+
+          return {
+            ...currentArtifact,
+            content: JSON.stringify(mergedLeadListPayload),
+            isVisible: true,
+            status: "idle",
+          };
+        }
+      }
+
+      return {
+        ...currentArtifact,
+        documentId: artifactId,
+        title: getArtifactTitle(artifactTrigger.kind, artifactTrigger.data),
+        kind: artifactTrigger.kind as any,
+        content: JSON.stringify(artifactTrigger.data ?? null),
+        isVisible: true,
+        status: "idle",
+        boundingBox:
+          currentArtifact.boundingBox.width > 0
+            ? currentArtifact.boundingBox
+            : getDefaultBoundingBox(),
+      };
+    })(),
   }));
 }
 
@@ -384,9 +535,11 @@ function ActivityTimeline({
 }
 
 function ZRAIArtifactBridge({
+  chatId,
   isLatestMessage,
   message,
 }: {
+  chatId: string;
   isLatestMessage: boolean;
   message: ChatMessage;
 }) {
@@ -409,15 +562,25 @@ function ZRAIArtifactBridge({
       toolCallId,
       output: { artifactTrigger },
     } = toolPartWithArtifact;
-    const artifactId = `zrai-${artifactTrigger.kind}-${toolCallId}`;
+    const artifactId = buildStableArtifactDocumentId({
+      chatId,
+      kind: artifactTrigger.kind,
+      toolCallId,
+    });
 
     if (handledArtifactIdRef.current === artifactId) {
       return;
     }
 
     handledArtifactIdRef.current = artifactId;
-    openZRAIArtifact({ artifactTrigger, mutate, setArtifact, toolCallId });
-  }, [isLatestMessage, message, mutate, setArtifact]);
+    openZRAIArtifact({
+      artifactTrigger,
+      chatId,
+      mutate,
+      setArtifact,
+      toolCallId,
+    });
+  }, [chatId, isLatestMessage, message, mutate, setArtifact]);
 
   return null;
 }
@@ -520,7 +683,11 @@ const PurePreviewMessage = ({
         data-role={message.role}
         data-testid="message-assistant-artifact-shell"
       >
-        <ZRAIArtifactBridge isLatestMessage={isLatestMessage} message={message} />
+        <ZRAIArtifactBridge
+          chatId={chatId}
+          isLatestMessage={isLatestMessage}
+          message={message}
+        />
         <div className="flex items-start justify-start gap-3">
           <div className="-mt-1 flex size-8 shrink-0 items-center justify-center rounded-full bg-background ring-1 ring-border">
             <SparklesIcon size={14} />
@@ -549,6 +716,7 @@ const PurePreviewMessage = ({
                 onClick={() => {
                   openZRAIArtifact({
                     artifactTrigger: artifactToolPart.output.artifactTrigger,
+                    chatId,
                     mutate,
                     setArtifact,
                     toolCallId: artifactToolPart.toolCallId,
@@ -579,7 +747,11 @@ const PurePreviewMessage = ({
       data-role={message.role}
       data-testid={`message-${message.role}`}
     >
-      <ZRAIArtifactBridge isLatestMessage={isLatestMessage} message={message} />
+      <ZRAIArtifactBridge
+        chatId={chatId}
+        isLatestMessage={isLatestMessage}
+        message={message}
+      />
 
       <div
         className={cn("flex w-full items-start gap-2 md:gap-3", {
@@ -1005,6 +1177,7 @@ const PurePreviewMessage = ({
                 onClick={() => {
                   openZRAIArtifact({
                     artifactTrigger: artifactToolPart.output.artifactTrigger,
+                    chatId,
                     mutate,
                     setArtifact,
                     toolCallId: artifactToolPart.toolCallId,
