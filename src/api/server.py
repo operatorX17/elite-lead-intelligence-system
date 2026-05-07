@@ -44,11 +44,11 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 FAST_ANALYZE_AGENT_TIMEOUTS = {
-    "enrichment": 20,
-    "intent": 15,
+    "enrichment": 45,
+    "intent": 25,
     "audit": 30,
-    "scoring": 15,
-    "outreach": 20,
+    "scoring": 20,
+    "outreach": 30,
 }
 
 WHATSAPP_POLICY_LIMITS = {
@@ -1775,12 +1775,12 @@ def build_signal_facts(
     )
     instagram_profile = _sanitize_instagram_profile(dict(
         people_intelligence.get("instagram_profile")
-        or (stored_signal_facts.get("instagram_profile") if allow_stored_signal_fallback else None)
+        or stored_signal_facts.get("instagram_profile")
         or {}
     ))
     youtube_channel = _sanitize_youtube_channel(dict(
         people_intelligence.get("youtube_channel")
-        or (stored_signal_facts.get("youtube_channel") if allow_stored_signal_fallback else None)
+        or stored_signal_facts.get("youtube_channel")
         or {}
     ))
 
@@ -1865,7 +1865,7 @@ def build_signal_facts(
         enrichment_payload.get("social_profiles") or {},
         proof_extraction.get("social_profiles") or {},
         people_intelligence.get("social_profiles") or {},
-        (stored_signal_facts.get("social_profiles") if allow_stored_signal_fallback else None) or {},
+        stored_signal_facts.get("social_profiles") or {},
     )
     if instagram_profile and not social_profiles.get("instagram_profile"):
         social_profiles["instagram_profile"] = instagram_profile
@@ -2017,11 +2017,21 @@ def build_signal_facts(
     branch_count = len(branch_names)
     doctor_count = len(doctor_profiles) if doctor_profiles else len(doctor_names)
     multi_clinic = bool(branch_count > 1)
-    reviews_count = raw_apify_data.get("reviewsCount") if has_verified_maps_truth else None
-    rating = raw_apify_data.get("totalScore") if has_verified_maps_truth else None
+    cached_reviews_count = _coerce_int(
+        lead_data.get("reviews_count")
+        if lead_data.get("reviews_count") is not None
+        else stored_signal_facts.get("reviews_count")
+    )
+    cached_rating = _coerce_float(
+        lead_data.get("rating")
+        if lead_data.get("rating") is not None
+        else stored_signal_facts.get("rating")
+    )
+    reviews_count = raw_apify_data.get("reviewsCount") if has_verified_maps_truth else cached_reviews_count
+    rating = raw_apify_data.get("totalScore") if has_verified_maps_truth else cached_rating
     fact_sources = {
-        "reviews": "google_maps" if reviews_count is not None else "not_verified",
-        "rating": "google_maps" if rating is not None else "not_verified",
+        "reviews": "google_maps" if has_verified_maps_truth and reviews_count is not None else "google_maps_cached" if reviews_count is not None else "not_verified",
+        "rating": "google_maps" if has_verified_maps_truth and rating is not None else "google_maps_cached" if rating is not None else "not_verified",
         "locations": (
             "website_contact_page"
             if branch_contact_names
@@ -4057,8 +4067,6 @@ def run_selected_lead_pipeline(
 
     lead_payload = dict(lead_data)
     lead_uuid = UUID(str(lead_data.get("lead_id")))
-    if force_refresh:
-        clear_lead_analysis_cache_safe(db, lead_uuid)
     maps_truth = refresh_google_maps_truth(db, lead_payload, force_refresh=force_refresh)
     lead_state = db.get_lead_state(lead_uuid) or {}
     ads_verification = verify_clinic_ads(lead_payload, lead_state)
@@ -4079,7 +4087,7 @@ def run_selected_lead_pipeline(
             "force_audit": include_audit,
             "raw_apify_data": maps_truth or dict((lead_state.get("metadata") or {}).get("raw_apify_data") or {}),
         },
-        use_persisted_state=not force_refresh,
+        use_persisted_state=True,
     )
 
     enrichment_agent = get_enrichment_agent()

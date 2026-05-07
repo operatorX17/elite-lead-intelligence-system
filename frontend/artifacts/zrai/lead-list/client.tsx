@@ -2132,6 +2132,13 @@ function LeadListContent({
   const sortBy = metadata?.sortBy || contentPayload.sortBy || "score";
   const sortOrder = metadata?.sortOrder || contentPayload.sortOrder || "desc";
   const sortedLeads = sortLeads(filteredLeads, sortBy, sortOrder);
+  const fallbackVisibleLead =
+    metadata?.liveSelectedLead || selectedLeadLive || selectedLead || null;
+  const displayLeads = sortedLeads.length
+    ? sortedLeads
+    : fallbackVisibleLead
+      ? dedupeLeadRows([sanitizeLeadRecord(fallbackVisibleLead)])
+      : [];
   const persistedSelectedLeadId = canonicalState.selectedLeadId || null;
   const autoAnalyzeEnabled =
     metadata?.autoAnalyzeEnabled ?? contentPayload.autoAnalyzeEnabled ?? true;
@@ -2160,6 +2167,16 @@ function LeadListContent({
   useEffect(() => {
     selectedLeadIdRef.current = persistedSelectedLeadId;
   }, [persistedSelectedLeadId]);
+
+  useEffect(() => {
+    if (!leads.length && fallbackVisibleLead) {
+      syncLeadListState({
+        nextLeads: [sanitizeLeadRecord(fallbackVisibleLead)],
+        nextProcessedDetails: processedDetails,
+        nextSelectedLeadId: fallbackVisibleLead.id,
+      });
+    }
+  }, [fallbackVisibleLead, leads.length, processedDetails]);
 
   useEffect(() => {
     const snapshotKey = getLeadListSnapshotKey(artifact?.documentId);
@@ -2881,11 +2898,11 @@ function LeadListContent({
   };
 
   useEffect(() => {
-    if (!autoAnalyzeEnabled || !leads.length || processingIds.length) {
+    if (!autoAnalyzeEnabled || !displayLeads.length || processingIds.length) {
       return;
     }
 
-    const visibleLeads = dedupeLeadRows(sortedLeads);
+    const visibleLeads = dedupeLeadRows(displayLeads);
     const preferredLead = visibleLeads[0] || leads[0];
     if (!persistedSelectedLeadId && preferredLead) {
       selectedLeadIdRef.current = preferredLead.id;
@@ -2949,12 +2966,12 @@ function LeadListContent({
     artifact?.documentId,
     autoAnalyzeCompletedToken,
     autoAnalyzeEnabled,
+    displayLeads,
     leads,
     persistedSelectedLeadId,
     processedDetails,
     processingIds.length,
     setMetadata,
-    sortedLeads,
   ]);
 
   useEffect(() => {
@@ -3405,14 +3422,14 @@ function LeadListContent({
             </label>
             <button
               className="rounded-md bg-emerald-600 px-3 py-2 text-xs text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={!dedupeLeadRows(sortedLeads).length || !!processingIds.length}
+              disabled={!dedupeLeadRows(displayLeads).length || !!processingIds.length}
               onClick={() =>
                 void processLeads(
-                  dedupeLeadRows(sortedLeads).map((lead) => lead.id),
+                  dedupeLeadRows(displayLeads).map((lead) => lead.id),
                   {
                     includeOutreach: false,
                     forceRefresh: true,
-                    successMessage: `Analyzed ${dedupeLeadRows(sortedLeads).length} visible lead${dedupeLeadRows(sortedLeads).length === 1 ? "" : "s"}.`,
+                    successMessage: `Analyzed ${dedupeLeadRows(displayLeads).length} visible lead${dedupeLeadRows(displayLeads).length === 1 ? "" : "s"}.`,
                     emptyMessage: "No visible leads were analyzed successfully.",
                   }
                 )
@@ -3477,7 +3494,7 @@ function LeadListContent({
               </tr>
             </thead>
             <tbody>
-              {sortedLeads.map((lead, index) => (
+              {displayLeads.map((lead, index) => (
                 <LeadRow
                   key={getStableLeadKey(lead, index)}
                   lead={lead}
