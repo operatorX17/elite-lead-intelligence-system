@@ -565,6 +565,8 @@ def lead_data_to_model(lead_data: Dict[str, Any]) -> Lead:
         facebook_page=lead_data.get("facebook_page"),
         instagram=lead_data.get("instagram"),
         ads_active=lead_data.get("ads_active", False),
+        reviews_count=_coerce_int(lead_data.get("reviews_count")),
+        rating=_coerce_float(lead_data.get("rating")),
         lead_lifecycle_state=LeadLifecycleState(lead_data.get("lead_lifecycle_state", "NEW")),
     )
 
@@ -2518,6 +2520,37 @@ def _count_fact(label_singular: str, label_plural: str, count: Any, confidence: 
     return f"{label_singular} referenced"
 
 
+def _has_meaningful_verified_social(signal_facts: Optional[Dict[str, Any]]) -> bool:
+    signal_facts = signal_facts or {}
+    instagram_profile = signal_facts.get("instagram_profile") or {}
+    youtube_channel = signal_facts.get("youtube_channel") or {}
+    if instagram_profile.get("followers_count") is not None or instagram_profile.get("posts_count") is not None:
+        return True
+    if youtube_channel.get("subscriber_count") is not None or youtube_channel.get("total_videos") is not None:
+        return True
+    return False
+
+
+def _commercial_truth_coverage(signal_facts: Optional[Dict[str, Any]]) -> int:
+    signal_facts = signal_facts or {}
+    coverage = 0
+    if _coerce_int(signal_facts.get("reviews_count")) is not None:
+        coverage += 1
+    if _coerce_float(signal_facts.get("rating")) is not None:
+        coverage += 1
+    if _coerce_int(signal_facts.get("branch_count")):
+        coverage += 1
+    if _coerce_int(signal_facts.get("doctor_count")):
+        coverage += 1
+    if _has_meaningful_verified_social(signal_facts):
+        coverage += 1
+    return coverage
+
+
+def _has_sparse_commercial_truth(signal_facts: Optional[Dict[str, Any]]) -> bool:
+    return _commercial_truth_coverage(signal_facts) <= 1
+
+
 def build_site_truth_summary_from_signal_facts(signal_facts: Optional[Dict[str, Any]]) -> Optional[str]:
     if not signal_facts:
         return None
@@ -2628,6 +2661,7 @@ def build_commercial_reason_from_signal_facts(
         positives.append(f"visible doctor-led trust ({doctor_fact})")
 
     content_ready_score = signal_facts.get("content_ready_score")
+    sparse_truth = _has_sparse_commercial_truth(signal_facts)
     decision_maker_name = signal_facts.get("decision_maker_name")
     decision_maker_linkedin = signal_facts.get("decision_maker_linkedin")
     decision_maker_role = signal_facts.get("decision_maker_role")
@@ -2685,8 +2719,14 @@ def build_commercial_reason_from_signal_facts(
 
     volume_score = ((signal_facts.get("volume_score_inputs") or {}).get("volume_score"))
     summary_parts: List[str] = []
-    if positives:
+    if sparse_truth:
+        summary_parts.append(
+            "Verified demand and trust data is still incomplete, so this is an operator snapshot rather than a final commercial judgment."
+        )
+    if positives and not sparse_truth:
         summary_parts.append("This clinic looks commercially strong because it has " + ", ".join(positives[:3]) + ".")
+    elif positives:
+        summary_parts.append("Current positives include " + ", ".join(positives[:3]) + ".")
     if problems:
         summary_parts.append("The main conversion leaks are " + ", ".join(problems[:3]) + ".")
     if isinstance(volume_score, int) and volume_score >= 70:
@@ -2702,6 +2742,9 @@ def build_commercial_reason_from_signal_facts(
 def build_top_issue_from_signal_facts(signal_facts: Optional[Dict[str, Any]]) -> Optional[str]:
     if not signal_facts:
         return None
+
+    if _has_sparse_commercial_truth(signal_facts):
+        return "Verified demand and trust data is incomplete"
 
     reviews = signal_facts.get("reviews_count") or 0
     rating = signal_facts.get("rating") or 0
@@ -2742,6 +2785,9 @@ def build_top_issue_from_signal_facts(signal_facts: Optional[Dict[str, Any]]) ->
 def build_next_best_action_from_signal_facts(signal_facts: Optional[Dict[str, Any]]) -> Optional[str]:
     if not signal_facts:
         return None
+
+    if _has_sparse_commercial_truth(signal_facts):
+        return "Refresh Maps truth and enrich doctors, locations, and social demand signals before final judgment"
 
     reviews = signal_facts.get("reviews_count") or 0
     rating = signal_facts.get("rating") or 0
@@ -3357,6 +3403,7 @@ def persist_processed_lead_state(
     lead_id: str,
     frontend_lead: Dict[str, Any],
     enrichment: Optional[Dict[str, Any]] = None,
+    signal_facts: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Persist the useful end state of a processed lead back into the canonical leads row."""
     updates: Dict[str, Any] = {
@@ -3374,6 +3421,19 @@ def persist_processed_lead_state(
     validated_emails = (enrichment or {}).get("validated_emails") or []
     if validated_emails:
         updates["emails_found"] = validated_emails
+
+    signal_facts = signal_facts or {}
+    reviews_count = _coerce_int(signal_facts.get("reviews_count"))
+    rating = _coerce_float(signal_facts.get("rating"))
+    if reviews_count is not None:
+        updates["reviews_count"] = reviews_count
+    if rating is not None:
+        updates["rating"] = rating
+
+    instagram_profile = signal_facts.get("instagram_profile") or {}
+    instagram_profile_url = instagram_profile.get("profile_url")
+    if instagram_profile_url:
+        updates["instagram"] = instagram_profile_url
 
     db.update_lead(UUID(lead_id), updates)
 
@@ -4119,6 +4179,9 @@ def run_selected_lead_pipeline(
     lead_payload = dict(lead_data)
     lead_uuid = UUID(str(lead_data.get("lead_id")))
     maps_truth = refresh_google_maps_truth(db, lead_payload, force_refresh=force_refresh)
+    refreshed_lead = db.get_lead(lead_uuid) or {}
+    if refreshed_lead:
+        lead_payload = {**lead_payload, **refreshed_lead}
     lead_state = db.get_lead_state(lead_uuid) or {}
     ads_verification = verify_clinic_ads(lead_payload, lead_state)
     if ads_verification.get("status") == "yes":
@@ -5946,9 +6009,16 @@ def build_discovery_preview(raw_niche: str, lead: Lead) -> Dict[str, Any]:
     base_score = score_niche_relevance(raw_niche, lead)
     website_score = score_website_relevance(raw_niche, lead, website_text)
     combined_score = max(base_score + website_score, 0)
-    preview_score = min(combined_score * 4, 100)
     emails = extract_website_emails(website_text)
     phones = extract_website_phones(website_text)
+    preview_score = combined_score * 2.8
+    if not lead.website:
+        preview_score -= 15
+    if not emails and not phones and not lead.phone:
+        preview_score -= 10
+    if _looks_like_search_query_name(str(lead.business_name or "")):
+        preview_score -= 20
+    preview_score = min(max(preview_score, 0), 100)
 
     preview_contacts: List[Dict[str, Any]] = []
     for email in emails:
@@ -5962,7 +6032,7 @@ def build_discovery_preview(raw_niche: str, lead: Lead) -> Dict[str, Any]:
 
     contact_paths = detect_contact_paths(website_text, lead, emails, phones)
     verified_fit = classify_verified_fit(raw_niche, lead, website_score)
-    threshold = 55 if is_clinic_style_niche(raw_niche) else 60
+    threshold = 62 if is_clinic_style_niche(raw_niche) else 65
     stage_status = "qualified_preview" if preview_score >= threshold else "candidate_preview"
     summary_bits = [verified_fit]
     if contact_paths:
@@ -6668,6 +6738,7 @@ async def process_selected_leads(
                     lead_id,
                     frontend_lead,
                     processed.get("enrichment") or {},
+                    processed.get("signal_facts") or {},
                 )
                 persist_analysis_snapshot(
                     db,
@@ -6825,6 +6896,7 @@ def execute_lead_analysis(
         str(lead_data.get("lead_id")),
         frontend_lead,
         processed.get("enrichment") or {},
+        processed.get("signal_facts") or {},
     )
     persist_analysis_snapshot(
         db,

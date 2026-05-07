@@ -158,6 +158,7 @@ class ScoringAgent(BaseAgent):
         proof_extraction = (proof or {}).get("extraction_data") or {}
         contact_paths = [str(path).lower() for path in (metadata.get("contact_paths") or [])]
         people_intelligence = metadata.get("people_intelligence") or {}
+        raw_apify_data = metadata.get("raw_apify_data") or {}
         instagram_profile = dict(
             people_intelligence.get("instagram_profile")
             or metadata.get("signal_facts", {}).get("instagram_profile")
@@ -186,12 +187,11 @@ class ScoringAgent(BaseAgent):
         if youtube_channel and not social_profiles.get("youtube_channel"):
             social_profiles["youtube_channel"] = youtube_channel
 
-        whatsapp_target = proof_extraction.get("whatsapp_target")
+        whatsapp_target = proof_extraction.get("whatsapp_target") or enrichment.get("whatsapp_target")
+        chat_widget_type = str(proof_extraction.get("chat_widget") or enrichment.get("chat_widget") or "").strip().lower()
         whatsapp_detected = bool(
             whatsapp_target
-            or proof_extraction.get("chat_widget") == "whatsapp"
-            or enrichment.get("whatsapp_detected")
-            or enrichment.get("whatsapp_target")
+            or chat_widget_type == "whatsapp"
         )
         booking_detected = bool(
             proof_extraction.get("booking_detected")
@@ -207,6 +207,15 @@ class ScoringAgent(BaseAgent):
             or "contact form" in contact_paths
             or "form" in contact_paths
         )
+        booking_flow_quality = str(
+            proof_extraction.get("booking_flow_quality") or ("basic" if booking_detected else "none")
+        ).lower()
+        instant_response_path = bool(
+            proof_extraction.get("instant_response_path")
+            or whatsapp_target
+            or chat_widget_type in {"whatsapp", "intercom", "drift", "livechat", "crisp", "tawk", "tawk.to", "zendesk"}
+            or (booking_detected and contact_form_detected and booking_flow_quality == "strong")
+        )
 
         ads_verification = metadata.get("ads_verification") or {}
         if ads_verification.get("status") in {"yes", "no", "not_checked"}:
@@ -216,21 +225,45 @@ class ScoringAgent(BaseAgent):
         else:
             ads_status = "not_checked"
 
+        maps_reviews_count = raw_apify_data.get("reviewsCount")
+        maps_rating = raw_apify_data.get("totalScore") or raw_apify_data.get("rating")
+        maps_verified = bool(
+            raw_apify_data.get("placeId")
+            or maps_reviews_count is not None
+            or maps_rating is not None
+            or raw_apify_data.get("maps_url")
+        )
+
         services = self._dedupe(
             list(proof_extraction.get("services") or [])
             + ([lead.get("category")] if lead.get("category") else [])
         )
         branch_contacts = self._clean_branch_contacts(list(people_intelligence.get("branch_contacts") or []))
-        doctor_profiles = self._clean_doctor_profiles(list(people_intelligence.get("doctor_profiles") or []))
+        doctor_profiles = [
+            profile
+            for profile in self._clean_doctor_profiles(list(people_intelligence.get("doctor_profiles") or []))
+            if self._is_strong_doctor_profile(profile)
+        ]
         branch_contact_names = self._clean_branch_names(
             [contact.get("name") for contact in branch_contacts if isinstance(contact, dict) and contact.get("name")]
+        )
+        maps_branch_names = self._extract_maps_branch_names(
+            raw_apify_data,
+            business_name=lead.get("business_name"),
+            website=lead.get("website") or lead.get("landing_page_url"),
         )
         doctor_profile_names = self._clean_doctor_names(
             [profile.get("name") for profile in doctor_profiles if isinstance(profile, dict) and profile.get("name")]
         )
-        branch_names = branch_contact_names or self._clean_branch_names(
-            list(people_intelligence.get("branch_names") or [])
-            + list(proof_extraction.get("branch_names") or [])
+        branch_names = branch_contact_names or maps_branch_names or self._clean_branch_names(
+            [
+                name
+                for name in (
+                    list(people_intelligence.get("branch_names") or [])
+                    + list(proof_extraction.get("branch_names") or [])
+                )
+                if name in set(maps_branch_names)
+            ]
         )
         doctor_names = doctor_profile_names or self._clean_doctor_names(
             list(people_intelligence.get("doctor_names") or [])
@@ -262,8 +295,9 @@ class ScoringAgent(BaseAgent):
             "ads_active_count": self._to_int(ads_verification.get("active_ads_count")),
             "ads_creative_hints": list(ads_verification.get("creative_hints") or []),
             "paid_acquisition_active": ads_status == "yes",
-            "reviews_count": lead.get("reviews_count") or lead.get("review_count"),
-            "rating": lead.get("rating") or lead.get("review_rating"),
+            "reviews_count": maps_reviews_count if maps_reviews_count is not None else lead.get("reviews_count") or lead.get("review_count"),
+            "rating": maps_rating if maps_rating is not None else lead.get("rating") or lead.get("review_rating"),
+            "maps_verified": maps_verified,
             "volume_score_inputs": {
                 "volume_score": intent.get("volume_score"),
                 "peak_busyness": enrichment.get("peak_busyness"),
@@ -276,6 +310,7 @@ class ScoringAgent(BaseAgent):
             "multi_clinic": bool(branch_count > 1),
             "branch_count": branch_count,
             "branch_names": branch_names,
+            "maps_branch_names": maps_branch_names,
             "branch_contacts": branch_contacts,
             "doctor_count": doctor_count,
             "doctor_names": doctor_names,
@@ -287,14 +322,9 @@ class ScoringAgent(BaseAgent):
             "testimonials_present": bool(proof_extraction.get("testimonials_present")),
             "gallery_present": bool(proof_extraction.get("gallery_present")),
             "content_ready_score": int(proof_extraction.get("content_ready_score") or 0),
-            "booking_flow_quality": proof_extraction.get("booking_flow_quality") or ("basic" if booking_detected else "none"),
+            "booking_flow_quality": booking_flow_quality,
             "after_hours_capture": bool(proof_extraction.get("after_hours_capture")),
-            "instant_response_path": bool(
-                proof_extraction.get("instant_response_path")
-                or whatsapp_detected
-                or proof_extraction.get("chat_widget")
-                or enrichment.get("chat_widget")
-            ),
+            "instant_response_path": instant_response_path,
             "contact_intelligence": contact_intelligence,
             "contact_quality_score": contact_quality_score,
         }
@@ -307,8 +337,10 @@ class ScoringAgent(BaseAgent):
         intent: Dict[str, Any],
         signal_facts: Dict[str, Any],
     ) -> Dict[str, int]:
-        reviews = self._to_int(signal_facts.get("reviews_count"))
-        rating = self._to_float(signal_facts.get("rating"))
+        raw_reviews = signal_facts.get("reviews_count")
+        raw_rating = signal_facts.get("rating")
+        reviews = self._to_int(raw_reviews)
+        rating = self._to_float(raw_rating)
         branch_count = self._to_int(signal_facts.get("branch_count"))
         doctor_count = self._to_int(signal_facts.get("doctor_count"))
         services = list(signal_facts.get("services") or [])
@@ -327,6 +359,7 @@ class ScoringAgent(BaseAgent):
         intent_leak_score = self._to_int(intent.get("leak_score"))
         reactivation_fit = self._to_int(intent.get("reactivation_fit"))
         content_ready_score = self._to_int(signal_facts.get("content_ready_score"))
+        maps_verified = bool(signal_facts.get("maps_verified"))
         booking_quality = str(signal_facts.get("booking_flow_quality") or "none").lower()
         contact_intelligence = signal_facts.get("contact_intelligence") or {}
         contact_quality_score = self._to_int(
@@ -360,6 +393,10 @@ class ScoringAgent(BaseAgent):
             demand_score += min(ads_active_count * 2, 12)
         demand_score += min(int(volume_score / 10), 10)
         demand_score += min(int(intent_score / 20), 5)
+        if maps_verified and raw_reviews is None and raw_rating is None:
+            demand_score = max(demand_score, 18)
+        if signal_facts.get("phone_visible") and signal_facts.get("booking_detected"):
+            demand_score = max(demand_score, 20)
 
         trust_score = 0
         trust_score += min(doctor_count, 4) * 8
@@ -420,6 +457,25 @@ class ScoringAgent(BaseAgent):
             trust_score += min(len(branch_contacts), 2)
         if reviews >= 200 and rating >= 4.5:
             trust_score = max(trust_score, 30)
+        has_verified_trust_markers = any(
+            [
+                raw_reviews is not None,
+                raw_rating is not None,
+                doctor_count > 0,
+                branch_count > 0,
+                instagram_followers > 0,
+                youtube_subscribers > 0,
+            ]
+        )
+        if not has_verified_trust_markers:
+            if signal_facts.get("phone_visible") and signal_facts.get("booking_detected"):
+                trust_score = max(trust_score, 16)
+            if content_ready_score >= 60:
+                trust_score = max(trust_score, 20)
+            elif content_ready_score >= 40:
+                trust_score = max(trust_score, 14)
+            if maps_verified:
+                trust_score = max(trust_score, 18)
 
         leak_score = 0
         if not signal_facts.get("phone_visible"):
@@ -475,7 +531,25 @@ class ScoringAgent(BaseAgent):
             leak_score += 8
         if branch_count > 1 and missing_capture_paths >= 2:
             leak_score += 6
-        leak_score = max(leak_score, min(int(intent_leak_score * 0.9), 95))
+
+        capture_gap_floor = 0
+        if not signal_facts.get("whatsapp_detected"):
+            capture_gap_floor += 28
+        if booking_quality == "none":
+            capture_gap_floor += 32
+        elif booking_quality == "weak":
+            capture_gap_floor += 28
+        elif booking_quality == "basic":
+            capture_gap_floor += 18
+        if not signal_facts.get("instant_response_path"):
+            capture_gap_floor += 18
+        if not signal_facts.get("after_hours_capture"):
+            capture_gap_floor += 14
+        if not signal_facts.get("contact_form_detected") and not signal_facts.get("booking_detected"):
+            capture_gap_floor += 12
+        if reviews >= 50 or branch_count > 1 or content_ready_score >= 60:
+            capture_gap_floor += 8
+        leak_score = max(leak_score, min(capture_gap_floor, 95), min(int(intent_leak_score * 0.9), 95))
 
         serviceability_score = 0
         if self._is_high_ticket_category(str(lead.get("category") or "")):
@@ -647,6 +721,132 @@ class ScoringAgent(BaseAgent):
             normalized["name"] = name
             cleaned.append(normalized)
         return cleaned
+
+    def _extract_business_tokens(self, *values: Any) -> List[str]:
+        blocked = {
+            "clinic",
+            "clinics",
+            "skin",
+            "hair",
+            "laser",
+            "care",
+            "center",
+            "centre",
+            "hospital",
+            "dermatology",
+            "aesthetic",
+            "aesthetics",
+            "cosmetic",
+            "doctor",
+            "doctors",
+            "specialist",
+            "specialists",
+            "best",
+            "top",
+            "premium",
+            "beauty",
+            "weight",
+            "loss",
+            "bangalore",
+            "bengaluru",
+        }
+        tokens: List[str] = []
+        seen = set()
+        for value in values:
+            for token in re.findall(r"[a-z0-9]+", str(value or "").lower()):
+                if len(token) < 3 or token in blocked or token in seen:
+                    continue
+                seen.add(token)
+                tokens.append(token)
+        return tokens
+
+    def _maps_candidate_matches_business(
+        self,
+        candidate: Dict[str, Any],
+        *,
+        business_name: Optional[str],
+        website: Optional[str],
+    ) -> bool:
+        haystack = " ".join(
+            [
+                str(candidate.get("title") or candidate.get("name") or ""),
+                str(candidate.get("website") or ""),
+                str(candidate.get("url") or ""),
+                str(candidate.get("address") or ""),
+            ]
+        ).lower()
+        if not haystack.strip():
+            return False
+        domain_hint = ""
+        if website:
+            domain_hint = re.sub(r"^www\.", "", re.sub(r"^https?://", "", str(website), flags=re.IGNORECASE)).split("/", 1)[0]
+            domain_hint = domain_hint.split(".")[0].replace("-", " ").replace("_", " ")
+        business_tokens = self._extract_business_tokens(business_name, domain_hint)
+        if not business_tokens:
+            return True
+        matched = sum(1 for token in business_tokens if token in haystack)
+        required = 1 if len(business_tokens) <= 2 else 2
+        return matched >= required
+
+    def _extract_maps_branch_names(
+        self,
+        raw_apify_data: Dict[str, Any],
+        *,
+        business_name: Optional[str],
+        website: Optional[str],
+    ) -> List[str]:
+        if not isinstance(raw_apify_data, dict):
+            return []
+        names: List[str] = []
+        seen = set()
+
+        def add_name(value: Any) -> None:
+            candidate_names = self._clean_branch_names([value])
+            if not candidate_names:
+                return
+            key = candidate_names[0].lower()
+            if key in seen:
+                return
+            seen.add(key)
+            names.append(candidate_names[0])
+
+        for place in list(raw_apify_data.get("relatedPlaces") or []):
+            if not isinstance(place, dict):
+                continue
+            if not self._maps_candidate_matches_business(
+                place,
+                business_name=business_name,
+                website=website,
+            ):
+                continue
+            add_name(place.get("address"))
+
+        if not names:
+            candidate = {
+                "title": raw_apify_data.get("maps_title"),
+                "address": raw_apify_data.get("maps_address"),
+                "website": raw_apify_data.get("maps_website") or website,
+            }
+            if self._maps_candidate_matches_business(
+                candidate,
+                business_name=business_name,
+                website=website,
+            ):
+                add_name(raw_apify_data.get("maps_address"))
+
+        return names[:4]
+
+    def _is_strong_doctor_profile(self, profile: Dict[str, Any]) -> bool:
+        if not isinstance(profile, dict):
+            return False
+        if profile.get("phones") or profile.get("emails") or profile.get("linkedin"):
+            return True
+        role = str(profile.get("role") or "").strip().lower()
+        source = str(profile.get("source") or "").strip().lower()
+        return any(
+            token in role or token in source
+            for token in ("founder", "director", "doctor", "dermatologist", "team", "roster")
+        )
 
     def _is_plausible_person_name(self, value: Any) -> bool:
         text = str(value or "").strip()
