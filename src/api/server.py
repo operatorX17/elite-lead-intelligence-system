@@ -869,6 +869,54 @@ def extract_domain(value: Optional[str]) -> Optional[str]:
     return parsed.netloc or parsed.path or value
 
 
+def _coerce_int(value: Any) -> Optional[int]:
+    """Best-effort integer coercion for backend signal facts."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+
+    raw = str(value).strip()
+    if not raw:
+        return None
+
+    digits = re.sub(r"[^\d-]", "", raw)
+    if digits in {"", "-"}:
+        return None
+
+    try:
+        return int(digits)
+    except ValueError:
+        return None
+
+
+def _coerce_float(value: Any) -> Optional[float]:
+    """Best-effort float coercion for backend signal facts."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    raw = str(value).strip()
+    if not raw:
+        return None
+
+    normalized = re.sub(r"[^0-9.\-]", "", raw)
+    if normalized in {"", "-", ".", "-."}:
+        return None
+
+    try:
+        return float(normalized)
+    except ValueError:
+        return None
+
+
 def build_contact_rows(lead_data: Dict[str, Any], enrichment: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Build lightweight frontend contact rows from lead/enrichment data."""
     contact_intelligence = (enrichment or {}).get("contact_intelligence") or {}
