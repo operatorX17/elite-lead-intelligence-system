@@ -1595,6 +1595,112 @@ def _merge_social_profiles(*payloads: Optional[Dict[str, Any]]) -> Dict[str, Any
     return merged
 
 
+def _sanitize_social_metric(value: Any) -> Optional[int]:
+    if value in (None, "", [], {}):
+        return None
+    try:
+        normalized = int(float(value))
+    except (TypeError, ValueError):
+        digits = re.sub(r"[^\d]", "", str(value or ""))
+        if not digits:
+            return None
+        normalized = int(digits)
+    if normalized < 0:
+        return None
+    return normalized
+
+
+def _normalize_instagram_profile_url(url: Any) -> Optional[str]:
+    raw = str(url or "").strip()
+    if not raw:
+        return None
+    parsed = urlparse(raw if raw.startswith(("http://", "https://")) else f"https://{raw}")
+    hostname = parsed.netloc.lower().replace("www.", "")
+    if hostname != "instagram.com":
+        return None
+    segments = [segment.strip() for segment in parsed.path.split("/") if segment.strip()]
+    if not segments:
+        return None
+    username = segments[0].lstrip("@")
+    if username.lower() in {"accounts", "developer", "directory", "explore", "p", "reel", "reels", "share", "stories", "tv"}:
+        return None
+    if not re.fullmatch(r"[A-Za-z0-9._]{1,30}", username):
+        return None
+    return f"https://www.instagram.com/{username}/"
+
+
+def _normalize_youtube_channel_url(url: Any) -> Optional[str]:
+    raw = str(url or "").strip()
+    if not raw:
+        return None
+    parsed = urlparse(raw if raw.startswith(("http://", "https://")) else f"https://{raw}")
+    hostname = parsed.netloc.lower().replace("www.", "").replace("m.", "")
+    if hostname != "youtube.com":
+        return None
+    segments = [segment.strip() for segment in parsed.path.split("/") if segment.strip()]
+    if not segments:
+        return None
+    first = segments[0]
+    if first.lower() in {"embed", "feed", "hashtag", "live", "playlist", "results", "shorts", "watch"}:
+        return None
+    if first.startswith("@") and len(first) > 1:
+        return f"https://www.youtube.com/{first}"
+    if first in {"c", "channel", "user"} and len(segments) > 1 and segments[1]:
+        return f"https://www.youtube.com/{first}/{segments[1]}"
+    return None
+
+
+def _sanitize_instagram_profile(profile: Dict[str, Any]) -> Dict[str, Any]:
+    if not profile:
+        return {}
+    username = str(profile.get("username") or "").strip().lstrip("@")
+    if username and not re.fullmatch(r"[A-Za-z0-9._]{1,30}", username):
+        username = ""
+    profile_url = _normalize_instagram_profile_url(profile.get("profile_url"))
+    if not username and profile_url:
+        username = profile_url.rstrip("/").split("/")[-1]
+    sanitized = {
+        "username": username or None,
+        "profile_url": profile_url,
+        "full_name": str(profile.get("full_name") or "").strip() or None,
+        "bio": str(profile.get("bio") or "").strip() or None,
+        "external_url": str(profile.get("external_url") or "").strip() or None,
+        "followers_count": _sanitize_social_metric(profile.get("followers_count")),
+        "following_count": _sanitize_social_metric(profile.get("following_count")),
+        "verified": bool(profile.get("verified")) if profile.get("verified") is not None else None,
+        "email": str(profile.get("email") or "").strip().lower() or None,
+        "is_business_account": bool(profile.get("is_business_account")) if profile.get("is_business_account") is not None else None,
+        "business_category": str(profile.get("business_category") or "").strip() or None,
+        "posts_count": _sanitize_social_metric(profile.get("posts_count")),
+        "latest_post_count": _sanitize_social_metric(profile.get("latest_post_count")),
+        "profile_pic_url": str(profile.get("profile_pic_url") or "").strip() or None,
+        "source": str(profile.get("source") or "").strip() or None,
+    }
+    if not sanitized["username"] and not sanitized["profile_url"]:
+        return {}
+    return {key: value for key, value in sanitized.items() if value not in (None, "", [], {})}
+
+
+def _sanitize_youtube_channel(channel: Dict[str, Any]) -> Dict[str, Any]:
+    if not channel:
+        return {}
+    channel_url = _normalize_youtube_channel_url(channel.get("channel_url"))
+    sanitized = {
+        "channel_name": str(channel.get("channel_name") or "").strip() or None,
+        "channel_url": channel_url,
+        "subscriber_count": _sanitize_social_metric(channel.get("subscriber_count")),
+        "total_views": _sanitize_social_metric(channel.get("total_views")),
+        "total_videos": _sanitize_social_metric(channel.get("total_videos")),
+        "recent_video_count": _sanitize_social_metric(channel.get("recent_video_count")),
+        "avg_recent_views": _sanitize_social_metric(channel.get("avg_recent_views")),
+        "latest_video_date": str(channel.get("latest_video_date") or "").strip() or None,
+        "source": str(channel.get("source") or "").strip() or None,
+    }
+    if not sanitized["channel_url"] and not sanitized["channel_name"]:
+        return {}
+    return {key: value for key, value in sanitized.items() if value not in (None, "", [], {})}
+
+
 def derive_analysis_updated_at(
     enrichment: Optional[Dict[str, Any]],
     intent: Optional[Dict[str, Any]],
@@ -1672,6 +1778,7 @@ def build_signal_facts(
     )
     stored_signal_facts = dict(stored_analysis_bundle.get("facts") or {})
     raw_apify_data = dict(lead_state_metadata.get("raw_apify_data") or {})
+    has_verified_maps_truth = _has_verified_maps_truth(raw_apify_data)
     ads_verification = lead_state_metadata.get("ads_verification") or {}
     people_intelligence = dict(lead_state_metadata.get("people_intelligence") or {})
     allow_stored_signal_fallback = not any(
@@ -1683,16 +1790,16 @@ def build_signal_facts(
             people_intelligence,
         ]
     )
-    instagram_profile = dict(
+    instagram_profile = _sanitize_instagram_profile(dict(
         people_intelligence.get("instagram_profile")
         or stored_signal_facts.get("instagram_profile")
         or {}
-    )
-    youtube_channel = dict(
+    ))
+    youtube_channel = _sanitize_youtube_channel(dict(
         people_intelligence.get("youtube_channel")
         or stored_signal_facts.get("youtube_channel")
         or {}
-    )
+    ))
 
     phone_numbers = _dedupe_strings(
         [
@@ -2149,7 +2256,7 @@ def build_signal_facts(
         "contact_form": 0.8 if contact_form_detected else 0.0,
         "whatsapp": 0.95 if whatsapp_target else 0.35 if whatsapp_widget_detected else 0.0,
         "ads": 1.0 if ads_status in {"yes", "no"} else 0.25,
-        "reviews": 0.95 if lead_data.get("reviews_count") is not None else 0.0,
+        "reviews": 0.95 if reviews_count is not None else 0.0,
         "rating": 0.95 if rating is not None else 0.0,
         "services": 0.8 if services else 0.0,
         "multi_clinic": 0.98 if branch_contact_names else 0.91 if corroborated_fresh_branch_names else 0.0,
@@ -2212,6 +2319,9 @@ def build_signal_facts(
         "reviews_count": reviews_count,
         "rating": rating,
         "fact_sources": fact_sources,
+        "maps_place_id": raw_apify_data.get("placeId") if has_verified_maps_truth else None,
+        "maps_match_score": raw_apify_data.get("maps_match_score") if has_verified_maps_truth else None,
+        "maps_refreshed_at": raw_apify_data.get("maps_refreshed_at") if has_verified_maps_truth else None,
         "volume_score_inputs": {
             "volume_score": intent_payload.get("volume_score"),
             "peak_busyness": enrichment_payload.get("peak_busyness"),
@@ -2289,8 +2399,8 @@ def build_signal_facts(
             "contact_form_detected": contact_form_detected,
             "after_hours_capture": after_hours_capture,
             "instant_response_path": instant_response_path,
-            "reviews_count": lead_data.get("reviews_count") or lead_data.get("review_count"),
-            "rating": lead_data.get("rating") or lead_data.get("review_rating"),
+            "reviews_count": reviews_count,
+            "rating": rating,
             "content_ready_score": content_ready_score,
             "branch_count": branch_count,
         }),
@@ -2302,8 +2412,8 @@ def build_signal_facts(
             "contact_form_detected": contact_form_detected,
             "after_hours_capture": after_hours_capture,
             "instant_response_path": instant_response_path,
-            "reviews_count": lead_data.get("reviews_count") or lead_data.get("review_count"),
-            "rating": lead_data.get("rating") or lead_data.get("review_rating"),
+            "reviews_count": reviews_count,
+            "rating": rating,
             "content_ready_score": content_ready_score,
             "branch_count": branch_count,
         }),
@@ -4216,6 +4326,19 @@ def _score_google_maps_candidate(lead_data: Dict[str, Any], candidate: Dict[str,
         score += 2
 
     return score
+
+
+def _has_verified_maps_truth(raw_apify_data: Dict[str, Any]) -> bool:
+    """Only treat Maps metrics as truth when they came from a matched place."""
+    return bool(
+        isinstance(raw_apify_data, dict)
+        and raw_apify_data.get("placeId")
+        and raw_apify_data.get("maps_source")
+        and (
+            raw_apify_data.get("reviewsCount") is not None
+            or raw_apify_data.get("totalScore") is not None
+        )
+    )
 
 
 def _select_best_google_maps_match(
