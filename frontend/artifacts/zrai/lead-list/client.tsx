@@ -477,13 +477,14 @@ function isSourceBackedSignal(signalFacts: SignalFacts | null | undefined, key: 
 
 function getFactSourceLabel(signalFacts: SignalFacts | null | undefined, key: string) {
   const source = String(signalFacts?.fact_sources?.[key] || "").toLowerCase();
-  const evidence = String(signalFacts?.evidence_levels?.[key] || "").toLowerCase();
-
-  if (!source || source === "not_verified" || evidence === "unknown") {
+  if (!source || source === "not_verified") {
     return "not verified";
   }
   if (source === "google_maps") {
     return "Google Maps";
+  }
+  if (source === "google_maps_cached") {
+    return "Google Maps (cached)";
   }
   if (source === "website_contact_page") {
     return "website contact page";
