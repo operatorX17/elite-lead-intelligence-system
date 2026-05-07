@@ -1984,6 +1984,53 @@ def build_signal_facts(
         decision_maker_role = None
         decision_maker_source = None
         decision_maker_confidence = None
+    cached_reviews_count = _coerce_int(
+        lead_data.get("reviews_count")
+        if lead_data.get("reviews_count") is not None
+        else stored_signal_facts.get("reviews_count")
+    )
+    cached_rating = _coerce_float(
+        lead_data.get("rating")
+        if lead_data.get("rating") is not None
+        else stored_signal_facts.get("rating")
+    )
+    reviews_count = raw_apify_data.get("reviewsCount") if has_verified_maps_truth else cached_reviews_count
+    rating = raw_apify_data.get("totalScore") if has_verified_maps_truth else cached_rating
+    fact_sources = {
+        "reviews": "google_maps" if has_verified_maps_truth and reviews_count is not None else "google_maps_cached" if reviews_count is not None else "not_verified",
+        "rating": "google_maps" if has_verified_maps_truth and rating is not None else "google_maps_cached" if rating is not None else "not_verified",
+        "locations": (
+            "website_contact_page"
+            if branch_contact_names
+            else "website_corroborated"
+            if corroborated_fresh_branch_names
+            else "not_verified"
+        ),
+        "doctors": (
+            "website_doctor_profile"
+            if doctor_profiles
+            else "website_text"
+            if doctor_names
+            else "not_verified"
+        ),
+        "phone": "website_or_maps" if phone_numbers else "not_verified",
+        "booking": "website" if booking_target or booking_detected else "not_verified",
+        "whatsapp": "website" if whatsapp_target else "not_verified",
+        "instagram": (
+            str(instagram_profile.get("source") or "").strip()
+            if instagram_profile
+            else "website"
+            if social_profiles.get("instagram") or lead_data.get("instagram")
+            else "not_verified"
+        ),
+        "youtube": (
+            str(youtube_channel.get("source") or "").strip()
+            if youtube_channel
+            else "website"
+            if social_profiles.get("youtube")
+            else "not_verified"
+        ),
+    }
     best_contact_phone = (
         people_intelligence.get("best_contact_phone")
         or (phone_numbers[0] if phone_numbers else None)
