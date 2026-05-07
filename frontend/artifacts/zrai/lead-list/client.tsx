@@ -675,6 +675,12 @@ function getResolvedAnalysisState(
   lead: Lead | null | undefined,
   processedDetails: ProcessedLeadDetails | null | undefined
 ) {
+  if (
+    processedDetails?.analysis_state === "failed" &&
+    (lead?.analysis_state === "analyzed" || lead?.score_kind === "final_score")
+  ) {
+    return "analyzed";
+  }
   return (
     processedDetails?.analysis_state ||
     lead?.analysis_state ||
@@ -1066,6 +1072,9 @@ function hydrateLeadFromStoredAnalysis(
   }
 
   if (processedDetails.analysis_state !== "analyzed") {
+    if (lead.analysis_state === "analyzed" || lead.score_kind === "final_score") {
+      return sanitizeLeadRecord(lead) as Lead;
+    }
     return sanitizeLeadRecord({
       ...lead,
       analysis_state: processedDetails.analysis_state as Lead["analysis_state"],
@@ -1622,8 +1631,12 @@ function mergeProcessedLeadDetailsRecords(
   const existingStateRank = getStateRank(existing.analysis_state);
   const incomingFactsCount = Object.keys(incoming.signal_facts || {}).length;
   const existingFactsCount = Object.keys(existing.signal_facts || {}).length;
+  const preserveExistingAnalyzed =
+    existing.analysis_state === "analyzed" &&
+    incoming.analysis_state === "failed" &&
+    existingFactsCount >= incomingFactsCount;
   const incomingIsPrimary =
-    incomingUpdatedAt > existingUpdatedAt ||
+    (!preserveExistingAnalyzed && incomingUpdatedAt > existingUpdatedAt) ||
     (incomingUpdatedAt === existingUpdatedAt &&
       (incomingStateRank > existingStateRank ||
         (incomingStateRank === existingStateRank &&
@@ -2849,11 +2862,13 @@ function LeadListContent({
         ] as const);
 
       const mergedLeads = dedupeLeadRows(mergeLeadRows(workingLeadRows, processedLeads));
-      const mergedDetails = {
-        ...workingProcessedDetails,
-        ...Object.fromEntries(processedDetailEntries),
-        ...Object.fromEntries(failedDetailEntries),
-      };
+      const mergedDetails = mergeProcessedDetailsMapRecords(
+        mergeProcessedDetailsMapRecords(
+          workingProcessedDetails,
+          Object.fromEntries(processedDetailEntries)
+        ),
+        Object.fromEntries(failedDetailEntries)
+      );
       const resolvedSelectedLeadId = selectedLead
         ? resolveSelectedLeadId(
             selectedLead.id,
@@ -4536,11 +4551,13 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
           }
           const baseMetadata = (metadata || {}) as LeadListMetadata;
           const nextLeads = mergeLeadRows(replacedLeadRows, processedLeads);
-          const nextProcessedDetails = {
-            ...(replacedProcessedDetails || {}),
-            ...Object.fromEntries(processedDetailEntries),
-            ...Object.fromEntries(failedDetailEntries),
-          };
+          const nextProcessedDetails = mergeProcessedDetailsMapRecords(
+            mergeProcessedDetailsMapRecords(
+              replacedProcessedDetails || {},
+              Object.fromEntries(processedDetailEntries)
+            ),
+            Object.fromEntries(failedDetailEntries)
+          );
           const nextSelectedLeadId = resolveSelectedLeadId(
             baseMetadata.selectedLeadId || null,
             nextLeads,

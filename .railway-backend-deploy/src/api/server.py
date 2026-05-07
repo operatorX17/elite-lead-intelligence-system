@@ -2055,6 +2055,7 @@ def build_signal_facts(
         "whatsapp": 0.95 if whatsapp_target else 0.35 if whatsapp_widget_detected else 0.0,
         "ads": 1.0 if ads_status in {"yes", "no"} else 0.25,
         "reviews": 0.95 if lead_data.get("reviews_count") is not None else 0.0,
+        "rating": 0.95 if rating is not None else 0.0,
         "services": 0.8 if services else 0.0,
         "multi_clinic": 0.98 if branch_contact_names else 0.91 if corroborated_fresh_branch_names else 0.0,
         "doctors": 0.95 if doctor_profiles else 0.82 if doctor_names else 0.0,
