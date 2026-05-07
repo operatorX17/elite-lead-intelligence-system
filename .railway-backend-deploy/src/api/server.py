@@ -3884,6 +3884,7 @@ def run_selected_lead_pipeline(
         last_node="discovery",
         metadata={
             "ads_verification": ads_verification,
+            "fast_mode": True,
             "force_audit": include_audit,
             "raw_apify_data": maps_truth or dict((lead_state.get("metadata") or {}).get("raw_apify_data") or {}),
         },
@@ -3896,7 +3897,12 @@ def run_selected_lead_pipeline(
     scoring_agent = get_scoring_agent()
     outreach_agent = get_outreach_agent()
 
-    state = run_agent_step("enrichment", enrichment_agent, state, required=True)
+    has_cached_enrichment = bool(
+        state.get("enrichment")
+        or state.get("intelligence")
+        or state.get("signal_facts")
+    )
+    state = run_agent_step("enrichment", enrichment_agent, state, required=not has_cached_enrichment)
     state = run_agent_step("intent", intent_agent, state, required=True)
     if include_audit:
         state = run_agent_step("audit", audit_agent, state, required=False)

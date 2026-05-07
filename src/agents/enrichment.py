@@ -157,14 +157,18 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         
         # Get raw Apify data from metadata (stored by discovery agent)
         metadata = state.get("metadata", {})
+        fast_mode = bool(metadata.get("fast_mode"))
         raw_apify_data = metadata.get("raw_apify_data", {})
         
         # Merge raw Apify data into lead for volume signal extraction
         lead_with_apify = {**lead, **raw_apify_data}
         
-        website_context = self._fetch_website_context(lead.get("landing_page_url") or lead.get("website"))
-        instagram_profile = self._extract_instagram_profile(lead, website_context)
-        youtube_channel = self._extract_youtube_channel(lead, website_context)
+        website_context = self._fetch_website_context(
+            lead.get("landing_page_url") or lead.get("website"),
+            fast_mode=fast_mode,
+        )
+        instagram_profile = self._extract_instagram_profile(lead, website_context, fast_mode=fast_mode)
+        youtube_channel = self._extract_youtube_channel(lead, website_context, fast_mode=fast_mode)
         if instagram_profile:
             social_profiles = dict(website_context.get("social_profiles") or {})
             social_profiles["instagram_profile"] = instagram_profile
@@ -295,7 +299,7 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         
         return state
     
-    def _fetch_website_context(self, website: Optional[str]) -> Dict[str, Any]:
+    def _fetch_website_context(self, website: Optional[str], *, fast_mode: bool = False) -> Dict[str, Any]:
         """Fetch a website once and derive clinic-ready extraction hints."""
         context: Dict[str, Any] = {
             "content": "",
@@ -317,11 +321,11 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
 
         website = self._normalize_url(website)
 
-        raw_content = self._fetch_page_content(website)
+        raw_content = self._fetch_page_content(website, fast_mode=fast_mode)
 
         if not raw_content:
             try:
-                crawl_result = self._apify.crawl_website(website, max_pages=5)
+                crawl_result = self._apify.crawl_website(website, max_pages=2 if fast_mode else 5)
                 raw_content = str(crawl_result)
             except Exception as exc:
                 self._logger.warning("Apify crawl fallback failed for %s: %s", website, exc)
@@ -329,17 +333,17 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         supporting_urls = self._extract_candidate_page_urls(raw_content, website)
         context["supporting_urls"] = supporting_urls
         supporting_content: List[str] = []
-        for supporting_url in supporting_urls[:6]:
+        for supporting_url in supporting_urls[: (4 if fast_mode else 6)]:
             if supporting_url.rstrip("/") == website.rstrip("/"):
                 continue
-            extra_page = self._fetch_page_content(supporting_url)
+            extra_page = self._fetch_page_content(supporting_url, fast_mode=fast_mode)
             if extra_page:
                 supporting_content.append(extra_page)
 
         if supporting_content:
             raw_content = "\n".join([raw_content, *supporting_content])
 
-        asset_content = self._fetch_embedded_asset_content(raw_content, website)
+        asset_content = self._fetch_embedded_asset_content(raw_content, website, fast_mode=fast_mode)
         if asset_content:
             raw_content = "\n".join([raw_content, asset_content])
 
@@ -401,6 +405,8 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         self,
         lead: Dict[str, Any],
         website_context: Dict[str, Any],
+        *,
+        fast_mode: bool = False,
     ) -> Dict[str, Any]:
         """Extract Instagram profile intelligence for the lead when an IG handle exists."""
         social_profiles = dict(website_context.get("social_profiles") or {})
@@ -428,6 +434,9 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             or f"https://www.instagram.com/{username}/",
             "source": "website_instagram_link",
         }
+        if fast_mode:
+            return lightweight_profile
+
         profile: Dict[str, Any] = {}
         if self._env_feature_enabled("ZRAI_ENABLE_INSTAGRAM_PROFILE_ACTOR", default=True):
             profile = self._apify.run_instagram_profile_scraper(lightweight_profile["profile_url"])
@@ -528,6 +537,8 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         self,
         lead: Dict[str, Any],
         website_context: Dict[str, Any],
+        *,
+        fast_mode: bool = False,
     ) -> Dict[str, Any]:
         """Extract lightweight YouTube channel intelligence from the site and actor."""
         social_profiles = dict(website_context.get("social_profiles") or {})
@@ -553,6 +564,8 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             "channel_url": channel_url,
             "source": "website_youtube_link",
         }
+        if fast_mode:
+            return lightweight_channel
         if not self._env_feature_enabled("ZRAI_ENABLE_YOUTUBE_ACTOR", default=True):
             return lightweight_channel
 
@@ -680,7 +693,7 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             return f"https://www.youtube.com/{first}/{segments[1]}"
         return None
 
-    def _fetch_embedded_asset_content(self, raw_html: str, base_url: str) -> str:
+    def _fetch_embedded_asset_content(self, raw_html: str, base_url: str, *, fast_mode: bool = False) -> str:
         """Fetch a small bounded set of same-origin JS assets to recover data from JS-shell sites."""
         if not raw_html:
             return ""
@@ -701,12 +714,16 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
                 asset_urls.append(absolute)
 
         chunks: List[str] = []
-        remaining_chars = 1_200_000
-        for asset_url in asset_urls[:3]:
+        remaining_chars = 500_000 if fast_mode else 1_200_000
+        for asset_url in asset_urls[: (1 if fast_mode else 3)]:
             if remaining_chars <= 0:
                 break
             try:
-                response = requests.get(asset_url, timeout=25, headers=DISCOVERY_HTTP_HEADERS)
+                response = requests.get(
+                    asset_url,
+                    timeout=8 if fast_mode else 25,
+                    headers=DISCOVERY_HTTP_HEADERS,
+                )
                 response.raise_for_status()
                 body = response.text or ""
                 if not body:
@@ -719,7 +736,7 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
 
         return "\n".join(chunks)
 
-    def _fetch_page_content(self, url: str) -> str:
+    def _fetch_page_content(self, url: str, *, fast_mode: bool = False) -> str:
         raw_content = ""
         try:
             api_key = os.getenv("FIRECRAWL_API_KEY")
@@ -737,7 +754,7 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
                     "https://api.firecrawl.dev/v1/scrape",
                     json=payload,
                     headers=headers,
-                    timeout=30,
+                    timeout=12 if fast_mode else 30,
                 )
                 response.raise_for_status()
                 data = response.json().get("data", {})
@@ -756,7 +773,7 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         try:
             response = requests.get(
                 url,
-                timeout=20,
+                timeout=8 if fast_mode else 20,
                 headers=DISCOVERY_HTTP_HEADERS,
             )
             response.raise_for_status()
