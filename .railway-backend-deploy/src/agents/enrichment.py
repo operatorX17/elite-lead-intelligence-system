@@ -623,6 +623,8 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             return None
         if "instagram.com" not in raw.lower():
             candidate = raw.lstrip("@").strip("/")
+            if not re.fullmatch(r"[A-Za-z0-9._]{1,30}", candidate or ""):
+                return None
             return candidate or None
 
         parsed = urlparse(raw if raw.startswith(("http://", "https://")) else f"https://{raw}")
@@ -630,9 +632,17 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         if not segments:
             return None
         candidate = segments[0].lstrip("@").strip()
-        if candidate.lower() in {"reel", "p", "stories", "explore"}:
+        if candidate.lower() in INSTAGRAM_RESERVED_PATHS:
+            return None
+        if not re.fullmatch(r"[A-Za-z0-9._]{1,30}", candidate or ""):
             return None
         return candidate or None
+
+    def _normalize_instagram_profile_url(self, value: Optional[str]) -> Optional[str]:
+        username = self._extract_instagram_username(value)
+        if not username:
+            return None
+        return f"https://www.instagram.com/{username}/"
 
     def _fetch_embedded_asset_content(self, raw_html: str, base_url: str, *, fast_mode: bool = False) -> str:
         """Fetch a small bounded set of same-origin JS assets to recover data from JS-shell sites."""
