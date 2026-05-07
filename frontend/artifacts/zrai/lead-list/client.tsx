@@ -1225,7 +1225,18 @@ function getContactIntelligence(
   };
 }
 
-function getDecisionLabel(finalScore: number | null | undefined) {
+function getDecisionLabel(
+  finalScore: number | null | undefined,
+  scoreNarrative?: { topIssue?: string | null; whyThisLead?: string | null } | null
+) {
+  const topIssue = String(scoreNarrative?.topIssue || "").toLowerCase();
+  const whyThisLead = String(scoreNarrative?.whyThisLead || "").toLowerCase();
+  if (
+    topIssue.includes("verified demand and trust data is incomplete") ||
+    whyThisLead.includes("operator snapshot rather than a final commercial judgment")
+  ) {
+    return "Needs verification";
+  }
   if (finalScore == null) {
     return "Needs analysis";
   }
@@ -3668,7 +3679,7 @@ function LeadListContent({
                       Decision
                     </div>
                     <div className="mt-1 text-lg font-semibold">
-                      {getDecisionLabel(scoreSnapshot.finalScore)}
+                      {getDecisionLabel(scoreSnapshot.finalScore, scoreNarrative)}
                     </div>
                   </div>
                   <div className="text-right">

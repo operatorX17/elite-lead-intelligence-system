@@ -4354,7 +4354,7 @@ def _score_google_maps_candidate(lead_data: Dict[str, Any], candidate: Dict[str,
         elif lead_domain in candidate_domain or candidate_domain in lead_domain:
             score += 80
 
-    lead_name = str(lead_data.get("business_name") or "").strip()
+    lead_name = _clean_company_name_candidate(str(lead_data.get("business_name") or "").strip())
     candidate_name = str(candidate.get("title") or candidate.get("name") or "").strip()
     if lead_name and candidate_name:
         score += SequenceMatcher(None, lead_name.lower(), candidate_name.lower()).ratio() * 60
@@ -4526,16 +4526,22 @@ def refresh_google_maps_truth(
     if not force_refresh and not _maps_truth_missing(lead_data, lead_state):
         return existing_metadata.get("raw_apify_data") or {}
 
-    business_name = str(lead_data.get("business_name") or "").strip()
+    business_name = _clean_company_name_candidate(str(lead_data.get("business_name") or "").strip())
     if not business_name:
         return existing_metadata.get("raw_apify_data") or {}
 
     geo_filter = build_discovery_geo(str(lead_data.get("location") or ""))
     website = lead_data.get("website") or lead_data.get("landing_page_url")
-    brand_hint = infer_company_name_from_url(str(website)) if website else ""
+    brand_hint = _clean_company_name_candidate(infer_company_name_from_url(str(website))) if website else ""
     keywords: List[str] = [business_name]
     if brand_hint and brand_hint.lower() != business_name.lower():
         keywords.append(brand_hint)
+
+    if business_name and business_name != str(lead_data.get("business_name") or "").strip():
+        try:
+            db.update_lead(lead_uuid, {"business_name": business_name})
+        except Exception:
+            logger.warning("Failed to persist cleaned business name for %s", lead_data.get("lead_id"))
 
     try:
         logger.info(
@@ -5161,6 +5167,7 @@ def _strip_phone_like_suffix(value: str) -> str:
 def _clean_company_name_candidate(value: str) -> str:
     text = _strip_phone_like_suffix(str(value or ""))
     text = re.sub(r"(?i)%20", " ", text.replace("+", " "))
+    text = re.sub(r"(?:\s+\d{2,4})+$", "", text)
     text = re.sub(r"\s+", " ", text).strip(" -:\u2013\u2014,")
     return text
 
