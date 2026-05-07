@@ -83,6 +83,10 @@ BRANCH_LOCALITY_ALIASES = {
     "thannisandra": "Thanisandra",
     "thanisandra main road": "Thanisandra",
     "chikkabellandur": "Chikkabellandur",
+    "nagawara": "Nagawara",
+    "bilekahalli": "Bilekahalli",
+    "uttarahalli": "Uttarahalli",
+    "btm layout": "BTM Layout",
 }
 
 
@@ -317,7 +321,7 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
 
         if not raw_content:
             try:
-                crawl_result = self._apify.crawl_website(website, max_pages=2)
+                crawl_result = self._apify.crawl_website(website, max_pages=5)
                 raw_content = str(crawl_result)
             except Exception as exc:
                 self._logger.warning("Apify crawl fallback failed for %s: %s", website, exc)
@@ -325,7 +329,7 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         supporting_urls = self._extract_candidate_page_urls(raw_content, website)
         context["supporting_urls"] = supporting_urls
         supporting_content: List[str] = []
-        for supporting_url in supporting_urls[:3]:
+        for supporting_url in supporting_urls[:6]:
             if supporting_url.rstrip("/") == website.rstrip("/"):
                 continue
             extra_page = self._fetch_page_content(supporting_url)
@@ -998,6 +1002,9 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         doctor_profiles = self._extract_doctor_profiles(raw_content)
         branch_contacts = self._extract_branch_contacts(raw_content)
         branch_names = [item.get("name") for item in branch_contacts if item.get("name")]
+        for branch_name in self._extract_branch_names_from_page_text(raw_content):
+            if branch_name not in branch_names:
+                branch_names.append(branch_name)
         phone_numbers = [item.get("phone") for item in branch_contacts if item.get("phone")]
         branch_hints = self._extract_branch_hints_from_sources(
             business_name=business_name,
@@ -1309,6 +1316,40 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             return text.title()
         return None
 
+    def _extract_branch_names_from_page_text(self, raw_content: str) -> List[str]:
+        if not raw_content:
+            return []
+
+        text_content = BeautifulSoup(raw_content, "html.parser").get_text("\n")
+        text_content = re.sub(r"\r", "\n", text_content)
+        text_content = re.sub(r"\n{2,}", "\n", text_content)
+        lines = [line.strip() for line in text_content.splitlines() if line.strip()]
+
+        candidates: List[str] = []
+        seen = set()
+        for index, line in enumerate(lines):
+            canonical = self._normalize_branch_hint_candidate(line)
+            if not canonical:
+                continue
+            lowered_line = line.lower()
+            if lowered_line in {"our clinic locations", "clinic locations", "our clinics", "locations"}:
+                continue
+
+            window_text = "\n".join(lines[max(0, index - 2) : min(len(lines), index + 8)]).lower()
+            if not any(
+                token in window_text
+                for token in ("clinic", "location", "our clinics", "our clinic locations", "branch", "branches", "dermatologist")
+            ):
+                continue
+
+            key = canonical.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append(canonical)
+
+        return candidates[:8]
+
     def _extract_doctor_profiles(self, raw_content: str) -> List[Dict[str, Any]]:
         profiles: List[Dict[str, Any]] = []
         if not raw_content:
@@ -1348,7 +1389,7 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         text_content = re.sub(r"\r", "\n", text_content)
         text_content = re.sub(r"\n{2,}", "\n", text_content)
         heading_pattern = re.compile(
-            r"(?P<name>Dr\.?[ \t]+[A-Z][A-Za-z.\-]+(?:[ \t]+[A-Z][A-Za-z.\-]+){1,3})",
+            r"(?P<name>Dr\.?[ \t]+[A-Z][A-Za-z.\-]*(?:[ \t]+[A-Z][A-Za-z.\-]*){0,4})",
             flags=re.IGNORECASE,
         )
         for match in heading_pattern.finditer(text_content):
@@ -1718,6 +1759,21 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
                     deduped.append(match)
             if deduped:
                 profiles[network] = deduped[:4]
+
+        instagram_handles = re.findall(
+            r"(?<![A-Za-z0-9._])@(?P<handle>[A-Za-z0-9._]{3,30})\b",
+            raw_content,
+            flags=re.IGNORECASE,
+        )
+        if instagram_handles:
+            instagram_profiles = list(profiles.get("instagram") or [])
+            for handle in instagram_handles:
+                normalized = self._normalize_instagram_profile_url(f"@{handle}")
+                if normalized and normalized not in instagram_profiles:
+                    instagram_profiles.append(normalized)
+            if instagram_profiles:
+                profiles["instagram"] = instagram_profiles[:6]
+
         return profiles
 
     def _normalize_person_name(self, value: Optional[str]) -> Optional[str]:
@@ -1751,8 +1807,18 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
 
     def _is_plausible_person_name(self, value: str) -> bool:
         tokens = [token.strip(".").lower() for token in value.split() if token.strip(".")]
-        significant_tokens = [token for token in tokens if len(token) > 1]
-        if len(significant_tokens) < 2:
+        token_fragments = [
+            fragment.lower()
+            for token in value.split()
+            for fragment in token.split(".")
+            if fragment.strip(".-")
+        ]
+        significant_tokens = [token for token in token_fragments if len(token) > 1]
+        has_embedded_initial = any(
+            "." in token and len(token.replace(".", "").strip()) > 3
+            for token in value.split()
+        )
+        if len(significant_tokens) < 2 and not has_embedded_initial:
             return False
         original_tokens = [token for token in re.split(r"\s+", value.strip()) if token]
         for token in original_tokens:

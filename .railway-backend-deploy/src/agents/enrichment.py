@@ -53,6 +53,15 @@ BRANCH_LOCALITY_ALIASES = {
     "hsr layout": "HSR Layout",
     "electronic city": "Electronic City",
     "sarjapur": "Sarjapur",
+    "sarjapur road": "Sarjapur",
+    "thanisandra": "Thanisandra",
+    "thannisandra": "Thanisandra",
+    "thanisandra main road": "Thanisandra",
+    "chikkabellandur": "Chikkabellandur",
+    "nagawara": "Nagawara",
+    "bilekahalli": "Bilekahalli",
+    "uttarahalli": "Uttarahalli",
+    "btm layout": "BTM Layout",
 }
 
 
@@ -287,7 +296,7 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
 
         if not raw_content:
             try:
-                crawl_result = self._apify.crawl_website(website, max_pages=2)
+                crawl_result = self._apify.crawl_website(website, max_pages=5)
                 raw_content = str(crawl_result)
             except Exception as exc:
                 self._logger.warning("Apify crawl fallback failed for %s: %s", website, exc)
@@ -295,7 +304,7 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         supporting_urls = self._extract_candidate_page_urls(raw_content, website)
         context["supporting_urls"] = supporting_urls
         supporting_content: List[str] = []
-        for supporting_url in supporting_urls[:3]:
+        for supporting_url in supporting_urls[:6]:
             if supporting_url.rstrip("/") == website.rstrip("/"):
                 continue
             extra_page = self._fetch_page_content(supporting_url)
@@ -393,6 +402,61 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             "profile_url": profile_url or f"https://www.instagram.com/{username}/",
             "source": "website_instagram_link",
         }
+        profile: Dict[str, Any] = {}
+        if self._env_feature_enabled("ZRAI_ENABLE_INSTAGRAM_PROFILE_ACTOR", default=True):
+            profile = self._apify.run_instagram_profile_scraper(lightweight_profile["profile_url"])
+
+        if profile:
+            biography = (
+                profile.get("biography")
+                or profile.get("bio")
+                or profile.get("biographyText")
+                or profile.get("description")
+            )
+            full_name = (
+                profile.get("fullName")
+                or profile.get("full_name")
+                or profile.get("name")
+            )
+            external_url = (
+                profile.get("externalUrl")
+                or profile.get("external_url")
+                or profile.get("website")
+                or profile.get("link")
+            )
+            follower_count = (
+                profile.get("followersCount")
+                or profile.get("followers")
+                or profile.get("follower_count")
+            )
+
+            normalized_profile: Dict[str, Any] = {
+                **lightweight_profile,
+                "full_name": full_name,
+                "bio": biography,
+                "external_url": external_url,
+                "followers_count": follower_count,
+                "following_count": (
+                    profile.get("followsCount")
+                    or profile.get("followingCount")
+                    or profile.get("following")
+                ),
+                "verified": profile.get("verified"),
+                "email": profile.get("email"),
+                "is_business_account": profile.get("isBusinessAccount"),
+                "business_category": profile.get("businessCategoryName")
+                or profile.get("business_category_name")
+                or profile.get("category"),
+                "posts_count": profile.get("postsCount") or profile.get("posts_count"),
+                "profile_pic_url": profile.get("profilePicUrl") or profile.get("profile_pic_url"),
+                "source": "apify_instagram_profile_scraper",
+            }
+            return {
+                key: value
+                for key, value in normalized_profile.items()
+                if value not in (None, "", [], {})
+            }
+
         if not self._env_feature_enabled("ZRAI_ENABLE_INSTAGRAM_BIO_ACTOR", default=True):
             return lightweight_profile
 
@@ -874,6 +938,9 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         doctor_profiles = self._extract_doctor_profiles(raw_content)
         branch_contacts = self._extract_branch_contacts(raw_content)
         branch_names = [item.get("name") for item in branch_contacts if item.get("name")]
+        for branch_name in self._extract_branch_names_from_page_text(raw_content):
+            if branch_name not in branch_names:
+                branch_names.append(branch_name)
         phone_numbers = [item.get("phone") for item in branch_contacts if item.get("phone")]
         branch_hints = self._extract_branch_hints_from_sources(
             business_name=business_name,
@@ -881,6 +948,7 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             web_results=list(lead.get("webResults") or lead.get("web_results") or []),
             related_places=list(lead.get("relatedPlaces") or lead.get("related_places") or []),
             maps_title=lead.get("maps_title"),
+            maps_address=lead.get("maps_address") or lead.get("address"),
         )
         for branch_hint in branch_hints:
             if branch_hint not in branch_names:
@@ -1031,26 +1099,26 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         web_results: List[Dict[str, Any]],
         related_places: List[Dict[str, Any]],
         maps_title: Optional[str],
+        maps_address: Optional[str],
     ) -> List[str]:
         candidates: List[str] = []
-        if maps_title:
-            candidates.append(str(maps_title))
-        for supporting_url in list(website_context.get("supporting_urls") or []):
-            candidates.append(str(supporting_url))
-        for result in web_results:
-            if not isinstance(result, dict):
-                continue
-            if result.get("url"):
-                candidates.append(str(result.get("url")))
-            if result.get("title"):
-                candidates.append(str(result.get("title")))
+        if maps_address:
+            candidates.append(str(maps_address))
         for result in related_places:
             if not isinstance(result, dict):
                 continue
-            if result.get("url"):
-                candidates.append(str(result.get("url")))
-            if result.get("title"):
-                candidates.append(str(result.get("title")))
+            if not self._source_text_matches_business(
+                " ".join(
+                    [
+                        str(result.get("title") or result.get("name") or ""),
+                        str(result.get("website") or ""),
+                        str(result.get("url") or ""),
+                        str(result.get("address") or ""),
+                    ]
+                ),
+                business_name,
+            ):
+                continue
             if result.get("address"):
                 candidates.append(str(result.get("address")))
 
@@ -1065,7 +1133,45 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
                 continue
             seen.add(key)
             hints.append(hint)
-        return hints[:8]
+        return hints[:4]
+
+    def _source_text_matches_business(self, text: str, business_name: str) -> bool:
+        haystack = str(text or "").lower()
+        if not haystack.strip():
+            return False
+
+        blocked = {
+            "clinic",
+            "clinics",
+            "skin",
+            "hair",
+            "laser",
+            "care",
+            "center",
+            "centre",
+            "aesthetic",
+            "aesthetics",
+            "cosmetic",
+            "doctor",
+            "doctors",
+            "specialist",
+            "specialists",
+            "best",
+            "top",
+            "premium",
+            "bangalore",
+            "bengaluru",
+        }
+        tokens = [
+            token
+            for token in re.findall(r"[a-z0-9]+", business_name.lower())
+            if len(token) > 2 and token not in blocked
+        ]
+        if not tokens:
+            return True
+        matched = sum(1 for token in tokens if token in haystack)
+        required = 1 if len(tokens) <= 2 else 2
+        return matched >= required
 
     def _extract_branch_hint_from_text(self, text: str, business_name: str) -> Optional[str]:
         value = str(text or "").strip()
@@ -1146,6 +1252,40 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             return text.title()
         return None
 
+    def _extract_branch_names_from_page_text(self, raw_content: str) -> List[str]:
+        if not raw_content:
+            return []
+
+        text_content = BeautifulSoup(raw_content, "html.parser").get_text("\n")
+        text_content = re.sub(r"\r", "\n", text_content)
+        text_content = re.sub(r"\n{2,}", "\n", text_content)
+        lines = [line.strip() for line in text_content.splitlines() if line.strip()]
+
+        candidates: List[str] = []
+        seen = set()
+        for index, line in enumerate(lines):
+            canonical = self._normalize_branch_hint_candidate(line)
+            if not canonical:
+                continue
+            lowered_line = line.lower()
+            if lowered_line in {"our clinic locations", "clinic locations", "our clinics", "locations"}:
+                continue
+
+            window_text = "\n".join(lines[max(0, index - 2) : min(len(lines), index + 8)]).lower()
+            if not any(
+                token in window_text
+                for token in ("clinic", "location", "our clinics", "our clinic locations", "branch", "branches", "dermatologist")
+            ):
+                continue
+
+            key = canonical.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append(canonical)
+
+        return candidates[:8]
+
     def _extract_doctor_profiles(self, raw_content: str) -> List[Dict[str, Any]]:
         profiles: List[Dict[str, Any]] = []
         if not raw_content:
@@ -1185,7 +1325,7 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         text_content = re.sub(r"\r", "\n", text_content)
         text_content = re.sub(r"\n{2,}", "\n", text_content)
         heading_pattern = re.compile(
-            r"(?P<name>Dr\.?[ \t]+[A-Z][A-Za-z.\-]+(?:[ \t]+[A-Z][A-Za-z.\-]+){1,3})",
+            r"(?P<name>Dr\.?[ \t]+[A-Z][A-Za-z.\-]*(?:[ \t]+[A-Z][A-Za-z.\-]*){0,4})",
             flags=re.IGNORECASE,
         )
         for match in heading_pattern.finditer(text_content):
@@ -1361,7 +1501,7 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         for contact in contacts:
             phone_key = str(contact.get("phone") or "")
             name_key = str(contact.get("name") or "").lower()
-            key = ("phone", phone_key) if phone_key else ("name", name_key)
+            key = ("name", name_key) if name_key else ("phone", phone_key)
             if key in seen:
                 continue
             seen.add(key)
@@ -1556,6 +1696,21 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
                     deduped.append(match)
             if deduped:
                 profiles[network] = deduped[:4]
+
+        instagram_handles = re.findall(
+            r"(?<![A-Za-z0-9._])@(?P<handle>[A-Za-z0-9._]{3,30})\b",
+            raw_content,
+            flags=re.IGNORECASE,
+        )
+        if instagram_handles:
+            instagram_profiles = list(profiles.get("instagram") or [])
+            for handle in instagram_handles:
+                normalized = self._normalize_instagram_profile_url(f"@{handle}")
+                if normalized and normalized not in instagram_profiles:
+                    instagram_profiles.append(normalized)
+            if instagram_profiles:
+                profiles["instagram"] = instagram_profiles[:6]
+
         return profiles
 
     def _normalize_person_name(self, value: Optional[str]) -> Optional[str]:
@@ -1589,8 +1744,18 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
 
     def _is_plausible_person_name(self, value: str) -> bool:
         tokens = [token.strip(".").lower() for token in value.split() if token.strip(".")]
-        significant_tokens = [token for token in tokens if len(token) > 1]
-        if len(significant_tokens) < 2:
+        token_fragments = [
+            fragment.lower()
+            for token in value.split()
+            for fragment in token.split(".")
+            if fragment.strip(".-")
+        ]
+        significant_tokens = [token for token in token_fragments if len(token) > 1]
+        has_embedded_initial = any(
+            "." in token and len(token.replace(".", "").strip()) > 3
+            for token in value.split()
+        )
+        if len(significant_tokens) < 2 and not has_embedded_initial:
             return False
         original_tokens = [token for token in re.split(r"\s+", value.strip()) if token]
         for token in original_tokens:
