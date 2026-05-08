@@ -1,4 +1,4 @@
-.PHONY: help install setup test run status clean
+.PHONY: help install setup test run status clean sync-check sync-fix
 
 help:
 	@echo "ZRAI Lead OS - Make Commands"
@@ -66,3 +66,9 @@ format:
 lint:
 	flake8 src/ tests/
 	mypy src/
+
+sync-check:
+	python scripts/check_railway_sync.py
+
+sync-fix:
+	python scripts/check_railway_sync.py --fix

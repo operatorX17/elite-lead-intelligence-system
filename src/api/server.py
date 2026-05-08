@@ -1738,11 +1738,39 @@ def _merge_social_profiles(*payloads: Optional[Dict[str, Any]]) -> Dict[str, Any
         if not payload:
             continue
         for key, value in payload.items():
-            if not value:
+            if value in (None, "", [], {}):
                 continue
             if isinstance(value, list):
-                existing = list(merged.get(key) or [])
-                merged[key] = _dedupe_strings(existing + list(value))
+                # Guard: if existing value was stored as a string by a previous
+                # payload, wrap it in a list - never call list(string) which
+                # explodes it into individual characters.
+                existing_val = merged.get(key)
+                if isinstance(existing_val, list):
+                    existing = list(existing_val)
+                elif isinstance(existing_val, str) and existing_val.strip():
+                    existing = [existing_val.strip()]
+                else:
+                    existing = []
+                # Filter incoming list to strings only (drop accidental char fragments).
+                incoming = [v for v in value if isinstance(v, str) and v.strip()]
+                combined = _dedupe_strings(existing + incoming)
+                if key in _SOCIAL_URL_LIST_KEYS:
+                    combined = _filter_social_url_list(key, combined)
+                merged[key] = combined
+            elif isinstance(value, str):
+                stripped = value.strip()
+                if not stripped:
+                    continue
+                existing_val = merged.get(key)
+                if isinstance(existing_val, list):
+                    if stripped not in existing_val:
+                        existing_val = existing_val + [stripped]
+                    if key in _SOCIAL_URL_LIST_KEYS:
+                        merged[key] = _filter_social_url_list(key, existing_val)
+                    else:
+                        merged[key] = _dedupe_strings(existing_val)
+                else:
+                    merged[key] = stripped
             else:
                 merged[key] = value
     return merged
@@ -1779,7 +1807,52 @@ def _normalize_instagram_profile_url(url: Any) -> Optional[str]:
         return None
     if not re.fullmatch(r"[A-Za-z0-9._]{1,30}", username):
         return None
+    # Reject pure-numeric / decimal handles like GPS coords (e.g. "13.0533989")
+    # and any handle that doesn't contain at least 2 letters.
+    if re.fullmatch(r"\d+(?:\.\d+)?", username):
+        return None
+    if len(re.findall(r"[A-Za-z]", username)) < 2:
+        return None
     return f"https://www.instagram.com/{username}/"
+
+
+# Map of social-network keys that hold *lists of profile URLs* in social_profiles.
+# These need re-filtering at merge time to drop garbage from cached/persisted state.
+_SOCIAL_URL_LIST_KEYS = {"instagram", "youtube", "facebook", "linkedin"}
+
+
+def _filter_social_url_list(network: str, urls: List[str]) -> List[str]:
+    """Re-normalize/validate a list of social URLs for a given network.
+
+    Used inside _merge_social_profiles so any junk left in cached/persisted
+    `social_profiles[*]` (e.g. exploded URL characters, GPS-coordinate-shaped
+    Instagram handles) is filtered out on every read."""
+    cleaned: List[str] = []
+    seen: set = set()
+    for raw in urls:
+        if not isinstance(raw, str):
+            continue
+        candidate = raw.strip()
+        if not candidate:
+            continue
+        # Drop single-character fragments left over from a previous broken merge.
+        if len(candidate) <= 2 and "/" not in candidate and "." not in candidate:
+            continue
+        if network == "instagram":
+            normalized = _normalize_instagram_profile_url(candidate)
+        elif network == "youtube":
+            normalized = _normalize_youtube_channel_url(candidate)
+        elif network == "facebook":
+            normalized = candidate if "facebook.com" in candidate.lower() else None
+        elif network == "linkedin":
+            normalized = candidate if "linkedin.com" in candidate.lower() else None
+        else:
+            normalized = candidate
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        cleaned.append(normalized)
+    return cleaned
 
 
 def _normalize_youtube_channel_url(url: Any) -> Optional[str]:
@@ -2459,7 +2532,7 @@ def build_signal_facts(
         "after_hours_capture": "verified" if after_hours_status == "verified" else "derived" if after_hours_status == "likely" else "unknown",
     }
 
-    return {
+    _signal_facts_payload = {
         "phone_visible": phone_visible,
         "phone_numbers": phone_numbers,
         "booking_detected": booking_detected,
@@ -2583,6 +2656,12 @@ def build_signal_facts(
             "contact_quality_score": enrichment_payload.get("contact_quality_score"),
         },
     }
+    # Canonical truth state for the inspector - derived from the same payload we just built.
+    _ts = _derive_truth_state(_signal_facts_payload)
+    _signal_facts_payload["truth_state"] = _ts
+    _signal_facts_payload["truth_state_label"] = _truth_state_label(_ts)
+    _signal_facts_payload["commercial_truth_coverage"] = _commercial_truth_coverage(_signal_facts_payload)
+    return _signal_facts_payload
 
 
 def _confidence_to_evidence_level(confidence: Any) -> str:
@@ -2675,6 +2754,66 @@ def _commercial_truth_coverage(signal_facts: Optional[Dict[str, Any]]) -> int:
 
 def _has_sparse_commercial_truth(signal_facts: Optional[Dict[str, Any]]) -> bool:
     return _commercial_truth_coverage(signal_facts) <= 1
+
+
+def _derive_truth_state(signal_facts: Optional[Dict[str, Any]]) -> str:
+    """Compute a single canonical verification state for the frontend.
+
+    Hierarchy (strongest first):
+      - verified_maps          : live Google Maps truth on this lead
+      - cached_maps            : Maps reviews/rating present from cache or sibling hydration
+      - website_proof          : strong website-derived facts (doctors / branches / booking / phone)
+      - social_presence_only   : only social signals (no Maps, no doctors/branches)
+      - incomplete_verification: nothing meaningful surfaced yet
+    Frontend should render score/judgment confidently only for verified_maps / cached_maps /
+    strong website_proof; for social_presence_only and incomplete_verification it should show
+    a 'Needs verification' label instead of a confident commercial judgment.
+    """
+    facts = signal_facts or {}
+    fact_sources = facts.get("fact_sources") or {}
+    reviews_source = fact_sources.get("reviews")
+    rating_source = fact_sources.get("rating")
+
+    if reviews_source == "google_maps" or rating_source == "google_maps":
+        return "verified_maps"
+    if reviews_source == "google_maps_cached" or rating_source == "google_maps_cached":
+        return "cached_maps"
+
+    has_doctor = bool(facts.get("doctor_count"))
+    has_branch = bool(facts.get("branch_count"))
+    has_booking = bool(facts.get("booking_detected"))
+    has_phone = bool(facts.get("phone_visible"))
+
+    website_strength = sum([has_doctor, has_branch, has_booking, has_phone])
+    if website_strength >= 2:
+        return "website_proof"
+
+    social_profiles = facts.get("social_profiles") or {}
+    has_any_social_url = any(
+        isinstance(social_profiles.get(net), list) and len(social_profiles.get(net) or []) > 0
+        for net in ("instagram", "youtube", "facebook", "linkedin")
+    )
+    has_presence_flag = any(
+        bool(facts.get(f"{net}_present"))
+        for net in ("instagram", "youtube", "facebook")
+    )
+    if has_any_social_url or has_presence_flag or _has_meaningful_verified_social(facts):
+        if website_strength == 0:
+            return "social_presence_only"
+        return "website_proof"
+
+    return "incomplete_verification"
+
+
+def _truth_state_label(state: str) -> str:
+    return {
+        "verified_maps": "Verified",
+        "cached_maps": "Cached verification",
+        "website_proof": "Website-verified",
+        "social_presence_only": "Social presence only",
+        "incomplete_verification": "Needs verification",
+        "failed": "Verification failed",
+    }.get(state, "Needs verification")
 
 
 def build_site_truth_summary_from_signal_facts(signal_facts: Optional[Dict[str, Any]]) -> Optional[str]:

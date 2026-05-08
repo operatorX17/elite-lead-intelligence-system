@@ -1,0 +1,25 @@
+name: check-railway-sync
+
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - ".railway-backend-deploy/**"
+      - "scripts/check_railway_sync.py"
+  push:
+    branches: [master, main]
+    paths:
+      - "src/**"
+      - ".railway-backend-deploy/**"
+      - "scripts/check_railway_sync.py"
+
+jobs:
+  sync-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Verify src/ and .railway-backend-deploy/src/ are in sync
+        run: python scripts/check_railway_sync.py
