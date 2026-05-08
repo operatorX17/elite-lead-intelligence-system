@@ -44,9 +44,11 @@ PUBLIC_DIRECTORY_HOST_HINTS = {
 
 INSTAGRAM_RESERVED_PATHS = {
     "accounts",
+    "api",
     "developer",
     "directory",
     "explore",
+    "media",
     "p",
     "reel",
     "reels",
@@ -87,6 +89,9 @@ BRANCH_LOCALITY_ALIASES = {
     "bilekahalli": "Bilekahalli",
     "uttarahalli": "Uttarahalli",
     "btm layout": "BTM Layout",
+    "annapurneshwari nagar": "Annapurneshwari Nagar",
+    "jnananjyothinagar": "Jnananjyothinagar",
+    "railway layout": "Railway Layout",
 }
 
 
@@ -348,11 +353,18 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             raw_content = "\n".join([raw_content, asset_content])
 
         lower_content = raw_content.lower()
+        text_content = BeautifulSoup(raw_content, "html.parser").get_text("\n")
         context["raw_content"] = raw_content
         context["content"] = lower_content
-        context["emails"] = re.findall(
-            r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
-            raw_content,
+        context["emails"] = self._validate_emails(
+            re.findall(
+                r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
+                raw_content,
+            )
+            + re.findall(
+                r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
+                text_content,
+            )
         )
         context["phones"] = self._extract_phone_candidates(raw_content)
         context["social_profiles"] = self._extract_social_profiles(raw_content)
@@ -649,7 +661,11 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             return None
         if "instagram.com" not in raw.lower():
             candidate = raw.lstrip("@").strip("/")
+            if candidate.lower() in INSTAGRAM_RESERVED_PATHS:
+                return None
             if not re.fullmatch(r"[A-Za-z0-9._]{1,30}", candidate or ""):
+                return None
+            if len(re.findall(r"[A-Za-z]", candidate)) < 2:
                 return None
             return candidate or None
 
@@ -661,6 +677,8 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         if candidate.lower() in INSTAGRAM_RESERVED_PATHS:
             return None
         if not re.fullmatch(r"[A-Za-z0-9._]{1,30}", candidate or ""):
+            return None
+        if len(re.findall(r"[A-Za-z]", candidate)) < 2:
             return None
         return candidate or None
 
@@ -1145,7 +1163,12 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
 
         best_contact_linkedin = best_candidate.get("linkedin") or None
         doctor_names = self._dedupe_strings([item.get("name") for item in merged_doctors])
-        branch_names = self._dedupe_strings(branch_names)
+        cleaned_branch_names: List[str] = []
+        for branch_name in branch_names:
+            normalized_branch = self._normalize_branch_hint_candidate(branch_name)
+            if normalized_branch and normalized_branch not in cleaned_branch_names:
+                cleaned_branch_names.append(normalized_branch)
+        branch_names = cleaned_branch_names
         phone_numbers = self._dedupe_phones(phone_numbers)
         contact_evidence = self._dedupe_strings(
             [
@@ -1295,6 +1318,14 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             normalized = self._normalize_branch_hint_candidate(direct_match.group(1))
             if normalized:
                 return normalized
+        address_match = re.search(
+            r"([a-z][a-z\s]{2,40})\s*,\s*(?:bengaluru|bangalore)\b",
+            lowered,
+        )
+        if address_match:
+            normalized = self._normalize_branch_hint_candidate(address_match.group(1))
+            if normalized:
+                return normalized
         title_match = re.search(r"-\s*([a-z][a-z\s]{2,30})(?:,|:)", lowered)
         if title_match:
             normalized = self._normalize_branch_hint_candidate(title_match.group(1))
@@ -1326,6 +1357,30 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         if not text:
             return None
         lowered = text.lower()
+        if any(token in lowered for token in ("http://", "https://", "wp-content", ".jpg", ".jpeg", ".png", ".webp")):
+            return None
+        if any(symbol in text for symbol in ("[", "]", "(", ")", "/")):
+            return None
+        if len(text) > 80 or len(re.findall(r"[A-Za-z]+", text)) > 9:
+            if not re.search(r"\d", text) and not re.search(r"\b(?:bangalor|bengalur|nagar|layout|road|cross|main|block|phase|stage)\b", lowered):
+                return None
+            if any(
+                token in lowered
+                for token in (
+                    " brings ",
+                    " holding ",
+                    " specializes ",
+                    " specialising ",
+                    " dedicated ",
+                    " provides ",
+                    " receive ",
+                    " patient ",
+                    " concerns ",
+                    " guidance ",
+                    " under the ",
+                )
+            ):
+                return None
         for alias, canonical in BRANCH_LOCALITY_ALIASES.items():
             if alias in lowered:
                 return canonical
@@ -1345,6 +1400,19 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         candidates: List[str] = []
         seen = set()
         for index, line in enumerate(lines):
+            if len(line) > 90 or len(line.split()) > 10 or line.endswith("."):
+                continue
+            if line.lower() == "location":
+                window_lines = lines[index + 1 : min(len(lines), index + 5)]
+                for candidate_line in window_lines:
+                    canonical = self._extract_branch_hint_from_text(candidate_line, "")
+                    if not canonical:
+                        continue
+                    key = canonical.lower()
+                    if key not in seen:
+                        seen.add(key)
+                        candidates.append(canonical)
+                continue
             canonical = self._normalize_branch_hint_candidate(line)
             if not canonical:
                 continue
@@ -1660,8 +1728,6 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             "jp",
             "bengaluru",
             "bangalore",
-            "clinic",
-            "branch",
             "sarjapur",
             "thanisandra",
             "chikkabellandur",
@@ -1772,10 +1838,52 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             matches = [match.rstrip(".,);") for match in re.findall(pattern, raw_content, flags=re.IGNORECASE)]
             deduped = []
             for match in matches:
-                if match not in deduped:
-                    deduped.append(match)
+                normalized = match
+                if network == "instagram":
+                    normalized = self._normalize_instagram_profile_url(match)
+                elif network == "youtube":
+                    normalized = self._normalize_youtube_channel_url(match)
+                elif network == "facebook" and "facebook.com" not in match.lower():
+                    normalized = None
+                if normalized and normalized not in deduped:
+                    deduped.append(normalized)
             if deduped:
                 profiles[network] = deduped[:4]
+
+        soup = BeautifulSoup(raw_content, "html.parser")
+        social_presence_flags = {
+            "instagram_present": False,
+            "youtube_present": False,
+            "facebook_present": False,
+        }
+        for anchor in soup.find_all("a"):
+            href = str(anchor.get("href") or "").strip()
+            classes = " ".join(anchor.get("class") or []).lower()
+            label = anchor.get_text(" ", strip=True).lower()
+            haystack = " ".join([href.lower(), classes, label])
+            if "instagram" in haystack:
+                social_presence_flags["instagram_present"] = True
+                normalized = self._normalize_instagram_profile_url(href)
+                if normalized:
+                    instagram_profiles = list(profiles.get("instagram") or [])
+                    if normalized not in instagram_profiles:
+                        instagram_profiles.append(normalized)
+                    profiles["instagram"] = instagram_profiles[:6]
+            if "youtube" in haystack:
+                social_presence_flags["youtube_present"] = True
+                normalized = self._normalize_youtube_channel_url(href)
+                if normalized:
+                    youtube_profiles = list(profiles.get("youtube") or [])
+                    if normalized not in youtube_profiles:
+                        youtube_profiles.append(normalized)
+                    profiles["youtube"] = youtube_profiles[:6]
+            if "facebook" in haystack:
+                social_presence_flags["facebook_present"] = True
+                if href and "facebook.com" in href.lower():
+                    facebook_profiles = list(profiles.get("facebook") or [])
+                    if href not in facebook_profiles:
+                        facebook_profiles.append(href)
+                    profiles["facebook"] = facebook_profiles[:6]
 
         instagram_handles = re.findall(
             r"(?<![A-Za-z0-9._])@(?P<handle>[A-Za-z0-9._]{3,30})\b",
@@ -1790,6 +1898,10 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
                     instagram_profiles.append(normalized)
             if instagram_profiles:
                 profiles["instagram"] = instagram_profiles[:6]
+
+        for key, present in social_presence_flags.items():
+            if present:
+                profiles[key] = True
 
         return profiles
 
@@ -1835,7 +1947,8 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             "." in token and len(token.replace(".", "").strip()) > 3
             for token in value.split()
         )
-        if len(significant_tokens) < 2 and not has_embedded_initial:
+        has_initial_token = any(len(token.strip(".-")) == 1 for token in value.split())
+        if len(significant_tokens) < 2 and not has_embedded_initial and not (significant_tokens and has_initial_token):
             return False
         original_tokens = [token for token in re.split(r"\s+", value.strip()) if token]
         for token in original_tokens:

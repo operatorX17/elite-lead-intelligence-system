@@ -871,6 +871,126 @@ def extract_domain(value: Optional[str]) -> Optional[str]:
     return parsed.netloc or parsed.path or value
 
 
+def _normalized_domain(value: Optional[str]) -> Optional[str]:
+    domain = (extract_domain(value) or "").strip().lower()
+    if not domain:
+        return None
+    return domain.removeprefix("www.")
+
+
+def _domain_truth_score(row: Dict[str, Any]) -> int:
+    score = 0
+    if row.get("reviews_count") is not None:
+        score += 50
+    if row.get("rating") is not None:
+        score += 30
+    if row.get("instagram"):
+        score += 12
+    if row.get("facebook_page"):
+        score += 6
+    if row.get("phone"):
+        score += 6
+    if row.get("emails_found"):
+        score += 6
+    if row.get("website") or row.get("landing_page_url"):
+        score += 2
+    return score
+
+
+def _fetch_domain_sibling_rows(db, domain: Optional[str]) -> List[Dict[str, Any]]:
+    normalized_domain = _normalized_domain(domain)
+    if not normalized_domain:
+        return []
+    try:
+        result = (
+            db.client.table("leads")
+            .select("*")
+            .or_(f"website.ilike.%{normalized_domain}%,landing_page_url.ilike.%{normalized_domain}%")
+            .limit(30)
+            .execute()
+        )
+    except Exception:
+        return []
+    rows = list(result.data or [])
+    return [
+        row
+        for row in rows
+        if _normalized_domain(row.get("website") or row.get("landing_page_url")) == normalized_domain
+    ]
+
+
+def _hydrate_lead_truth_from_domain_siblings(db, lead_data: Dict[str, Any]) -> Dict[str, Any]:
+    lead_uuid = UUID(str(lead_data.get("lead_id")))
+    domain = _normalized_domain(lead_data.get("website") or lead_data.get("landing_page_url"))
+    if not domain:
+        return lead_data
+
+    sibling_rows = _fetch_domain_sibling_rows(db, domain)
+    if len(sibling_rows) <= 1:
+        return lead_data
+
+    best_truth_row = max(sibling_rows, key=_domain_truth_score)
+    current_row = next(
+        (row for row in sibling_rows if str(row.get("lead_id")) == str(lead_uuid)),
+        lead_data,
+    )
+    updates: Dict[str, Any] = {}
+
+    for field in ("reviews_count", "rating", "instagram", "facebook_page", "phone", "category"):
+        if current_row.get(field) in (None, "", [], {}) and best_truth_row.get(field) not in (None, "", [], {}):
+            updates[field] = best_truth_row.get(field)
+
+    current_emails = list(current_row.get("emails_found") or [])
+    best_emails = list(best_truth_row.get("emails_found") or [])
+    merged_emails = _dedupe_strings(current_emails + best_emails)
+    if merged_emails and merged_emails != current_emails:
+        updates["emails_found"] = merged_emails
+
+    best_name = str(best_truth_row.get("business_name") or "").strip()
+    current_name = str(current_row.get("business_name") or "").strip()
+    if best_name and (
+        not current_name
+        or _looks_like_seo_brand_noise(current_name)
+        or _is_generic_company_title(
+            current_name,
+            raw_geo=str(current_row.get("location") or lead_data.get("location") or ""),
+            brand_hint=_domain_brand_hint(str(current_row.get("website") or current_row.get("landing_page_url") or "")),
+        )
+        or _looks_like_search_query_name(current_name)
+    ):
+        updates["business_name"] = best_name
+
+    if updates:
+        db.update_lead(lead_uuid, updates)
+
+    current_state = db.get_lead_state(lead_uuid) or {}
+    current_metadata = dict(current_state.get("metadata") or {})
+    if not _has_verified_maps_truth(dict(current_metadata.get("raw_apify_data") or {})):
+        for sibling in sibling_rows:
+            if str(sibling.get("lead_id")) == str(lead_uuid):
+                continue
+            sibling_state = db.get_lead_state(UUID(str(sibling.get("lead_id")))) or {}
+            sibling_metadata = dict(sibling_state.get("metadata") or {})
+            sibling_maps_truth = dict(sibling_metadata.get("raw_apify_data") or {})
+            if _has_verified_maps_truth(sibling_maps_truth):
+                metadata_updates = dict(current_metadata)
+                metadata_updates["raw_apify_data"] = sibling_maps_truth
+                if sibling_metadata.get("ads_verification") and not metadata_updates.get("ads_verification"):
+                    metadata_updates["ads_verification"] = sibling_metadata.get("ads_verification")
+                if sibling_metadata.get("people_intelligence") and not metadata_updates.get("people_intelligence"):
+                    metadata_updates["people_intelligence"] = sibling_metadata.get("people_intelligence")
+                db.save_lead_state(
+                    {
+                        **current_state,
+                        "lead_id": str(lead_uuid),
+                        "metadata": metadata_updates,
+                    }
+                )
+                break
+
+    return db.get_lead(lead_uuid) or {**lead_data, **updates}
+
+
 def _coerce_int(value: Any) -> Optional[int]:
     """Best-effort integer coercion for backend signal facts."""
     if value is None:
@@ -2118,9 +2238,15 @@ def build_signal_facts(
         proof_extraction.get("instagram_present")
         or instagram_profile
         or social_profiles.get("instagram")
+        or social_profiles.get("instagram_present")
         or lead_data.get("instagram")
     )
-    youtube_present = bool(proof_extraction.get("youtube_present") or youtube_channel or social_profiles.get("youtube"))
+    youtube_present = bool(
+        proof_extraction.get("youtube_present")
+        or youtube_channel
+        or social_profiles.get("youtube")
+        or social_profiles.get("youtube_present")
+    )
     testimonials_present = bool(proof_extraction.get("testimonials_present"))
     gallery_present = bool(proof_extraction.get("gallery_present"))
     after_hours_capture = bool(proof_extraction.get("after_hours_capture"))
@@ -4021,6 +4147,7 @@ def get_or_create_discovered_lead(db, lead: Lead, raw_niche: str) -> Dict[str, A
     """Persist a discovered lead or return the existing canonical row."""
     serialized = serialize_lead_for_storage(lead, raw_niche)
     canonical_website = canonicalize_company_website(str(lead.website or "")).strip() or None
+    canonical_domain = _normalized_domain(canonical_website or lead.website)
 
     existing_row: Optional[Dict[str, Any]] = None
     if canonical_website:
@@ -4035,6 +4162,11 @@ def get_or_create_discovered_lead(db, lead: Lead, raw_niche: str) -> Dict[str, A
             if existing_result.data:
                 existing_row = existing_result.data[0]
                 break
+
+    if existing_row is None and canonical_domain:
+        domain_rows = _fetch_domain_sibling_rows(db, canonical_domain)
+        if domain_rows:
+            existing_row = max(domain_rows, key=_domain_truth_score)
 
     if existing_row is None:
         existing_result = (
@@ -4103,8 +4235,8 @@ def get_or_create_discovered_lead(db, lead: Lead, raw_niche: str) -> Dict[str, A
 
         if updates:
             updated = db.update_lead(UUID(str(existing_row["lead_id"])), updates)
-            return updated or {**existing_row, **updates}
-        return existing_row
+            return _hydrate_lead_truth_from_domain_siblings(db, updated or {**existing_row, **updates})
+        return _hydrate_lead_truth_from_domain_siblings(db, existing_row)
 
     return db.create_lead(serialized)
 
@@ -4176,7 +4308,7 @@ def run_selected_lead_pipeline(
                     "errors": list(current_state.get("errors") or []) + [message],
                 }
 
-    lead_payload = dict(lead_data)
+    lead_payload = _hydrate_lead_truth_from_domain_siblings(db, dict(lead_data))
     lead_uuid = UUID(str(lead_data.get("lead_id")))
     maps_truth = refresh_google_maps_truth(db, lead_payload, force_refresh=force_refresh)
     refreshed_lead = db.get_lead(lead_uuid) or {}

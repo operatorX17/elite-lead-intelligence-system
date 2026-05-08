@@ -33,6 +33,15 @@ INVALID_PERSON_TOKENS = {
     "brand",
     "owner",
     "hint",
+    "consultant",
+    "dermatologist",
+    "specialist",
+    "doctor",
+    "physician",
+    "surgeon",
+    "receptionist",
+    "admin",
+    "manager",
 }
 
 FOUNDER_ROLES = {
@@ -81,6 +90,11 @@ def _is_plausible_person_name(value: Optional[str]) -> bool:
         if non_generic_count < 2:
             return False
 
+    significant_tokens = [token for token in tokens if len(token) > 1]
+    has_initial_token = any(len(token) == 1 for token in tokens)
+    if len(significant_tokens) < 2 and not (len(significant_tokens) >= 1 and has_initial_token):
+        return False
+
     return True
 
 
@@ -120,6 +134,13 @@ def _normalize_phone(value: Optional[str]) -> Optional[str]:
     digits = re.sub(r"\D", "", str(value))
     if len(digits) < 7:
         return None
+    core = digits[-10:]
+    if len(set(core)) == 1:
+        return None
+    if core in {"0123456789", "1234567890", "0987654321", "9876543210"}:
+        return None
+    if core.endswith("123456789") or core.endswith("987654321"):
+        return None
     return digits
 
 
@@ -141,11 +162,67 @@ def _is_junk_email(value: Optional[str]) -> bool:
     lowered = value.strip().lower()
     if lowered.startswith("frame-"):
         return True
+    if any(token in lowered for token in ("@mht", "@mhtml", ".mht", ".mhtml", "cid:", "content-id")):
+        return True
     if lowered.endswith("@example.com") or lowered.endswith("@example.org"):
         return True
-    if "frame-" in lowered and "@mht" in lowered:
+    local_part = lowered.split("@", 1)[0]
+    if len(local_part) > 48 and any(char.isdigit() for char in local_part):
         return True
     return False
+
+
+def _normalize_branch_candidate_name(value: Optional[str]) -> Optional[str]:
+    text = re.sub(r"\s+", " ", str(value or "")).strip(" -,:;")
+    if not text or len(text) > 60:
+        return None
+    lowered = text.lower()
+    blocked_terms = {
+        "consultant",
+        "dermatologist",
+        "specialist",
+        "doctor",
+        "physician",
+        "surgeon",
+        "receptionist",
+        "manager",
+        "admin",
+        "book",
+        "appointment",
+        "contact us",
+        "about us",
+        "treatments",
+        "offers",
+        "gallery",
+        "email",
+        "phone",
+    }
+    if "@" in lowered or lowered.startswith("http"):
+        return None
+    if any(token in lowered for token in blocked_terms):
+        return None
+    location_tokens = (
+        "nagar",
+        "layout",
+        "road",
+        "rd",
+        "block",
+        "phase",
+        "cross",
+        "main",
+        "koramangala",
+        "jayanagar",
+        "indiranagar",
+        "whitefield",
+        "hsr",
+        "jp",
+        "bengaluru",
+        "bangalore",
+        "branch",
+    )
+    if not any(token in lowered for token in location_tokens):
+        return None
+    return text
 
 
 def _contact_identity_key(contact: Dict[str, Any]) -> str:
@@ -228,8 +305,19 @@ def _build_contact_point(
     if is_primary and effective_contact_type == "contact_candidate":
         effective_contact_type = "decision_maker_candidate"
 
+    owner_scope_value = owner_scope or ("branch" if effective_contact_type == "branch_public" else "person")
+    if normalized_name and effective_contact_type != "branch_public" and not _is_plausible_person_name(normalized_name):
+        normalized_name = None
+
+    if effective_contact_type != "branch_public" and not normalized_name and not any([normalized_email, normalized_linkedin]):
+        return None
+
+    display_name = normalized_name
+    if not display_name:
+        display_name = clinic or ("Clinic branch" if owner_scope_value == "branch" else "Clinic contact")
+
     return {
-        "name": normalized_name or "Best contact",
+        "name": display_name,
         "role": role or None,
         "clinic": clinic or None,
         "phone": normalized_phone,
@@ -240,7 +328,7 @@ def _build_contact_point(
         "reason": reason or None,
         "channel": channel or None,
         "contact_type": effective_contact_type,
-        "owner_scope": owner_scope or ("branch" if effective_contact_type == "branch_public" else "person"),
+        "owner_scope": owner_scope_value,
         "is_primary": bool(is_primary),
         "is_direct": bool(is_direct) if is_direct is not None else effective_contact_type in {"founder_direct", "doctor_direct"},
         "is_public": bool(is_public) if is_public is not None else effective_contact_type == "branch_public",
@@ -249,7 +337,10 @@ def _build_contact_point(
 
 def _build_branch_point(contact: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     phone = str(contact.get("phone") or "").strip() or None
-    name = str(contact.get("name") or "").strip() or None
+    raw_name = str(contact.get("name") or "").strip() or None
+    name = _normalize_branch_candidate_name(raw_name)
+    if raw_name and not name:
+        return None
     if not phone and not name:
         return None
 
@@ -280,7 +371,10 @@ def _build_candidate_point(candidate: Dict[str, Any]) -> Optional[Dict[str, Any]
     linkedin = str(candidate.get("linkedin") or "").strip() or None
     confidence = candidate.get("score")
     source = str(candidate.get("source") or "decision-maker candidate")
+    has_direct_path = bool(phones or emails or linkedin)
     if not name and not any([phones, emails, linkedin]):
+        return None
+    if not has_direct_path:
         return None
 
     contact_type = _contact_type_for(role)
@@ -311,7 +405,10 @@ def _build_doctor_point(doctor: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     emails = list(doctor.get("emails") or [])
     linkedin = str(doctor.get("linkedin") or "").strip() or None
     source = str(doctor.get("source") or "doctor profile")
+    has_direct_path = bool(phones or emails or linkedin)
     if not name and not any([phones, emails, linkedin]):
+        return None
+    if not has_direct_path:
         return None
 
     contact_type = _contact_type_for(role)
@@ -357,11 +454,15 @@ def build_contact_intelligence(signal_facts: Optional[Dict[str, Any]] = None) ->
     branch_contacts = list(signal_facts.get("branch_contacts") or [])
     doctor_profiles = list(signal_facts.get("doctor_profiles") or [])
     contact_evidence = _dedupe_strings(signal_facts.get("contact_evidence") or [])
+    top_contact_has_direct_path = bool(best_contact_phone or best_contact_email or best_contact_linkedin)
+    top_contact_has_person_path = bool(best_contact_linkedin) or bool(
+        decision_maker_name and top_contact_has_direct_path and (decision_maker_confidence or 0) >= 80
+    )
 
     contact_points: List[Dict[str, Any]] = []
     top_contact = _build_contact_point(
-        name=decision_maker_name or "Best contact",
-        role=decision_maker_role or best_contact_channel or None,
+        name=decision_maker_name if top_contact_has_person_path else None,
+        role=(decision_maker_role or best_contact_channel or None) if top_contact_has_person_path else "clinic contact",
         clinic=str(signal_facts.get("business_name") or "").strip() or None,
         phone=best_contact_phone,
         email=best_contact_email,
@@ -370,10 +471,10 @@ def build_contact_intelligence(signal_facts: Optional[Dict[str, Any]] = None) ->
         confidence=decision_maker_confidence or contact_quality_score,
         reason=best_contact_reason or decision_maker_source or "best contact",
         channel=best_contact_channel or ("linkedin" if best_contact_linkedin else ("email" if best_contact_email else ("phone" if best_contact_phone else None))),
-        contact_type=_contact_type_for(decision_maker_role),
-        owner_scope="person" if decision_maker_name else "clinic",
+        contact_type=_contact_type_for(decision_maker_role) if top_contact_has_person_path else "actual_contact",
+        owner_scope="person" if top_contact_has_person_path else "clinic",
         is_primary=True,
-        is_direct=_contact_type_for(decision_maker_role) in {"founder_direct", "doctor_direct"},
+        is_direct=top_contact_has_person_path and _contact_type_for(decision_maker_role) in {"founder_direct", "doctor_direct"},
         is_public=False,
     )
     if top_contact:

@@ -153,6 +153,11 @@ BRANCH_LOCALITY_ALIASES = {
     "hsr": "HSR Layout",
     "electronic city": "Electronic City",
     "sarjapur": "Sarjapur",
+    "sarjapur road": "Sarjapur",
+    "thanisandra": "Thanisandra",
+    "thannisandra": "Thanisandra",
+    "thanisandra main road": "Thanisandra",
+    "chikkabellandur": "Chikkabellandur",
     "hebbal": "Hebbal",
     "rajajinagar": "Rajajinagar",
     "malleshwaram": "Malleshwaram",
@@ -866,6 +871,126 @@ def extract_domain(value: Optional[str]) -> Optional[str]:
     return parsed.netloc or parsed.path or value
 
 
+def _normalized_domain(value: Optional[str]) -> Optional[str]:
+    domain = (extract_domain(value) or "").strip().lower()
+    if not domain:
+        return None
+    return domain.removeprefix("www.")
+
+
+def _domain_truth_score(row: Dict[str, Any]) -> int:
+    score = 0
+    if row.get("reviews_count") is not None:
+        score += 50
+    if row.get("rating") is not None:
+        score += 30
+    if row.get("instagram"):
+        score += 12
+    if row.get("facebook_page"):
+        score += 6
+    if row.get("phone"):
+        score += 6
+    if row.get("emails_found"):
+        score += 6
+    if row.get("website") or row.get("landing_page_url"):
+        score += 2
+    return score
+
+
+def _fetch_domain_sibling_rows(db, domain: Optional[str]) -> List[Dict[str, Any]]:
+    normalized_domain = _normalized_domain(domain)
+    if not normalized_domain:
+        return []
+    try:
+        result = (
+            db.client.table("leads")
+            .select("*")
+            .or_(f"website.ilike.%{normalized_domain}%,landing_page_url.ilike.%{normalized_domain}%")
+            .limit(30)
+            .execute()
+        )
+    except Exception:
+        return []
+    rows = list(result.data or [])
+    return [
+        row
+        for row in rows
+        if _normalized_domain(row.get("website") or row.get("landing_page_url")) == normalized_domain
+    ]
+
+
+def _hydrate_lead_truth_from_domain_siblings(db, lead_data: Dict[str, Any]) -> Dict[str, Any]:
+    lead_uuid = UUID(str(lead_data.get("lead_id")))
+    domain = _normalized_domain(lead_data.get("website") or lead_data.get("landing_page_url"))
+    if not domain:
+        return lead_data
+
+    sibling_rows = _fetch_domain_sibling_rows(db, domain)
+    if len(sibling_rows) <= 1:
+        return lead_data
+
+    best_truth_row = max(sibling_rows, key=_domain_truth_score)
+    current_row = next(
+        (row for row in sibling_rows if str(row.get("lead_id")) == str(lead_uuid)),
+        lead_data,
+    )
+    updates: Dict[str, Any] = {}
+
+    for field in ("reviews_count", "rating", "instagram", "facebook_page", "phone", "category"):
+        if current_row.get(field) in (None, "", [], {}) and best_truth_row.get(field) not in (None, "", [], {}):
+            updates[field] = best_truth_row.get(field)
+
+    current_emails = list(current_row.get("emails_found") or [])
+    best_emails = list(best_truth_row.get("emails_found") or [])
+    merged_emails = _dedupe_strings(current_emails + best_emails)
+    if merged_emails and merged_emails != current_emails:
+        updates["emails_found"] = merged_emails
+
+    best_name = str(best_truth_row.get("business_name") or "").strip()
+    current_name = str(current_row.get("business_name") or "").strip()
+    if best_name and (
+        not current_name
+        or _looks_like_seo_brand_noise(current_name)
+        or _is_generic_company_title(
+            current_name,
+            raw_geo=str(current_row.get("location") or lead_data.get("location") or ""),
+            brand_hint=_domain_brand_hint(str(current_row.get("website") or current_row.get("landing_page_url") or "")),
+        )
+        or _looks_like_search_query_name(current_name)
+    ):
+        updates["business_name"] = best_name
+
+    if updates:
+        db.update_lead(lead_uuid, updates)
+
+    current_state = db.get_lead_state(lead_uuid) or {}
+    current_metadata = dict(current_state.get("metadata") or {})
+    if not _has_verified_maps_truth(dict(current_metadata.get("raw_apify_data") or {})):
+        for sibling in sibling_rows:
+            if str(sibling.get("lead_id")) == str(lead_uuid):
+                continue
+            sibling_state = db.get_lead_state(UUID(str(sibling.get("lead_id")))) or {}
+            sibling_metadata = dict(sibling_state.get("metadata") or {})
+            sibling_maps_truth = dict(sibling_metadata.get("raw_apify_data") or {})
+            if _has_verified_maps_truth(sibling_maps_truth):
+                metadata_updates = dict(current_metadata)
+                metadata_updates["raw_apify_data"] = sibling_maps_truth
+                if sibling_metadata.get("ads_verification") and not metadata_updates.get("ads_verification"):
+                    metadata_updates["ads_verification"] = sibling_metadata.get("ads_verification")
+                if sibling_metadata.get("people_intelligence") and not metadata_updates.get("people_intelligence"):
+                    metadata_updates["people_intelligence"] = sibling_metadata.get("people_intelligence")
+                db.save_lead_state(
+                    {
+                        **current_state,
+                        "lead_id": str(lead_uuid),
+                        "metadata": metadata_updates,
+                    }
+                )
+                break
+
+    return db.get_lead(lead_uuid) or {**lead_data, **updates}
+
+
 def _coerce_int(value: Any) -> Optional[int]:
     """Best-effort integer coercion for backend signal facts."""
     if value is None:
@@ -1192,18 +1317,18 @@ def _normalize_branch_label(value: Optional[str]) -> Optional[str]:
     text = re.sub(r"\s+", " ", str(value or "")).strip(" -,:;")
     if not text:
         return None
-    if len(text) > 80:
+    if len(text) > 180:
         return None
     lowered = text.lower()
+    for alias, canonical in BRANCH_LOCALITY_ALIASES.items():
+        if alias in lowered:
+            return canonical
     if re.search(r"\b\d{5,6}\b", lowered):
         return None
     if re.search(r"\b(?:bangalore|bengaluru)\b", lowered) and not any(
         token in lowered for token in BRANCH_LOCALITY_ALIASES
     ):
         return None
-    for alias, canonical in BRANCH_LOCALITY_ALIASES.items():
-        if alias in lowered:
-            return canonical
     blocked_terms = {
         "about us",
         "contact us",
@@ -1258,6 +1383,9 @@ def _normalize_branch_label(value: Optional[str]) -> Optional[str]:
         "bengaluru",
         "bangalore",
         "branch",
+        "sarjapur",
+        "thanisandra",
+        "chikkabellandur",
     )
     if not any(token in lowered for token in location_tokens):
         return None
@@ -1385,14 +1513,37 @@ def _extract_maps_branch_names(
 def _is_strong_doctor_profile(profile: Dict[str, Any]) -> bool:
     if not isinstance(profile, dict):
         return False
-    if profile.get("phones") or profile.get("emails") or profile.get("linkedin"):
-        return True
     role = str(profile.get("role") or "").strip().lower()
     source = str(profile.get("source") or "").strip().lower()
-    return any(
-        token in role or token in source
-        for token in ("founder", "director", "senior doctor", "senior_doctor", "doctor roster", "doctor_roster")
+    if role in {"doctor_named_brand", "business_name"} or source == "business_name":
+        return False
+    if any(token in role for token in ("founder", "director", "senior doctor", "senior_doctor")):
+        return True
+    if any(token in source for token in ("doctor roster", "doctor_roster")):
+        return True
+    specialty = str(profile.get("specialty") or "").lower()
+    experience = str(profile.get("experience") or "").lower()
+    context = " ".join(
+        [
+            specialty,
+            experience,
+            str(profile.get("title") or "").lower(),
+            str(profile.get("bio") or "").lower(),
+        ]
     )
+    has_medical_evidence = bool(
+        re.search(
+            r"\b(?:mbbs|md|ms|dnb|dvd|mch|dermatologist|cosmetologist|plastic surgeon|trichologist|consultant)\b",
+            context,
+        )
+    )
+    if bool(profile.get("explicit_dr_prefix")) and (
+        has_medical_evidence or source in {"website_asset", "website_page", "website_copy", "people_search"}
+    ):
+        return True
+    if has_medical_evidence and source in {"website_asset", "website_page", "website_copy", "people_search"}:
+        return True
+    return False
 
 
 def _sanitize_branch_contacts(values: List[Any]) -> List[Dict[str, Any]]:
@@ -2036,12 +2187,66 @@ def build_signal_facts(
     branch_count = len(branch_names)
     doctor_count = len(doctor_profiles) if doctor_profiles else len(doctor_names)
     multi_clinic = bool(branch_count > 1)
+    cached_reviews_count = _coerce_int(
+        lead_data.get("reviews_count")
+        if lead_data.get("reviews_count") is not None
+        else stored_signal_facts.get("reviews_count")
+    )
+    cached_rating = _coerce_float(
+        lead_data.get("rating")
+        if lead_data.get("rating") is not None
+        else stored_signal_facts.get("rating")
+    )
+    reviews_count = raw_apify_data.get("reviewsCount") if has_verified_maps_truth else cached_reviews_count
+    rating = raw_apify_data.get("totalScore") if has_verified_maps_truth else cached_rating
+    fact_sources = {
+        "reviews": "google_maps" if has_verified_maps_truth and reviews_count is not None else "google_maps_cached" if reviews_count is not None else "not_verified",
+        "rating": "google_maps" if has_verified_maps_truth and rating is not None else "google_maps_cached" if rating is not None else "not_verified",
+        "locations": (
+            "website_contact_page"
+            if branch_contact_names
+            else "website_corroborated"
+            if corroborated_fresh_branch_names
+            else "not_verified"
+        ),
+        "doctors": (
+            "website_doctor_profile"
+            if doctor_profiles
+            else "website_text"
+            if doctor_names
+            else "not_verified"
+        ),
+        "phone": "website_or_maps" if phone_numbers else "not_verified",
+        "booking": "website" if booking_target or booking_detected else "not_verified",
+        "whatsapp": "website" if whatsapp_target else "not_verified",
+        "instagram": (
+            str(instagram_profile.get("source") or "").strip()
+            if instagram_profile
+            else "website"
+            if social_profiles.get("instagram") or lead_data.get("instagram")
+            else "not_verified"
+        ),
+        "youtube": (
+            str(youtube_channel.get("source") or "").strip()
+            if youtube_channel
+            else "website"
+            if social_profiles.get("youtube")
+            else "not_verified"
+        ),
+    }
     instagram_present = bool(
         proof_extraction.get("instagram_present")
+        or instagram_profile
         or social_profiles.get("instagram")
+        or social_profiles.get("instagram_present")
         or lead_data.get("instagram")
     )
-    youtube_present = bool(proof_extraction.get("youtube_present") or social_profiles.get("youtube"))
+    youtube_present = bool(
+        proof_extraction.get("youtube_present")
+        or youtube_channel
+        or social_profiles.get("youtube")
+        or social_profiles.get("youtube_present")
+    )
     testimonials_present = bool(proof_extraction.get("testimonials_present"))
     gallery_present = bool(proof_extraction.get("gallery_present"))
     after_hours_capture = bool(proof_extraction.get("after_hours_capture"))
@@ -2141,53 +2346,6 @@ def build_signal_facts(
         decision_maker_role = None
         decision_maker_source = None
         decision_maker_confidence = None
-    cached_reviews_count = _coerce_int(
-        lead_data.get("reviews_count")
-        if lead_data.get("reviews_count") is not None
-        else stored_signal_facts.get("reviews_count")
-    )
-    cached_rating = _coerce_float(
-        lead_data.get("rating")
-        if lead_data.get("rating") is not None
-        else stored_signal_facts.get("rating")
-    )
-    reviews_count = raw_apify_data.get("reviewsCount") if has_verified_maps_truth else cached_reviews_count
-    rating = raw_apify_data.get("totalScore") if has_verified_maps_truth else cached_rating
-    fact_sources = {
-        "reviews": "google_maps" if has_verified_maps_truth and reviews_count is not None else "google_maps_cached" if reviews_count is not None else "not_verified",
-        "rating": "google_maps" if has_verified_maps_truth and rating is not None else "google_maps_cached" if rating is not None else "not_verified",
-        "locations": (
-            "website_contact_page"
-            if branch_contact_names
-            else "website_corroborated"
-            if corroborated_fresh_branch_names
-            else "not_verified"
-        ),
-        "doctors": (
-            "website_doctor_profile"
-            if doctor_profiles
-            else "website_text"
-            if doctor_names
-            else "not_verified"
-        ),
-        "phone": "website_or_maps" if phone_numbers else "not_verified",
-        "booking": "website" if booking_target or booking_detected else "not_verified",
-        "whatsapp": "website" if whatsapp_target else "not_verified",
-        "instagram": (
-            str(instagram_profile.get("source") or "").strip()
-            if instagram_profile
-            else "website"
-            if social_profiles.get("instagram") or lead_data.get("instagram")
-            else "not_verified"
-        ),
-        "youtube": (
-            str(youtube_channel.get("source") or "").strip()
-            if youtube_channel
-            else "website"
-            if social_profiles.get("youtube")
-            else "not_verified"
-        ),
-    }
     best_contact_phone = (
         people_intelligence.get("best_contact_phone")
         or (phone_numbers[0] if phone_numbers else None)
@@ -2845,7 +3003,7 @@ def build_frontend_lead(
             raw_geo=str(lead_data.get("location") or ""),
             brand_hint=brand_hint,
         ):
-            company_name = infer_company_name_from_title(str(website), company_name) or brand_hint or company_name
+            company_name = brand_hint or infer_company_name_from_title(str(website), company_name) or company_name
         elif (
             brand_hint
             and _normalize_brand_token(company_name) == _normalize_brand_token(brand_hint)
@@ -2853,6 +3011,12 @@ def build_frontend_lead(
             and " " in brand_hint
         ):
             company_name = brand_hint
+    if _looks_like_search_query_name(company_name):
+        company_name = (
+            _domain_brand_hint(str(website or ""))
+            or infer_company_name_from_url(str(website or ""))
+            or "Unverified Maps candidate"
+        )
     company_name = _clean_company_name_candidate(company_name) or company_name
 
     return {
@@ -3983,6 +4147,7 @@ def get_or_create_discovered_lead(db, lead: Lead, raw_niche: str) -> Dict[str, A
     """Persist a discovered lead or return the existing canonical row."""
     serialized = serialize_lead_for_storage(lead, raw_niche)
     canonical_website = canonicalize_company_website(str(lead.website or "")).strip() or None
+    canonical_domain = _normalized_domain(canonical_website or lead.website)
 
     existing_row: Optional[Dict[str, Any]] = None
     if canonical_website:
@@ -3997,6 +4162,11 @@ def get_or_create_discovered_lead(db, lead: Lead, raw_niche: str) -> Dict[str, A
             if existing_result.data:
                 existing_row = existing_result.data[0]
                 break
+
+    if existing_row is None and canonical_domain:
+        domain_rows = _fetch_domain_sibling_rows(db, canonical_domain)
+        if domain_rows:
+            existing_row = max(domain_rows, key=_domain_truth_score)
 
     if existing_row is None:
         existing_result = (
@@ -4015,7 +4185,8 @@ def get_or_create_discovered_lead(db, lead: Lead, raw_niche: str) -> Dict[str, A
         current_website = str(existing_row.get("website") or existing_row.get("landing_page_url") or "").strip()
         current_brand_hint = _domain_brand_hint(current_website)
         incoming_brand = _clean_company_name_candidate(
-            infer_company_name_from_title(
+            (_domain_brand_hint(str(canonical_website or lead.website or "")) or "")
+            or infer_company_name_from_title(
                 str(canonical_website or lead.website or ""),
                 str(lead.business_name or ""),
             )
@@ -4064,8 +4235,8 @@ def get_or_create_discovered_lead(db, lead: Lead, raw_niche: str) -> Dict[str, A
 
         if updates:
             updated = db.update_lead(UUID(str(existing_row["lead_id"])), updates)
-            return updated or {**existing_row, **updates}
-        return existing_row
+            return _hydrate_lead_truth_from_domain_siblings(db, updated or {**existing_row, **updates})
+        return _hydrate_lead_truth_from_domain_siblings(db, existing_row)
 
     return db.create_lead(serialized)
 
@@ -4137,7 +4308,7 @@ def run_selected_lead_pipeline(
                     "errors": list(current_state.get("errors") or []) + [message],
                 }
 
-    lead_payload = dict(lead_data)
+    lead_payload = _hydrate_lead_truth_from_domain_siblings(db, dict(lead_data))
     lead_uuid = UUID(str(lead_data.get("lead_id")))
     maps_truth = refresh_google_maps_truth(db, lead_payload, force_refresh=force_refresh)
     refreshed_lead = db.get_lead(lead_uuid) or {}
@@ -4336,11 +4507,22 @@ def _digits_only(value: Optional[str]) -> str:
 
 
 def _maps_truth_missing(lead_data: Dict[str, Any], lead_state: Optional[Dict[str, Any]]) -> bool:
-    if lead_data.get("reviews_count") is not None and lead_data.get("rating") is not None:
-        return False
     metadata = dict((lead_state or {}).get("metadata") or {})
     raw_apify_data = dict(metadata.get("raw_apify_data") or {})
-    return raw_apify_data.get("reviewsCount") is None or raw_apify_data.get("totalScore") is None
+    return not _has_verified_maps_truth(raw_apify_data)
+
+
+def _has_verified_maps_truth(raw_apify_data: Dict[str, Any]) -> bool:
+    """Only treat Maps metrics as truth when they came from a matched place."""
+    return bool(
+        isinstance(raw_apify_data, dict)
+        and raw_apify_data.get("placeId")
+        and raw_apify_data.get("maps_source")
+        and (
+            raw_apify_data.get("reviewsCount") is not None
+            or raw_apify_data.get("totalScore") is not None
+        )
+    )
 
 
 def _score_google_maps_candidate(lead_data: Dict[str, Any], candidate: Dict[str, Any]) -> float:
@@ -4389,19 +4571,6 @@ def _score_google_maps_candidate(lead_data: Dict[str, Any], candidate: Dict[str,
         score += 2
 
     return score
-
-
-def _has_verified_maps_truth(raw_apify_data: Dict[str, Any]) -> bool:
-    """Only treat Maps metrics as truth when they came from a matched place."""
-    return bool(
-        isinstance(raw_apify_data, dict)
-        and raw_apify_data.get("placeId")
-        and raw_apify_data.get("maps_source")
-        and (
-            raw_apify_data.get("reviewsCount") is not None
-            or raw_apify_data.get("totalScore") is not None
-        )
-    )
 
 
 def _select_best_google_maps_match(
@@ -4565,6 +4734,7 @@ def refresh_google_maps_truth(
         logger.warning("Google Maps truth refresh found no acceptable match for %s", business_name)
         return existing_metadata.get("raw_apify_data") or {}
 
+    maps_match_score = _score_google_maps_candidate(lead_data, matched)
     related_places = _collect_related_google_maps_places(lead_data, items, matched)
     matched_website = matched.get("website") or website
     matched_title = matched.get("title") or matched.get("name") or business_name
@@ -4589,6 +4759,7 @@ def refresh_google_maps_truth(
         "relatedPlaces": related_places,
         "maps_refreshed_at": datetime.utcnow().isoformat(),
         "maps_source": "apify_google_maps_scraper",
+        "maps_match_score": round(maps_match_score, 2),
     }
     branch_landing_page = _select_branch_landing_page(lead_data, matched)
     if branch_landing_page:
@@ -4622,8 +4793,8 @@ def refresh_google_maps_truth(
     lead_updates: Dict[str, Any] = {}
     current_brand_hint = _domain_brand_hint(str(website)) if website else None
     canonical_maps_name = (
-        infer_company_name_from_title(str(matched_website or website or ""), str(matched_title))
-        or _domain_brand_hint(str(matched_website or website or ""))
+        _domain_brand_hint(str(matched_website or website or ""))
+        or infer_company_name_from_title(str(matched_website or website or ""), str(matched_title))
         or infer_company_name_from_url(str(matched_website or website or ""))
         or business_name
     )
@@ -5121,6 +5292,28 @@ GENERIC_BRAND_TITLES = (
     "contact us",
 )
 
+GENERIC_QUERY_NAME_TOKENS = {
+    "aesthetic",
+    "aesthetics",
+    "clinic",
+    "clinics",
+    "skin",
+    "hair",
+    "laser",
+    "cosmetic",
+    "derma",
+    "dermatology",
+    "service",
+    "services",
+    "hospital",
+    "doctor",
+    "doctors",
+    "bangalore",
+    "bengaluru",
+    "near",
+    "me",
+}
+
 
 SEO_BRAND_BLOCKLIST = (
     "best ",
@@ -5217,6 +5410,24 @@ def _looks_like_seo_brand_noise(value: str) -> bool:
     if not lowered:
         return True
     return any(token in lowered for token in SEO_BRAND_BLOCKLIST)
+
+
+def _looks_like_search_query_name(value: str) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return True
+    lowered = text.lower()
+    has_encoded_separator = "+" in lowered or "%20" in lowered
+    normalized = re.sub(r"(?i)%20", " ", lowered.replace("+", " "))
+    tokens = [token for token in re.findall(r"[a-z]+", normalized) if token]
+    if not tokens:
+        return True
+    generic_ratio = sum(1 for token in tokens if token in GENERIC_QUERY_NAME_TOKENS) / len(tokens)
+    if has_encoded_separator and generic_ratio >= 0.7:
+        return True
+    if len(tokens) <= 3 and generic_ratio == 1:
+        return True
+    return False
 
 
 def infer_company_name_from_title(url: str, title: str) -> str:
@@ -5642,6 +5853,8 @@ def should_keep_discovered_lead(raw_niche: str, lead: Lead) -> bool:
         return True
     if lead.website and _is_aggregator_domain(str(lead.website)):
         return False
+    if _looks_like_search_query_name(str(lead.business_name or "")):
+        return False
 
     haystack = " ".join(
         part
@@ -5706,7 +5919,7 @@ def rank_discovered_leads(raw_niche: str, leads: List[Lead], limit: int) -> List
     if filtered_matches:
         return filtered_matches[:limit]
 
-    if niche == "saas":
+    if niche == "saas" or is_clinic_style_niche(niche):
         return []
 
     return ranked[:limit]
@@ -5986,6 +6199,8 @@ def verify_discovered_leads(raw_niche: str, leads: List[Lead], limit: int) -> Li
         verified: List[tuple[int, Lead]] = []
         verification_cap = min(max(limit * 3, 8), 20)
         for lead in leads[:verification_cap]:
+            if _looks_like_search_query_name(str(lead.business_name or "")):
+                continue
             website_text = fetch_website_text(lead.website)
             website_score = score_website_relevance(raw_niche, lead, website_text)
             base_score = score_niche_relevance(raw_niche, lead)
@@ -6129,7 +6344,9 @@ async def discover_leads(
         loop = asyncio.get_event_loop()
         query_limit = min(request.limit, 15)
         if not should_use_osint_discovery(request.niche):
-            query_limit = min(max(request.limit * 2, 10), 30)
+            # Preview discovery should stay lightweight. The explicit analyze/enrich
+            # actions are where we spend more time on deep truth collection.
+            query_limit = min(max(request.limit, 1), 8)
 
         if should_use_osint_discovery(request.niche):
             leads = await loop.run_in_executor(
@@ -6139,7 +6356,7 @@ async def discover_leads(
         else:
             geo_filter = build_discovery_geo(request.geo)
             keywords = build_discovery_keywords(request.niche, query_limit)
-            detailed_scrape = is_clinic_style_niche(request.niche)
+            detailed_scrape = False
             try:
                 leads = await loop.run_in_executor(
                     None,
@@ -6182,7 +6399,7 @@ async def discover_leads(
                 request.geo,
             )
             fallback_pool: List[Lead] = []
-            fallback_limit = min(max(request.limit * 2, 12), 30)
+            fallback_limit = min(max(request.limit, 4), 12)
             for fallback_niche in build_clinic_fallback_niches(request.niche):
                 fallback_batch = await loop.run_in_executor(
                     None,
@@ -6300,7 +6517,7 @@ async def discover_leads(
                 loop = asyncio.get_event_loop()
                 query_limit = min(request.limit, 15)
                 if not should_use_osint_discovery(request.niche):
-                    query_limit = min(max(request.limit * 2, 10), 30)
+                    query_limit = min(max(request.limit, 1), 8)
 
                 leads = await loop.run_in_executor(
                     None,
@@ -7855,6 +8072,11 @@ async def get_leads(
             limit=page_size,
             offset=offset,
         )
+        leads = [
+            lead
+            for lead in leads
+            if not _looks_like_search_query_name(str(lead.get("business_name") or ""))
+        ]
         
         # Get total count
         total = db.count_leads(niche=niche, geo=geo, status=status, min_score=min_score)
