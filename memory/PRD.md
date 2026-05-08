@@ -1,121 +1,87 @@
-# ZRAI Lead OS - Product Requirements Document
+# ZRAI Lead OS — PRD / Working Memory
 
-## Project Overview
-**Product**: ZRAI Lead Intelligence System  
-**Version**: 5.0 (Elite Infrastructure)  
-**Last Updated**: 2026-02-05  
+## Original problem statement (handoff: codex/palate-twilio-demo @ 60d71ce2)
+Stabilize ZRAI Lead OS into a reliable daily lead intelligence operator. Lead
+inspector was showing sparse or wrong commercial truth: missing reviews/rating/
+doctors/locations/socials, weak judgment, duplicate leads not inheriting known
+truth, stale saved canvas artifacts, and backend/frontend drift between
+`src/` and `.railway-backend-deploy/src/`.
 
-## Original Problem Statement
-Build a production-ready, highest accuracy lead intelligence engine. All APIs must work. Intelligence enrichment must be solid before outreach stage. The system should become a "cash machine" - highest ROI generating engine.
+## Tech / arch
+- Backend: FastAPI + Supabase (Python 3.11). Source under `src/`. Railway
+  deploys from a *mirror* tree at `.railway-backend-deploy/src/`. Drift between
+  the two is the single biggest historical source of recurring runtime bugs.
+- Frontend: Next.js (Vercel) at `frontend/` with a lead-list canvas
+  artifact in `frontend/artifacts/zrai/lead-list/client.tsx`.
+- Live URLs: https://zrai-lead-os.vercel.app and
+  https://zrai-lead-os-private-production.up.railway.app/health.
 
-## 🏗️ ARCHITECTURE (Trillion-Dollar Grade)
+## Active leads used as ground truth
+- Skin Vision Clinic d09ccd44-92f3-4c2e-a56d-cb550cfeb0d2 (skinvision.co.in)
+- Sapphire Skin & Aesthetics dbc41522-03fd-4540-b7ed-e34af20ecc7d (sapphireskin.in)
+- iSkin Clinic 1592b115-0d39-47fb-b459-ecb50048b2df (iskinclinic.in)
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         ORCHESTRATOR                                 │
-│                  (Coordinates all agents)                           │
-└─────────────────────────────────────────────────────────────────────┘
-                              │
-        ┌─────────────────────┼─────────────────────┐
-        ▼                     ▼                     ▼
-┌───────────────┐    ┌───────────────┐    ┌───────────────┐
-│   DISCOVERY   │    │  ENRICHMENT   │    │    SCORING    │
-│    AGENT      │    │    AGENT      │    │    AGENT      │
-└───────────────┘    └───────────────┘    └───────────────┘
-        │                     │                     │
-        ▼                     ▼                     ▼
-┌───────────────┐    ┌───────────────┐    ┌───────────────┐
-│   ADS INTEL   │    │   ANALYSIS    │    │   OUTREACH    │
-│    AGENT      │    │    AGENT      │    │    AGENT      │
-└───────────────┘    └───────────────┘    └───────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                       TOOL REGISTRY (Plugin System)                  │
-│  Apify │ Firecrawl │ Raw HTML │ OpenRouter │ [Future Tools]         │
-└─────────────────────────────────────────────────────────────────────┘
-```
+## Bugs found in live `/api/v1/leads/{id}` during this session
+1. social_profiles.instagram exploded into single characters
+   (`["h","t","p","s",":","/","w",".","i","n",...]`) on Sapphire and iSkin.
+2. GPS coordinates leaking as Instagram handles on iSkin
+   (`https://www.instagram.com/13.0533989/`, `12.8877892`, `12.9103096`).
+3. Skin Vision returning 0 doctors / 0 branches / null rating despite the
+   handoff saying these should be extractable. Needs re-analysis after deploy.
+4. Pre-existing drift in 4 files between `src/` and `.railway-backend-deploy/src/`
+   (`agents/audit.py`, `agents/discovery.py`, `config/loader.py`, `db/models.py`).
 
-## Files Created/Modified This Session
+## What was implemented this session (commit 1820e937)
+- `src/api/server.py` + `.railway-backend-deploy/src/api/server.py`:
+  - Fixed `_merge_social_profiles` so a string payload followed by a list
+    payload no longer explodes the URL into characters.
+  - Tightened `_normalize_instagram_profile_url` to reject pure-numeric /
+    decimal handles (GPS coords) and any handle with fewer than 2 letters.
+  - Added `_filter_social_url_list` which re-normalizes every social URL list
+    inside `_merge_social_profiles` on every read, so junk in cached/persisted
+    state is filtered out automatically.
+  - Added `_derive_truth_state` and `_truth_state_label` and injected
+    `truth_state`, `truth_state_label`, `commercial_truth_coverage` into
+    every signal_facts payload returned by `build_signal_facts`. States:
+    verified_maps / cached_maps / website_proof / social_presence_only /
+    incomplete_verification / failed.
+- `scripts/check_railway_sync.py`: byte-level diff of `src/` vs
+  `.railway-backend-deploy/src/`. `--fix` syncs deploy from source.
+- `.github/workflows/check-railway-sync.yml`: CI gate on PRs touching either
+  tree. Permanently kills the silent-drift class of bugs.
+- `Makefile`: new `sync-check` and `sync-fix` targets.
+- `tests/test_lead_truth_consistency.py`: 25 regression cases, all green.
+  Covers the social-merge bug, GPS-handle rejection, the truth_state ladder,
+  and parity between source and deploy trees.
 
-### New Files
-| File | Purpose |
-|------|---------|
-| `/app/.env` | All API keys configured |
-| `/app/PRODUCTION_INTELLIGENCE.py` | v3.0 engine |
-| `/app/ULTIMATE_INTELLIGENCE.py` | v4.0 with Firecrawl/Steel |
-| `/app/ELITE_INTELLIGENCE_V5.py` | v5.0 standalone |
-| `/app/zrai_infrastructure/__init__.py` | **MAIN INFRASTRUCTURE** |
-| `/app/batch_intelligence.py` | Multi-target runner |
-| `/app/api_server.py` | REST API |
-| `/app/docs/CHANGELOG.md` | Complete changelog |
-| `/app/docs/MASTER_DOCS.md` | Master documentation |
+## What is verified
+- Both source trees are byte-identical for the files I touched (server.py,
+  enrichment.py, contact_intelligence.py, scoring.py).
+- `python -m pytest tests/test_lead_truth_consistency.py` -> 25/25 passing.
+- `python -m py_compile ...` clean for all 8 backend files.
+- Live `/health` returns 200 from Railway (still pre-deploy of this commit).
 
-## What's 100% Working & Accurate
+## What is still pending
+- **Push commit `1820e937` to GitHub** -> auto-triggers Railway + Vercel.
+  Use the "Save to GitHub" button in the Emergent chat UI, or pass a PAT.
+- **Re-verify live API after redeploy** for the 3 lead IDs above; expect
+  - Sapphire/iSkin: social_profiles.instagram is clean URLs only,
+  - iSkin: no GPS-coord IG handles,
+  - every signal_facts payload exposes a `truth_state` field.
+- **Re-analyze Skin Vision** so doctors/branches surface in DB.
 
-| Feature | Accuracy | Source |
-|---------|----------|--------|
-| Google Maps Discovery | 100% | Apify |
-| GTM Detection | 100% | Raw HTML |
-| GA4 Detection | 100% | Raw HTML |
-| FB Pixel Detection | 100% | Raw HTML |
-| WhatsApp Link Detection | 100% | Raw HTML |
-| WhatsApp Button Detection | 95% | Raw HTML |
-| Email Extraction | 90% | Firecrawl |
-| Tech Stack Detection | 85% | Raw HTML |
-| AI Reasoning | 90% | OpenRouter |
+## Pre-existing drift NOT addressed (per "do not stage unrelated work")
+Flagged but left untouched; CI now blocks regressing further:
+- src/agents/audit.py, src/agents/discovery.py, src/config/loader.py, src/db/models.py
+Run `make sync-fix` on a scoped branch once the team confirms canonical side.
 
-## Lead Tiers
-
-| Tier | Criteria | Count (Tests) |
-|------|----------|---------------|
-| WHALE 🐋 | Running ads + gaps | 0 (need --check-ads) |
-| HOT 🔥 | Score ≥ 70 | 7 |
-| WARM ☀️ | Score 50-69 | 8 |
-| COLD ❄️ | Score < 50 | 5 |
-
-## Usage
-
-```bash
-# Basic run
-python3 -c "from zrai_infrastructure import Orchestrator; Orchestrator().run_pipeline('dental', 'Mumbai', 10)"
-
-# With flags
-python3 ELITE_INTELLIGENCE_V5.py --niche "dental clinic" --city "Mumbai" --count 10 --check-ads
-```
-
-## Extending the System
-
-### Add New Tool
-```python
-class MyTool:
-    name = "my_tool"
-    description = "..."
-    def execute(self, **kwargs) -> Dict:
-        return {"result": "..."}
-
-ToolRegistry.register(MyTool())
-```
-
-### Add New Agent
-```python
-class MyAgent(BaseAgent):
-    name = "my_agent"
-    def process(self, lead: Lead, **kwargs) -> Lead:
-        # logic
-        return lead
-```
-
-## Future Integration Points
-
-- [ ] WhatsApp Business API (response testing)
-- [ ] CRM Integration (HubSpot, Salesforce)
-- [ ] Email Automation (outreach sequences)
-- [ ] Pipeline Automation (auto-send based on tier)
-- [ ] Real-time Dashboard
-
-## Next Actions
-1. Run batch on target markets
-2. Export WHALE/HOT leads for manual outreach
-3. Build WhatsApp Business integration when ready
-4. Add CRM export capability
+## Backlog
+- P1: Wire `truth_state` into inspector UI in
+  `frontend/artifacts/zrai/lead-list/client.tsx` so sparse leads render
+  "Needs verification" instead of a confident score.
+- P1: Gate `final_score` in `src/agents/scoring.py` on
+  `commercial_truth_coverage >= 2`.
+- P1: Resolve the 4 pre-existing drift files (`make sync-fix` on a scoped branch).
+- P2: Add doctor-with-initials and branch-junk regression tests once
+  enrichment helpers are extractable (currently inside EnrichmentAgent class).
+- P2: Pre-commit hook for `scripts/check_railway_sync.py`.
