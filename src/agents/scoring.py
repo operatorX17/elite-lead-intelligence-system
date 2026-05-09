@@ -138,6 +138,8 @@ class ScoringAgent(BaseAgent):
             "do_not_contact": False,
             "do_not_contact_reason": None,
         }
+        scoring = self._gate_judgment_for_sparse_truth(scoring, signal_facts)
+        tier = scoring["lead_tier"]
 
         state["scoring"] = scoring
         if tier == "C":
@@ -624,6 +626,84 @@ class ScoringAgent(BaseAgent):
         if final_score >= self.TIER_B_THRESHOLD:
             return "B"
         return "C"
+
+    # Minimum count of independently-verified commercial facts (out of:
+    # reviews_count, rating, branch_count, doctor_count, verified social) below
+    # which we refuse to emit a confident commercial judgment. Mirrors
+    # _has_sparse_commercial_truth in src/api/server.py - keep both in sync.
+    MIN_TRUTH_COVERAGE_FOR_JUDGMENT = 2
+
+    def _truth_coverage(self, signal_facts: Optional[Dict[str, Any]]) -> int:
+        """Count how many independently-verified commercial facts we have.
+
+        Used to gate confident commercial judgment. A lead with reviews +
+        rating + a doctor count is well above sparse; a lead with only a
+        phone number visible is not enough to call A/B tier on."""
+        facts = signal_facts or {}
+        coverage = 0
+
+        def _coerce_int(value: Any) -> Optional[int]:
+            if value is None or value == "":
+                return None
+            try:
+                return int(float(value))
+            except (TypeError, ValueError):
+                return None
+
+        def _coerce_float(value: Any) -> Optional[float]:
+            if value is None or value == "":
+                return None
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+
+        if _coerce_int(facts.get("reviews_count")) is not None:
+            coverage += 1
+        if _coerce_float(facts.get("rating")) is not None:
+            coverage += 1
+        if _coerce_int(facts.get("branch_count")):
+            coverage += 1
+        if _coerce_int(facts.get("doctor_count")):
+            coverage += 1
+        instagram_profile = facts.get("instagram_profile") or {}
+        youtube_channel = facts.get("youtube_channel") or {}
+        if (
+            instagram_profile.get("followers_count") is not None
+            or instagram_profile.get("posts_count") is not None
+            or youtube_channel.get("subscriber_count") is not None
+            or youtube_channel.get("total_videos") is not None
+        ):
+            coverage += 1
+        return coverage
+
+    def _gate_judgment_for_sparse_truth(
+        self, scoring: Dict[str, Any], signal_facts: Optional[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Demote tier and label the lead 'needs verification' when commercial
+        truth is too sparse to support a confident commercial judgment.
+
+        Score itself is preserved for transparency/debugging, but tier is
+        capped at C and a `judgment_state` flag is exposed so the inspector
+        renders 'Needs verification' instead of an A/B confidence.
+        """
+        coverage = self._truth_coverage(signal_facts)
+        scoring["truth_coverage"] = coverage
+        if coverage < self.MIN_TRUTH_COVERAGE_FOR_JUDGMENT:
+            scoring["judgment_state"] = "needs_verification"
+            scoring["judgment_label"] = "Needs verification"
+            # Cap tier at C - nothing should claim A/B confidence on <2 facts.
+            scoring["original_lead_tier"] = scoring.get("lead_tier")
+            scoring["lead_tier"] = "C"
+            scoring["should_skip_outreach"] = True
+            scoring["score_gating_reason"] = (
+                f"only {coverage} verified commercial fact(s); minimum is "
+                f"{self.MIN_TRUTH_COVERAGE_FOR_JUDGMENT}"
+            )
+        else:
+            scoring["judgment_state"] = "ready"
+            scoring["judgment_label"] = "Ready for outreach"
+        return scoring
 
     def _check_disqualification(
         self,

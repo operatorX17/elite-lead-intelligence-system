@@ -143,6 +143,88 @@ function getLeadSummary(lead: Lead) {
   );
 }
 
+/**
+ * Canonical verification ladder. Mirrors `_derive_truth_state` in
+ * src/api/server.py. Returned by the backend on every signal_facts payload
+ * since commit 1820e937. Older saved canvases may not include it; we
+ * fall back to "incomplete_verification" so we never show fake confidence.
+ */
+type TruthState =
+  | "verified_maps"
+  | "cached_maps"
+  | "website_proof"
+  | "social_presence_only"
+  | "incomplete_verification"
+  | "failed";
+
+function getTruthState(signalFacts?: SignalFacts | null): TruthState {
+  const raw = signalFacts?.truth_state;
+  if (
+    raw === "verified_maps" ||
+    raw === "cached_maps" ||
+    raw === "website_proof" ||
+    raw === "social_presence_only" ||
+    raw === "incomplete_verification" ||
+    raw === "failed"
+  ) {
+    return raw;
+  }
+  // No state from backend -> derive a safe pessimistic state from coverage.
+  const coverage =
+    typeof signalFacts?.commercial_truth_coverage === "number"
+      ? signalFacts.commercial_truth_coverage
+      : 0;
+  if (coverage >= 2) return "website_proof";
+  return "incomplete_verification";
+}
+
+function getTruthStateLabel(state: TruthState, signalFacts?: SignalFacts | null) {
+  if (signalFacts?.truth_state_label) return signalFacts.truth_state_label;
+  switch (state) {
+    case "verified_maps":
+      return "Verified";
+    case "cached_maps":
+      return "Cached verification";
+    case "website_proof":
+      return "Website-verified";
+    case "social_presence_only":
+      return "Social presence only";
+    case "incomplete_verification":
+      return "Needs verification";
+    case "failed":
+      return "Verification failed";
+    default:
+      return "Needs verification";
+  }
+}
+
+/**
+ * Sparse leads should not render a confident commercial judgment.
+ * `final_score`/A-B tier badges should be hidden or replaced with a
+ * "Needs verification" pill while the truth_state is below website_proof.
+ */
+function shouldGateConfidentJudgment(state: TruthState) {
+  return state === "incomplete_verification" || state === "social_presence_only" || state === "failed";
+}
+
+function truthStateBadgeClasses(state: TruthState) {
+  switch (state) {
+    case "verified_maps":
+      return "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300";
+    case "cached_maps":
+      return "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300";
+    case "website_proof":
+      return "bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300";
+    case "social_presence_only":
+      return "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300";
+    case "failed":
+      return "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300";
+    case "incomplete_verification":
+    default:
+      return "bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200";
+  }
+}
+
 function normalizeWhitespace(value: string | null | undefined) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
@@ -3584,6 +3666,19 @@ function LeadListContent({
                   Saved analysis
                 </div>
               )}
+              {(() => {
+                const truthState = getTruthState(signalFacts);
+                const truthLabel = getTruthStateLabel(truthState, signalFacts);
+                return (
+                  <div
+                    data-testid="inspector-truth-state-badge"
+                    className={`mt-2 ml-2 inline-flex rounded-full px-2.5 py-1 text-[11px] font-medium ${truthStateBadgeClasses(truthState)}`}
+                    title={`Verification state: ${truthState.replace(/_/g, " ")}`}
+                  >
+                    {truthLabel}
+                  </div>
+                );
+              })()}
               {selectedLeadEffectiveState === "failed" && (
                 <div className="mt-2 inline-flex rounded-full bg-red-100 px-2.5 py-1 text-[11px] text-red-800 dark:bg-red-950 dark:text-red-300">
                   Analysis failed
@@ -3656,7 +3751,23 @@ function LeadListContent({
                 <div className="text-xs text-zinc-500 uppercase tracking-[0.16em]">
                   {getScoreLabel(inspectorLead)}
                 </div>
-                <div className="mt-1">{inspectorLead.score ?? "-"}</div>
+                <div className="mt-1" data-testid="inspector-score-cell">
+                  {(() => {
+                    const truthState = getTruthState(signalFacts);
+                    if (shouldGateConfidentJudgment(truthState)) {
+                      return (
+                        <span
+                          className="inline-flex rounded-full bg-zinc-200 px-2 py-0.5 text-xs font-medium text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200"
+                          data-testid="inspector-score-needs-verification"
+                          title="Truth coverage is too sparse for a confident commercial judgment"
+                        >
+                          Needs verification
+                        </span>
+                      );
+                    }
+                    return inspectorLead.score ?? "-";
+                  })()}
+                </div>
               </div>
               <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
                 <div className="text-xs text-zinc-500 uppercase tracking-[0.16em]">
