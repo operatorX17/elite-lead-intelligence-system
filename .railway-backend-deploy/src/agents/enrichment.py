@@ -451,7 +451,23 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
 
         profile: Dict[str, Any] = {}
         if self._env_feature_enabled("ZRAI_ENABLE_INSTAGRAM_PROFILE_ACTOR", default=True):
-            profile = self._apify.run_instagram_profile_scraper(lightweight_profile["profile_url"])
+            profile_scraper = getattr(self._apify, "run_instagram_profile_scraper", None)
+            if callable(profile_scraper):
+                profile = profile_scraper(lightweight_profile["profile_url"])
+            else:
+                logger.warning(
+                    "Apify client missing run_instagram_profile_scraper; falling back to lighter Instagram extraction"
+                )
+
+        html_snapshot = self._fetch_instagram_profile_snapshot(lightweight_profile["profile_url"])
+        if html_snapshot:
+            lightweight_profile.update(
+                {
+                    key: value
+                    for key, value in html_snapshot.items()
+                    if value not in (None, "", [], {})
+                }
+            )
 
         if profile:
             biography = (
@@ -475,29 +491,37 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
                 profile.get("followersCount")
                 or profile.get("followers")
                 or profile.get("follower_count")
+                or lightweight_profile.get("followers_count")
+            )
+            following_count = (
+                profile.get("followsCount")
+                or profile.get("followingCount")
+                or profile.get("following")
+                or lightweight_profile.get("following_count")
+            )
+            posts_count = (
+                profile.get("postsCount")
+                or profile.get("posts_count")
+                or lightweight_profile.get("posts_count")
             )
 
             normalized_profile: Dict[str, Any] = {
                 **lightweight_profile,
-                "full_name": full_name,
-                "bio": biography,
+                "full_name": full_name or lightweight_profile.get("full_name"),
+                "bio": biography or lightweight_profile.get("bio"),
                 "external_url": external_url,
                 "followers_count": follower_count,
-                "following_count": (
-                    profile.get("followsCount")
-                    or profile.get("followingCount")
-                    or profile.get("following")
-                ),
+                "following_count": following_count,
                 "verified": profile.get("verified"),
                 "email": profile.get("email"),
                 "is_business_account": profile.get("isBusinessAccount"),
                 "business_category": profile.get("businessCategoryName")
                 or profile.get("business_category_name")
                 or profile.get("category"),
-                "posts_count": profile.get("postsCount") or profile.get("posts_count"),
+                "posts_count": posts_count,
                 "latest_post_count": len(profile.get("latestPosts") or []),
                 "profile_pic_url": profile.get("profilePicUrl") or profile.get("profile_pic_url"),
-                "source": "apify_instagram_profile_scraper",
+                "source": "apify_instagram_profile_scraper" if profile else lightweight_profile.get("source"),
             }
             return {
                 key: value
@@ -528,22 +552,95 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             profile.get("followersCount")
             or profile.get("followers")
             or profile.get("follower_count")
+            or lightweight_profile.get("followers_count")
+        )
+        following_count = (
+            profile.get("followsCount")
+            or profile.get("followingCount")
+            or profile.get("following")
+            or lightweight_profile.get("following_count")
+        )
+        posts_count = (
+            profile.get("postsCount")
+            or profile.get("posts_count")
+            or lightweight_profile.get("posts_count")
         )
 
         normalized: Dict[str, Any] = {
             **lightweight_profile,
-            "full_name": full_name,
-            "bio": biography,
+            "full_name": full_name or lightweight_profile.get("full_name"),
+            "bio": biography or lightweight_profile.get("bio"),
             "external_url": external_url,
             "followers_count": follower_count,
+            "following_count": following_count,
             "verified": profile.get("verified"),
             "business_category": profile.get("businessCategoryName")
             or profile.get("business_category_name"),
-            "posts_count": profile.get("postsCount") or profile.get("posts_count"),
+            "posts_count": posts_count,
             "latest_post_count": len(profile.get("latestPosts") or []),
-            "source": "apify_instagram_bio_extractor",
+            "source": "apify_instagram_bio_extractor"
+            if any(value not in (None, "", [], {}) for value in profile.values())
+            else lightweight_profile.get("source"),
         }
         return {key: value for key, value in normalized.items() if value not in (None, "", [], {})}
+
+    def _fetch_instagram_profile_snapshot(self, profile_url: str) -> Dict[str, Any]:
+        """Fetch lightweight public Instagram profile metrics from page HTML."""
+        normalized_url = self._normalize_instagram_profile_url(profile_url)
+        if not normalized_url:
+            return {}
+
+        try:
+            response = requests.get(
+                normalized_url,
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=20,
+            )
+            response.raise_for_status()
+        except Exception as exc:
+            logger.warning("Instagram HTML fallback error for %s: %s", normalized_url, exc)
+            return {}
+
+        html = response.text or ""
+        if not html:
+            return {}
+
+        def _match_metric(pattern: str) -> Optional[int]:
+            match = re.search(pattern, html, flags=re.IGNORECASE)
+            if not match:
+                return None
+            return self._coerce_int(match.group(1))
+
+        full_name = None
+        username = self._extract_instagram_username(normalized_url) or ""
+        meta_title = re.search(r'<meta[^>]+property="og:title"[^>]+content="([^"]+)"', html, flags=re.IGNORECASE)
+        if meta_title:
+            full_name = str(meta_title.group(1) or "").strip()
+            if full_name.lower().endswith(f"(@{username.lower()})"):
+                full_name = full_name[: -(len(username) + 3)].strip(" -:")
+        if not full_name or "instagram photos and videos" in full_name.lower():
+            og_description = re.search(
+                r'<meta[^>]+property="og:description"[^>]+content="([^"]+)"',
+                html,
+                flags=re.IGNORECASE,
+            )
+            if og_description:
+                description = str(og_description.group(1) or "")
+                profile_name = re.search(
+                    r"videos from\s+(.+?)\s+\((?:&#064;|@)",
+                    description,
+                    flags=re.IGNORECASE,
+                )
+                if profile_name:
+                    full_name = profile_name.group(1).strip()
+
+        return {
+            "full_name": full_name,
+            "followers_count": _match_metric(r'([0-9][0-9,\.]*)\s+Followers\b'),
+            "following_count": _match_metric(r'([0-9][0-9,\.]*)\s+Following\b'),
+            "posts_count": _match_metric(r'([0-9][0-9,\.]*)\s+Posts\b'),
+            "source": "instagram_public_html",
+        }
 
     def _extract_youtube_channel(
         self,
@@ -663,9 +760,9 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             candidate = raw.lstrip("@").strip("/")
             if candidate.lower() in INSTAGRAM_RESERVED_PATHS:
                 return None
-            if not re.fullmatch(r"[A-Za-z0-9._]{1,30}", candidate or ""):
+            if not re.fullmatch(r"[A-Za-z0-9._]{4,30}", candidate or ""):
                 return None
-            if len(re.findall(r"[A-Za-z]", candidate)) < 2:
+            if len(re.findall(r"[A-Za-z]", candidate)) < 3:
                 return None
             return candidate or None
 
@@ -1886,7 +1983,7 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
                     profiles["facebook"] = facebook_profiles[:6]
 
         instagram_handles = re.findall(
-            r"(?<![A-Za-z0-9._])@(?P<handle>[A-Za-z0-9._]{3,30})\b",
+            r"(?<![A-Za-z0-9._])@(?P<handle>[A-Za-z0-9._]{4,30})\b",
             raw_content,
             flags=re.IGNORECASE,
         )

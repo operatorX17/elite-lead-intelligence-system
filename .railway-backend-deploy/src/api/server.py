@@ -51,6 +51,14 @@ FAST_ANALYZE_AGENT_TIMEOUTS = {
     "outreach": 30,
 }
 
+FULL_ANALYZE_AGENT_TIMEOUTS = {
+    "enrichment": 120,
+    "intent": 35,
+    "audit": 45,
+    "scoring": 25,
+    "outreach": 30,
+}
+
 WHATSAPP_POLICY_LIMITS = {
     "per_user_hour": 3,
     "global_per_minute": 20,
@@ -4476,6 +4484,7 @@ def run_selected_lead_pipeline(
     include_outreach: bool = True,
     include_audit: bool = True,
     force_refresh: bool = False,
+    fast_mode: bool = True,
 ) -> Dict[str, Any]:
     """Run the heavy operator chain for a selected lead preview."""
     def run_agent_step(
@@ -4485,7 +4494,11 @@ def run_selected_lead_pipeline(
         *,
         required: bool,
     ) -> Dict[str, Any]:
-        timeout_seconds = FAST_ANALYZE_AGENT_TIMEOUTS.get(step_name, 20)
+        timeout_seconds = (
+            FAST_ANALYZE_AGENT_TIMEOUTS.get(step_name, 20)
+            if fast_mode
+            else FULL_ANALYZE_AGENT_TIMEOUTS.get(step_name, 30)
+        )
         with ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(agent_callable, current_state)
             try:
@@ -4534,7 +4547,7 @@ def run_selected_lead_pipeline(
         last_node="discovery",
         metadata={
             "ads_verification": ads_verification,
-            "fast_mode": True,
+            "fast_mode": fast_mode,
             "force_audit": include_audit,
             "raw_apify_data": maps_truth or dict((lead_state.get("metadata") or {}).get("raw_apify_data") or {}),
         },
@@ -7029,6 +7042,7 @@ async def process_selected_leads(
                         current_lead,
                         include_outreach=request.include_outreach,
                         force_refresh=request.force_refresh,
+                        fast_mode=True,
                     ),
                 )
                 processed["intent"] = harmonize_intent_with_proof(
@@ -7188,6 +7202,7 @@ def execute_lead_analysis(
         include_outreach=include_outreach,
         include_audit=include_audit,
         force_refresh=force_refresh,
+        fast_mode=False,
     )
     processed["intent"] = harmonize_intent_with_proof(
         processed.get("intent") or {},
