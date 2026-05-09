@@ -152,6 +152,21 @@ export interface SignalFacts {
   maps_place_id?: string | null;
   maps_match_score?: number | null;
   maps_refreshed_at?: string | null;
+  /**
+   * Canonical verification ladder for this lead. Populated by the backend
+   * (build_signal_facts) so the inspector can render an explicit state
+   * instead of inferring it from competing fields.
+   */
+  truth_state?:
+    | "verified_maps"
+    | "cached_maps"
+    | "website_proof"
+    | "social_presence_only"
+    | "incomplete_verification"
+    | "failed";
+  truth_state_label?: string;
+  /** Count (0-5) of independently-verified commercial facts. <2 means sparse. */
+  commercial_truth_coverage?: number;
   capture_path_kind?: "instant" | "delayed" | "missing" | "unknown";
   after_hours_capture_status?: "verified" | "likely" | "not_proven" | "missing" | "unknown";
   decision_maker_name?: string | null;
