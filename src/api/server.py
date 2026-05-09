@@ -158,6 +158,11 @@ BRANCH_LOCALITY_ALIASES = {
     "thannisandra": "Thanisandra",
     "thanisandra main road": "Thanisandra",
     "chikkabellandur": "Chikkabellandur",
+    "nagawara": "Nagawara",
+    "nagwara": "Nagawara",
+    "uttarahalli": "Uttarahalli",
+    "bilekahalli": "Bilekahalli",
+    "btm layout": "BTM Layout",
     "hebbal": "Hebbal",
     "rajajinagar": "Rajajinagar",
     "malleshwaram": "Malleshwaram",
@@ -1319,6 +1324,8 @@ def _normalize_branch_label(value: Optional[str]) -> Optional[str]:
         return None
     if len(text) > 180:
         return None
+    if text.startswith("![") or "!(" in text or "](" in text:
+        return None
     lowered = text.lower()
     for alias, canonical in BRANCH_LOCALITY_ALIASES.items():
         if alias in lowered:
@@ -1694,7 +1701,11 @@ def _is_plausible_person_name(value: Optional[str]) -> bool:
     }
     tokens = [token.lower() for token in re.findall(r"[A-Za-z]+", str(value))]
     significant_tokens = [token for token in tokens if len(token) > 1]
-    if len(significant_tokens) < 2:
+    if len(significant_tokens) < 2 and not (
+        len(significant_tokens) == 1
+        and len(tokens) >= 2
+        and len(tokens[0]) > 1
+    ):
         return False
     if any(token in blocked_tokens for token in significant_tokens):
         return False
@@ -2110,6 +2121,50 @@ def build_signal_facts(
         people_intelligence.get("social_profiles") or {},
         stored_signal_facts.get("social_profiles") or {},
     )
+    instagram_urls = social_profiles.get("instagram") if isinstance(social_profiles.get("instagram"), list) else (
+        [social_profiles.get("instagram")] if social_profiles.get("instagram") else []
+    )
+    youtube_urls = social_profiles.get("youtube") if isinstance(social_profiles.get("youtube"), list) else (
+        [social_profiles.get("youtube")] if social_profiles.get("youtube") else []
+    )
+    if not instagram_profile:
+        normalized_instagram_url = next(
+            (
+                normalized
+                for normalized in (
+                    _normalize_instagram_profile_url(candidate)
+                    for candidate in instagram_urls
+                )
+                if normalized
+            ),
+            None,
+        )
+        if normalized_instagram_url:
+            instagram_profile = _sanitize_instagram_profile(
+                {
+                    "profile_url": normalized_instagram_url,
+                    "source": "website_instagram_link",
+                }
+            )
+    if not youtube_channel:
+        normalized_youtube_url = next(
+            (
+                normalized
+                for normalized in (
+                    _normalize_youtube_channel_url(candidate)
+                    for candidate in youtube_urls
+                )
+                if normalized
+            ),
+            None,
+        )
+        if normalized_youtube_url:
+            youtube_channel = _sanitize_youtube_channel(
+                {
+                    "channel_url": normalized_youtube_url,
+                    "source": "website_youtube_link",
+                }
+            )
     if instagram_profile and not social_profiles.get("instagram_profile"):
         social_profiles["instagram_profile"] = instagram_profile
     if youtube_channel and not social_profiles.get("youtube_channel"):
@@ -2234,6 +2289,8 @@ def build_signal_facts(
     verified_branch_names = branch_contact_names or corroborated_fresh_branch_names
     branch_names = (
         verified_branch_names
+        or sanitized_fresh_branch_names
+        or maps_branch_names
         or (
             []
             if (has_fresh_branch_evidence or not allow_stored_signal_fallback)
@@ -2256,7 +2313,7 @@ def build_signal_facts(
             if _is_plausible_person_name(str(name).strip())
         ]
     )
-    doctor_names = verified_doctor_names or _dedupe_strings(stored_verified_doctor_names)
+    doctor_names = verified_doctor_names or sanitized_fresh_doctor_names or _dedupe_strings(stored_verified_doctor_names)
     branch_count = len(branch_names)
     doctor_count = len(doctor_profiles) if doctor_profiles else len(doctor_names)
     multi_clinic = bool(branch_count > 1)
@@ -2280,6 +2337,10 @@ def build_signal_facts(
             if branch_contact_names
             else "website_corroborated"
             if corroborated_fresh_branch_names
+            else "website_text"
+            if sanitized_fresh_branch_names
+            else "google_maps"
+            if maps_branch_names
             else "not_verified"
         ),
         "doctors": (
@@ -2295,15 +2356,19 @@ def build_signal_facts(
         "instagram": (
             str(instagram_profile.get("source") or "").strip()
             if instagram_profile
-            else "website"
+            else "website_instagram_link"
             if social_profiles.get("instagram") or lead_data.get("instagram")
+            else "website_social_presence"
+            if social_profiles.get("instagram_present")
             else "not_verified"
         ),
         "youtube": (
             str(youtube_channel.get("source") or "").strip()
             if youtube_channel
-            else "website"
+            else "website_youtube_link"
             if social_profiles.get("youtube")
+            else "website_social_presence"
+            if social_profiles.get("youtube_present")
             else "not_verified"
         ),
     }
@@ -2492,7 +2557,7 @@ def build_signal_facts(
         "reviews": 0.95 if reviews_count is not None else 0.0,
         "rating": 0.95 if rating is not None else 0.0,
         "services": 0.8 if services else 0.0,
-        "multi_clinic": 0.98 if branch_contact_names else 0.91 if corroborated_fresh_branch_names else 0.0,
+        "multi_clinic": 0.98 if branch_contact_names else 0.91 if corroborated_fresh_branch_names else 0.82 if sanitized_fresh_branch_names else 0.74 if maps_branch_names else 0.0,
         "doctors": 0.95 if doctor_profiles else 0.82 if doctor_names else 0.0,
         "social": 0.75 if social_profiles else 0.0,
         "decision_maker": float(decision_maker_confidence) if decision_maker_confidence is not None else 0.0,

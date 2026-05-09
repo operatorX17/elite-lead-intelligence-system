@@ -224,13 +224,65 @@ class SupabaseClient:
     
     def save_scoring_result(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Save scoring result."""
-        result = self._client.table("scoring_results").upsert(data).execute()
+        allowed_fields = {
+            "lead_id",
+            "final_score",
+            "score_breakdown",
+            "lead_tier",
+            "do_not_contact",
+            "do_not_contact_reason",
+            "created_at",
+        }
+        payload = {key: value for key, value in data.items() if key in allowed_fields}
+        result = self._client.table("scoring_results").upsert(payload).execute()
         return result.data[0] if result.data else {}
     
     def get_scoring_result(self, lead_id: UUID) -> Optional[Dict[str, Any]]:
         """Get scoring result for a lead."""
         result = self._client.table("scoring_results").select("*").eq("lead_id", str(lead_id)).execute()
         return result.data[0] if result.data else None
+
+    def clear_lead_analysis_cache(self, lead_id: UUID) -> None:
+        """Remove persisted analysis artifacts so a fresh analysis starts clean."""
+        lead_id_str = str(lead_id)
+        self._client.table("enrichment_data").delete().eq("lead_id", lead_id_str).execute()
+        self._client.table("intent_data").delete().eq("lead_id", lead_id_str).execute()
+        self._client.table("proof_artifacts").delete().eq("lead_id", lead_id_str).execute()
+        self._client.table("scoring_results").delete().eq("lead_id", lead_id_str).execute()
+
+        lead_state = self.get_lead_state(lead_id)
+        if not lead_state:
+            return
+
+        metadata = dict(lead_state.get("metadata") or {})
+        for key in [
+            "analysis_state",
+            "analysis_updated_at",
+            "signals_version",
+            "signal_facts",
+            "analysis_bundle",
+            "intelligence",
+            "people_intelligence",
+            "contact_intelligence",
+            "site_truth_summary",
+            "why_this_lead",
+            "top_issue",
+            "next_best_action",
+        ]:
+            metadata.pop(key, None)
+
+        self.save_lead_state(
+            {
+                "lead_id": lead_id_str,
+                "current_stage": lead_state.get("current_stage") or "analysis",
+                "last_node": lead_state.get("last_node") or "analysis",
+                "last_error": None,
+                "retry_count": lead_state.get("retry_count", 0),
+                "next_run_at": lead_state.get("next_run_at"),
+                "locks": lead_state.get("locks") or [],
+                "metadata": metadata,
+            }
+        )
     
     def get_leads_by_tier(self, tier: str, limit: int = 100) -> List[Dict[str, Any]]:
         """Get leads by tier."""
