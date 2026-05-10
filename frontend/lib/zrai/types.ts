@@ -108,7 +108,37 @@ export interface SignalFacts {
     phones?: string[];
     emails?: string[];
     linkedin?: string;
+    instagram_url?: string;
+    instagram_profile?: {
+      username?: string;
+      profile_url?: string;
+      full_name?: string;
+      followers_count?: number;
+      following_count?: number;
+      posts_count?: number;
+      source?: string;
+      owner?: "doctor" | "clinic";
+      doctor_name?: string;
+    };
   }>;
+  /**
+   * Aggregated metrics across all enriched doctor IG profiles. Doctors with
+   * thousands of personal followers are real demand/trust proof, not just
+   * the clinic IG handle.
+   */
+  doctor_instagram_profiles?: Array<{
+    username?: string;
+    profile_url?: string;
+    full_name?: string;
+    followers_count?: number;
+    posts_count?: number;
+    source?: string;
+    owner?: string;
+    doctor_name?: string;
+  }>;
+  doctor_followers_total?: number;
+  doctor_posts_total?: number;
+  doctor_max_followers?: number;
   instagram_present?: boolean;
   instagram_profile?: {
     username?: string;

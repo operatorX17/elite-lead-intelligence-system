@@ -316,3 +316,21 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* ZRAI: Subtle attention pulse for the primary "Analyze N new" CTA when
+   there are unanalyzed leads. Stops on hover so it doesn't fight the
+   hover lift. Honors prefers-reduced-motion. */
+@keyframes zrai-pulse-subtle {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.45);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-\[zrai-pulse-subtle_2\.4s_ease-in-out_infinite\] {
+    animation: none !important;
+  }
+}

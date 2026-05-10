@@ -2806,6 +2806,16 @@ def _has_meaningful_verified_social(signal_facts: Optional[Dict[str, Any]]) -> b
         return True
     if youtube_channel.get("subscriber_count") is not None or youtube_channel.get("total_videos") is not None:
         return True
+    # Doctor IG followers are first-class verified social proof too.
+    doctor_followers_total = _coerce_int(signal_facts.get("doctor_followers_total"))
+    if doctor_followers_total is not None and doctor_followers_total > 0:
+        return True
+    doctor_ig_profiles = signal_facts.get("doctor_instagram_profiles") or []
+    if isinstance(doctor_ig_profiles, list) and any(
+        isinstance(p, dict) and (p.get("followers_count") or p.get("posts_count"))
+        for p in doctor_ig_profiles
+    ):
+        return True
     return False
 
 
@@ -2892,6 +2902,54 @@ def _truth_state_label(state: str) -> str:
 # Mirror of ScoringAgent.MIN_TRUTH_COVERAGE_FOR_JUDGMENT - kept here so the
 # read-time gate doesn't import the full agent (which pulls in LangGraph).
 _MIN_TRUTH_COVERAGE_FOR_JUDGMENT = 2
+
+
+# ---------------------------------------------------------------------------
+# Operator-clean error sanitization
+# ---------------------------------------------------------------------------
+# Raw Python exceptions (AttributeError tracebacks, JSON decode errors, Apify
+# SDK plumbing strings, etc.) must NEVER reach the lead inspector UI. They
+# destroy operator trust ("'ApifyClient' object has no attribute …" was the
+# canonical example). We map known internal/transient signatures to short,
+# operator-friendly copy and otherwise return a generic stabilizer message.
+
+_OPERATOR_ERROR_PATTERNS: List[tuple] = [
+    (re.compile(r"object has no attribute", re.IGNORECASE),
+     "Live data temporarily unavailable. Re-analyze to refresh."),
+    (re.compile(r"\bApifyClient\b|\bapify_client\b|apify\.com", re.IGNORECASE),
+     "Live data source rate limited or quota exceeded. Retry shortly."),
+    (re.compile(r"quota|credit|insufficient.+credits|usage.+limit", re.IGNORECASE),
+     "Live data quota exceeded. Maps/social refresh paused until quota resets."),
+    (re.compile(r"timed?\s*out|timeout|ETIMEDOUT|read timed out", re.IGNORECASE),
+     "Source took too long to respond. Try Re-analyze in a moment."),
+    (re.compile(r"connection\s*(refused|reset|aborted)|EAI_AGAIN|getaddrinfo", re.IGNORECASE),
+     "Network hiccup talking to a data source. Re-analyze to retry."),
+    (re.compile(r"json|parse|decode|unmarshal", re.IGNORECASE),
+     "Source returned malformed data. Re-analyze to retry."),
+    (re.compile(r"401|403|unauthor|forbidden|invalid.+key|api.?key", re.IGNORECASE),
+     "A data source key needs attention. Operator action required."),
+    (re.compile(r"5\d{2}\b|server error|bad gateway|service unavail", re.IGNORECASE),
+     "Upstream source is temporarily unavailable. Retry shortly."),
+]
+
+
+def _sanitize_operator_error(raw: Optional[Any]) -> Optional[str]:
+    """Return an operator-friendly message or None for stale/empty errors."""
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text or text.lower() in {"none", "null", "nan", "0"}:
+        return None
+    for pattern, friendly in _OPERATOR_ERROR_PATTERNS:
+        if pattern.search(text):
+            return friendly
+    # If it looks like a Python traceback / class repr, hide it entirely.
+    if "Traceback" in text or text.startswith("<") and text.endswith(">"):
+        return "Last analysis hit an internal hiccup. Re-analyze to refresh."
+    # Cap length so giant blobs never end up in the UI.
+    if len(text) > 200:
+        return text[:197].rstrip() + "..."
+    return text
 
 
 def _apply_read_time_judgment_gate(
@@ -4094,10 +4152,12 @@ def get_processed_details_for_lead(db, lead_id: str) -> Dict[str, Any]:
         # handle gracefully via a no-op stub on ApifyClient). The frontend
         # inspector renders this as a red banner; surfacing a stale error on
         # a successfully-analyzed lead destroys operator trust.
+        # Even when not analyzed, ALWAYS scrub raw Python tracebacks/AttributeErrors
+        # before they hit the UI - operators must never see internal class names.
         "error": (
             None
             if analysis_state == "analyzed"
-            else (lead_state or {}).get("last_error") or None
+            else _sanitize_operator_error((lead_state or {}).get("last_error"))
         ),
     }
 
@@ -7233,6 +7293,48 @@ async def analyze_lead(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _try_return_cached_analysis(
+    db,
+    lead_data: Dict[str, Any],
+    *,
+    include_outreach: bool,
+) -> Optional[Dict[str, Any]]:
+    """Return cached processed_details if the lead is already analyzed.
+
+    Saves tokens/credits by short-circuiting LangGraph re-runs when the
+    operator just wants to view a previously-analyzed lead. Honors:
+      - `analysis_state == "analyzed"` AND `signal_facts` are populated
+      - has at least one of {enrichment, intent, proof, scoring}
+    Returns the same shape `execute_lead_analysis` would return, so the
+    inspector renders identically.
+    """
+    lead_id = lead_data.get("lead_id") or lead_data.get("id")
+    if not lead_id:
+        return None
+    try:
+        details = get_processed_details_for_lead(db, str(lead_id))
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(details, dict):
+        return None
+    if details.get("analysis_state") != "analyzed":
+        return None
+    if not details.get("signal_facts"):
+        return None
+    if not (details.get("enrichment") or details.get("intent") or details.get("proof") or details.get("scoring")):
+        return None
+    if include_outreach and not details.get("outreach"):
+        # Operator explicitly asked for outreach drafts; if cache has none,
+        # fall through to a real run so they get drafts.
+        return None
+    # Mirror the keys execute_lead_analysis adds at the bottom so the
+    # frontend merge logic stays identical.
+    cached = dict(details)
+    cached.setdefault("lead", lead_data)
+    cached["from_cache"] = True
+    return cached
+
+
 def execute_lead_analysis(
     db,
     lead_data: Dict[str, Any],
@@ -7241,7 +7343,25 @@ def execute_lead_analysis(
     include_audit: bool = False,
     force_refresh: bool = False,
 ) -> Dict[str, Any]:
-    """Run the full single-lead analysis flow and persist the result."""
+    """Run the full single-lead analysis flow and persist the result.
+
+    Cache-first semantics (Jan 2026): when `force_refresh=False` and the
+    lead is already in `analysis_state == "analyzed"`, we DO NOT re-run
+    the LangGraph pipeline. We just return the cached processed_details
+    payload. This stops the inspector burning tokens/credits every time
+    the operator opens the canvas.
+    """
+    if not force_refresh:
+        try:
+            cached = _try_return_cached_analysis(db, lead_data, include_outreach=include_outreach)
+            if cached is not None:
+                logger.info(
+                    "Analyze lead cache hit: lead_id=%s analysis_state=analyzed (returned cached, no LangGraph run)",
+                    lead_data.get("lead_id") or lead_data.get("id"),
+                )
+                return cached
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Cache-first guard fell through (re-running): %s", exc)
     lead_model = lead_data_to_model(lead_data)
     source = infer_discovery_source_from_niche(lead_data.get("category") or "")
     preview = build_discovery_preview(
@@ -7368,6 +7488,9 @@ def run_lead_analysis_background(
         logger.exception("Background analysis failed for lead_id=%s", lead_id)
         lead_state = db.get_lead_state(UUID(str(lead_id))) or {}
         metadata = dict(lead_state.get("metadata") or {})
+        # Sanitize before persistence so the inspector never receives raw
+        # Python tracebacks/AttributeErrors even from a stale row.
+        sanitized_exc = _sanitize_operator_error(exc) or "Last analysis hit an internal hiccup. Re-analyze to refresh."
         persist_analysis_snapshot(
             db,
             str(lead_id),
@@ -7382,7 +7505,7 @@ def run_lead_analysis_background(
                 "lead_id": str(lead_id),
                 "current_stage": lead_state.get("current_stage") or "analysis",
                 "last_node": lead_state.get("last_node") or "analysis",
-                "last_error": str(exc),
+                "last_error": sanitized_exc,
                 "retry_count": lead_state.get("retry_count", 0),
                 "next_run_at": lead_state.get("next_run_at"),
                 "locks": lead_state.get("locks") or [],
@@ -7390,7 +7513,7 @@ def run_lead_analysis_background(
                     **metadata,
                     "analysis_state": "failed",
                     "analysis_updated_at": datetime.utcnow().isoformat(),
-                    "last_error": str(exc),
+                    "last_error": sanitized_exc,
                 },
             }
         )

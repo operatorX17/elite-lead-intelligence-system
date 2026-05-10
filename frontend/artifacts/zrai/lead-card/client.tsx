@@ -16,6 +16,7 @@ import {
   type FounderIntelPayload,
 } from "@/lib/zrai/founder-intelligence";
 import { ensurePersistedLead, isUuidLeadId } from "@/lib/zrai/lead-resolution";
+import { sanitizeOperatorError } from "@/lib/zrai/sanitize-error";
 import { getZRAILeadByIdEndpoint, ZRAI_ENDPOINTS } from "@/lib/zrai/constants";
 import type { AnalysisBundle, Lead, SignalFacts } from "@/lib/zrai/types";
 
@@ -151,6 +152,122 @@ function getCanonicalProofInsights(
   }
 
   return insights.slice(0, 4);
+}
+
+// ---------------------------------------------------------------------------
+// Truth-state badge helpers (mirrors `_derive_truth_state` in src/api/server.py
+// and `truthStateBadgeClasses` in lead-list/client.tsx).
+// ---------------------------------------------------------------------------
+type TruthState =
+  | "verified_maps"
+  | "cached_maps"
+  | "website_proof"
+  | "social_presence_only"
+  | "incomplete_verification"
+  | "failed";
+
+function getTruthState(signalFacts?: SignalFacts | null): TruthState {
+  const raw = signalFacts?.truth_state;
+  if (
+    raw === "verified_maps" ||
+    raw === "cached_maps" ||
+    raw === "website_proof" ||
+    raw === "social_presence_only" ||
+    raw === "incomplete_verification" ||
+    raw === "failed"
+  ) {
+    return raw;
+  }
+  const coverage =
+    typeof signalFacts?.commercial_truth_coverage === "number"
+      ? signalFacts.commercial_truth_coverage
+      : 0;
+  if (coverage >= 2) return "website_proof";
+  return "incomplete_verification";
+}
+
+function getTruthStateLabel(state: TruthState, signalFacts?: SignalFacts | null) {
+  if (signalFacts?.truth_state_label) return signalFacts.truth_state_label;
+  switch (state) {
+    case "verified_maps":
+      return "Verified";
+    case "cached_maps":
+      return "Cached verification";
+    case "website_proof":
+      return "Website-verified";
+    case "social_presence_only":
+      return "Social presence only";
+    case "incomplete_verification":
+      return "Needs verification";
+    case "failed":
+      return "Verification failed";
+    default:
+      return "Needs verification";
+  }
+}
+
+function truthStateBadgeClasses(state: TruthState) {
+  switch (state) {
+    case "verified_maps":
+      return "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300";
+    case "cached_maps":
+      return "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300";
+    case "website_proof":
+      return "bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300";
+    case "social_presence_only":
+      return "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300";
+    case "failed":
+      return "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300";
+    case "incomplete_verification":
+    default:
+      return "bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200";
+  }
+}
+
+function formatFollowerCount(value: number | null | undefined): string {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n) || n <= 0) return "-";
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(n >= 10_000 ? 0 : 1)}k`;
+  return String(n);
+}
+
+function getDoctorSocialEntries(signalFacts: SignalFacts | null) {
+  if (!signalFacts) return [] as Array<{ name: string; followers: number; posts: number; url?: string; username?: string; }>;
+  const out: Array<{ name: string; followers: number; posts: number; url?: string; username?: string; }> = [];
+  const profiles = signalFacts.doctor_profiles || [];
+  for (const profile of profiles) {
+    const ig = (profile as any)?.instagram_profile;
+    if (!ig) continue;
+    const followers = Number(ig.followers_count) || 0;
+    const posts = Number(ig.posts_count) || 0;
+    if (followers <= 0 && posts <= 0) continue;
+    out.push({
+      name: profile?.name || ig.full_name || ig.username || "Doctor",
+      followers,
+      posts,
+      url: ig.profile_url,
+      username: ig.username,
+    });
+  }
+  // Also include any standalone doctor IG entries (defensive merge).
+  for (const ig of signalFacts.doctor_instagram_profiles || []) {
+    if (!ig) continue;
+    const followers = Number(ig.followers_count) || 0;
+    const posts = Number(ig.posts_count) || 0;
+    if (followers <= 0 && posts <= 0) continue;
+    if (out.some((entry) => entry.username && ig.username && entry.username === ig.username)) continue;
+    out.push({
+      name: ig.doctor_name || ig.full_name || ig.username || "Doctor",
+      followers,
+      posts,
+      url: ig.profile_url,
+      username: ig.username,
+    });
+  }
+  return out
+    .sort((a, b) => (b.followers || 0) - (a.followers || 0))
+    .slice(0, 4);
 }
 
 function getTopIssue(signalFacts: SignalFacts | null) {
@@ -669,7 +786,7 @@ function LeadCardContent({
     try {
       await analyzeLead(true);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Lead truth refresh failed");
+      toast.error(sanitizeOperatorError(error instanceof Error ? error.message : "Lead truth refresh failed") || "Lead truth refresh failed");
     } finally {
       setIsRefreshingTruth(false);
     }
@@ -822,7 +939,7 @@ function LeadCardContent({
       setLiveProcessedDetails(hydrated.processedDetails);
       toast.success(forceRefresh ? "Lead truth refreshed." : "Lead analyzed.");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Lead analysis failed");
+      toast.error(sanitizeOperatorError(error instanceof Error ? error.message : "Lead analysis failed") || "Lead analysis failed");
     } finally {
       setIsAnalyzing(false);
     }
@@ -861,6 +978,22 @@ function LeadCardContent({
               Snapshot preview
             </div>
           ) : null}
+          {(() => {
+            const sanitized = sanitizeOperatorError((displayProcessedDetails as any)?.error);
+            if (!sanitized) return null;
+            // Stale-error guard: if the lead is currently analyzed, hide the
+            // banner outright (the backend already nulls it but we are
+            // defensive in case stale snapshots flow in via the merge path).
+            if (displayLead.analysis_state === "analyzed") return null;
+            return (
+              <div
+                className="mt-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-200"
+                data-testid="lead-card-error-banner"
+              >
+                {sanitized}
+              </div>
+            );
+          })()}
           <div className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
             {scoreNarrative.whyThisLead ||
               scoreNarrative.nextBestAction ||
@@ -925,6 +1058,14 @@ function LeadCardContent({
             <div>
               <div className="text-xs text-zinc-500 uppercase tracking-[0.16em]">Decision</div>
               <div className="mt-1 text-lg font-semibold">{getDecisionLabel(scoreSnapshot.finalScore)}</div>
+              {(signalFacts.truth_state_label || signalFacts.truth_state) && (
+                <div
+                  className={`mt-2 inline-flex rounded-full px-2.5 py-1 text-[11px] font-medium ${truthStateBadgeClasses(getTruthState(signalFacts))}`}
+                  data-testid="lead-card-truth-badge"
+                >
+                  {signalFacts.truth_state_label || getTruthStateLabel(getTruthState(signalFacts), signalFacts)}
+                </div>
+              )}
             </div>
             <div className="text-right">
               <div className="text-xs text-zinc-500 uppercase tracking-[0.16em]">Final score</div>
@@ -1011,6 +1152,55 @@ function LeadCardContent({
               </div>
             </div>
           </div>
+          {(() => {
+            const doctorSocial = getDoctorSocialEntries(signalFacts);
+            const totalFollowers = Number(signalFacts.doctor_followers_total) || 0;
+            if (!doctorSocial.length && totalFollowers <= 0) return null;
+            return (
+              <div className="mt-3 rounded-md bg-zinc-100 p-3 dark:bg-zinc-900" data-testid="lead-card-doctor-social">
+                <div className="flex items-center justify-between">
+                  <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Doctor social proof</div>
+                  {totalFollowers > 0 && (
+                    <div className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                      {formatFollowerCount(totalFollowers)} doctor followers
+                    </div>
+                  )}
+                </div>
+                {doctorSocial.length > 0 && (
+                  <div className="mt-2 space-y-1.5">
+                    {doctorSocial.map((entry, idx) => (
+                      <div className="flex items-center justify-between text-sm" key={`${entry.username || entry.name}-${idx}`}>
+                        <div className="min-w-0 flex-1 truncate">
+                          <span className="font-medium">{entry.name}</span>
+                          {entry.username && (
+                            <span className="ml-2 text-xs text-zinc-500">@{entry.username}</span>
+                          )}
+                        </div>
+                        <div className="ml-3 flex shrink-0 items-center gap-3">
+                          <span className="text-xs">
+                            {formatFollowerCount(entry.followers)} <span className="text-zinc-500">followers</span>
+                          </span>
+                          {entry.posts > 0 && (
+                            <span className="text-xs text-zinc-500">{entry.posts} posts</span>
+                          )}
+                          {entry.url && (
+                            <a
+                              className="text-xs text-blue-500 hover:underline"
+                              href={entry.url}
+                              rel="noopener noreferrer"
+                              target="_blank"
+                            >
+                              open
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
           <div className="mt-3 rounded-md bg-zinc-100 p-2 text-sm dark:bg-zinc-900">
             <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Score context</div>
             <div className="mt-2 space-y-1">
@@ -1237,35 +1427,66 @@ function LeadCardContent({
         </details>
       )}
 
-      <div className="flex flex-wrap gap-2">
+      <div className="sticky bottom-0 -mx-4 mt-4 flex flex-wrap items-center justify-end gap-2 border-zinc-200 border-t bg-zinc-50/95 px-4 py-3 backdrop-blur dark:border-zinc-800 dark:bg-zinc-900/95">
         <button
-          className="rounded-md border border-zinc-300 px-3 py-2 text-sm transition hover:bg-zinc-100 dark:border-zinc-600 dark:hover:bg-zinc-900"
+          className="inline-flex items-center gap-1.5 rounded-full border border-zinc-300 px-4 py-2 text-sm text-zinc-700 transition-all duration-200 ease-out hover:-translate-y-0.5 hover:border-zinc-400 hover:bg-white hover:shadow-sm active:translate-y-0 active:shadow-none dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+          data-testid="lead-card-copy-summary-btn"
           onClick={() => {
             navigator.clipboard.writeText(
               formatLeadForClipboard(displayLead, displayProcessedDetails)
             );
-            toast.success("Live lead summary copied.");
+            toast.success("Lead summary copied.");
           }}
           type="button"
+          title="Copy a clean text summary of this lead to your clipboard."
         >
-          Copy summary
+          <span aria-hidden>⧉</span>
+          <span>Copy</span>
         </button>
-        <button
-          className="rounded-md bg-emerald-600 px-3 py-2 text-sm text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
-          disabled={isAnalyzing}
-          onClick={() => void analyzeLead()}
-          type="button"
-        >
-          {isAnalyzing ? "Analyzing..." : "Analyze lead"}
-        </button>
-        <button
-          className="rounded-md border border-zinc-300 px-3 py-2 text-sm transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-600 dark:hover:bg-zinc-900"
-          disabled={isRefreshingTruth || isAnalyzing}
-          onClick={() => void refreshLeadTruth()}
-          type="button"
-        >
-          {isRefreshingTruth ? "Refreshing..." : "Refresh truth"}
-        </button>
+        {(() => {
+          const isAnalyzed = displayLead.analysis_state === "analyzed" || displayLead.score_kind === "final_score";
+          const isBusy = isAnalyzing || isRefreshingTruth;
+          return (
+            <button
+              className={`group inline-flex items-center gap-2 rounded-full px-5 py-2 text-sm font-semibold tracking-wide shadow-sm transition-all duration-200 ease-out
+                disabled:cursor-not-allowed disabled:opacity-90
+                ${isBusy
+                  ? "bg-emerald-600 text-white"
+                  : isAnalyzed
+                    ? "bg-white text-emerald-700 ring-1 ring-emerald-200 hover:-translate-y-0.5 hover:bg-emerald-50 hover:shadow-md hover:ring-emerald-300 active:translate-y-0 dark:bg-zinc-900 dark:text-emerald-300 dark:ring-emerald-900 dark:hover:bg-emerald-950/40"
+                    : "bg-emerald-600 text-white hover:-translate-y-0.5 hover:bg-emerald-500 hover:shadow-md active:translate-y-0 active:shadow-sm animate-[zrai-pulse-subtle_2.4s_ease-in-out_infinite]"}
+              `}
+              data-testid="lead-card-analyze-btn"
+              disabled={isBusy}
+              onClick={() => void analyzeLead(isAnalyzed)}
+              title={
+                isBusy
+                  ? "Analyzing this lead..."
+                  : isAnalyzed
+                    ? "Re-run the full pipeline. Costs credits. Use only when stored data feels stale."
+                    : "Run analysis: Maps, doctors, social, scoring, contacts. Stored after - won't re-run on next open."
+              }
+              type="button"
+            >
+              {isBusy ? (
+                <>
+                  <span aria-hidden className="inline-block size-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                  <span>Analyzing…</span>
+                </>
+              ) : isAnalyzed ? (
+                <>
+                  <span aria-hidden>↻</span>
+                  <span>Re-analyze</span>
+                </>
+              ) : (
+                <>
+                  <span aria-hidden className="inline-block size-1.5 rounded-full bg-white/90 transition-transform duration-200 group-hover:scale-150" />
+                  <span>Analyze</span>
+                </>
+              )}
+            </button>
+          );
+        })()}
       </div>
     </div>
   );
@@ -1357,7 +1578,7 @@ export const leadCardArtifact = new Artifact<"lead-card", LeadCardMetadata>({
         });
 
         if (!response.ok) {
-          toast.error(await response.text());
+          toast.error(sanitizeOperatorError(await response.text()) || "Action failed.");
           return;
         }
 
@@ -1405,7 +1626,7 @@ export const leadCardArtifact = new Artifact<"lead-card", LeadCardMetadata>({
         });
 
         if (!response.ok) {
-          toast.error(await response.text());
+          toast.error(sanitizeOperatorError(await response.text()) || "Action failed.");
           return;
         }
 
@@ -1465,7 +1686,7 @@ export const leadCardArtifact = new Artifact<"lead-card", LeadCardMetadata>({
         });
 
         if (!response.ok) {
-          toast.error(await response.text());
+          toast.error(sanitizeOperatorError(await response.text()) || "Action failed.");
           return;
         }
 
@@ -1511,7 +1732,7 @@ export const leadCardArtifact = new Artifact<"lead-card", LeadCardMetadata>({
         });
 
         if (!response.ok) {
-          toast.error(await response.text());
+          toast.error(sanitizeOperatorError(await response.text()) || "Action failed.");
           return;
         }
 

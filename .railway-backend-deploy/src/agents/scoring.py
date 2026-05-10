@@ -278,6 +278,30 @@ class ScoringAgent(BaseAgent):
             metadata.get("contact_quality_score") or contact_intelligence.get("contact_quality_score")
         )
 
+        # Doctor social aggregates: doctors with thousands of personal IG
+        # followers count as DEMAND/TRUST proof. We aggregate followers/posts
+        # across enriched doctor IG profiles so scoring (and the inspector
+        # UI) can reason about them as first-class signals.
+        doctor_instagram_profiles: List[Dict[str, Any]] = []
+        doctor_followers_total = 0
+        doctor_posts_total = 0
+        doctor_max_followers = 0
+        for profile in doctor_profiles:
+            if not isinstance(profile, dict):
+                continue
+            ig = profile.get("instagram_profile") or {}
+            if not isinstance(ig, dict) or not ig:
+                continue
+            followers = self._to_int(ig.get("followers_count"))
+            posts = self._to_int(ig.get("posts_count"))
+            if followers <= 0 and posts <= 0:
+                continue
+            doctor_instagram_profiles.append(ig)
+            doctor_followers_total += max(followers, 0)
+            doctor_posts_total += max(posts, 0)
+            if followers > doctor_max_followers:
+                doctor_max_followers = followers
+
         return {
             "phone_visible": bool(phone_numbers) or str(proof_extraction.get("phone_visibility") or "").lower() in {"hero", "visible", "above_fold", "below_fold"},
             "phone_numbers": phone_numbers,
@@ -317,6 +341,10 @@ class ScoringAgent(BaseAgent):
             "doctor_count": doctor_count,
             "doctor_names": doctor_names,
             "doctor_profiles": doctor_profiles,
+            "doctor_instagram_profiles": doctor_instagram_profiles,
+            "doctor_followers_total": doctor_followers_total,
+            "doctor_posts_total": doctor_posts_total,
+            "doctor_max_followers": doctor_max_followers,
             "instagram_present": bool(proof_extraction.get("instagram_present") or social_profiles.get("instagram")),
             "instagram_profile": instagram_profile,
             "youtube_present": bool(proof_extraction.get("youtube_present") or social_profiles.get("youtube")),
@@ -354,6 +382,13 @@ class ScoringAgent(BaseAgent):
         youtube_channel = signal_facts.get("youtube_channel") or {}
         instagram_followers = self._to_int(instagram_profile.get("followers_count"))
         instagram_posts = self._to_int(instagram_profile.get("posts_count"))
+        # Doctor IG counts as DEMAND/TRUST too (some clinics ride a doctor's
+        # personal brand). Aggregate so scoring does not undervalue them.
+        doctor_followers_total = self._to_int(signal_facts.get("doctor_followers_total"))
+        doctor_posts_total = self._to_int(signal_facts.get("doctor_posts_total"))
+        doctor_max_followers = self._to_int(signal_facts.get("doctor_max_followers"))
+        combined_followers = instagram_followers + doctor_followers_total
+        combined_posts = instagram_posts + doctor_posts_total
         youtube_subscribers = self._to_int(youtube_channel.get("subscriber_count"))
         youtube_recent_videos = self._to_int(youtube_channel.get("recent_video_count"))
         volume_score = self._to_int(intent.get("volume_score") or (signal_facts.get("volume_score_inputs") or {}).get("volume_score"))
@@ -412,14 +447,23 @@ class ScoringAgent(BaseAgent):
             trust_score += 10
         if social_count:
             trust_score += min(social_count, 3) * 5
-        if instagram_followers >= 100000:
-            trust_score += 10
-        elif instagram_followers >= 25000:
-            trust_score += 7
-        elif instagram_followers >= 5000:
+        # Combined social followers (clinic IG + doctor IG profiles) - doctors
+        # with thousands of personal followers should count as trust signal
+        # not just the clinic handle.
+        if combined_followers >= 100000:
+            trust_score += 12
+        elif combined_followers >= 25000:
+            trust_score += 8
+        elif combined_followers >= 5000:
+            trust_score += 5
+        elif combined_followers >= 1000:
+            trust_score += 2
+        if combined_posts >= 30:
             trust_score += 4
-        if instagram_posts >= 30:
-            trust_score += 4
+        # Single-doctor superstar bonus: if any doctor has 25k+ personal
+        # followers, that is independently strong demand evidence.
+        if doctor_max_followers >= 25000:
+            trust_score += 5
         if youtube_subscribers >= 10000:
             trust_score += 8
         elif youtube_subscribers >= 1000:
@@ -466,6 +510,7 @@ class ScoringAgent(BaseAgent):
                 doctor_count > 0,
                 branch_count > 0,
                 instagram_followers > 0,
+                doctor_followers_total > 0,
                 youtube_subscribers > 0,
             ]
         )
@@ -668,11 +713,13 @@ class ScoringAgent(BaseAgent):
             coverage += 1
         instagram_profile = facts.get("instagram_profile") or {}
         youtube_channel = facts.get("youtube_channel") or {}
+        doctor_followers_total = _coerce_int(facts.get("doctor_followers_total"))
         if (
             instagram_profile.get("followers_count") is not None
             or instagram_profile.get("posts_count") is not None
             or youtube_channel.get("subscriber_count") is not None
             or youtube_channel.get("total_videos") is not None
+            or (doctor_followers_total is not None and doctor_followers_total > 0)
         ):
             coverage += 1
         return coverage

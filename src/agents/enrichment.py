@@ -163,6 +163,7 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
         # Get raw Apify data from metadata (stored by discovery agent)
         metadata = state.get("metadata", {})
         fast_mode = bool(metadata.get("fast_mode"))
+        self._fast_mode = fast_mode  # picked up by helpers (e.g. doctor IG enrichment)
         raw_apify_data = metadata.get("raw_apify_data", {})
         
         # Merge raw Apify data into lead for volume signal extraction
@@ -1198,6 +1199,20 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
 
         merged_doctors.extend(by_name.values())
 
+        # Doctor IG enrichment: doctors with thousands of personal followers
+        # are real demand/trust signal beyond the clinic IG handle. Up to 4
+        # doctors get HTML-fallback metrics so scoring can include them.
+        clinic_instagram_url = None
+        for ig_url in (social_profiles.get("instagram") or []):
+            if isinstance(ig_url, str) and ig_url.strip():
+                clinic_instagram_url = ig_url
+                break
+        merged_doctors = self._enrich_doctor_instagram_profiles(
+            merged_doctors,
+            clinic_instagram_url=clinic_instagram_url,
+            fast_mode=bool(getattr(self, "_fast_mode", False)),
+        )
+
         decision_maker_candidates: List[Dict[str, Any]] = []
         founder_roles = {"founder", "co_founder", "director", "senior_doctor"}
         for doctor in merged_doctors:
@@ -1699,7 +1714,99 @@ class EnrichmentAgent(BaseAgent, CircuitBreakerMixin):
             "phones": phones,
             "emails": emails,
             "explicit_dr_prefix": explicit_dr_prefix,
+            "instagram_url": self._extract_instagram_handle_from_context(raw_context),
         }
+
+    def _extract_instagram_handle_from_context(self, raw_context: Optional[str]) -> Optional[str]:
+        """Extract a doctor-attached Instagram handle/URL from a raw_context window.
+
+        Doctors with thousands of personal followers count as DEMAND/TRUST proof
+        (not just the clinic IG handle). We look for the first plausible IG URL
+        or @handle adjacent to the doctor's bio text. We deliberately reject
+        the generic clinic handle later by deduping at the call site.
+        """
+        if not raw_context:
+            return None
+        text = str(raw_context)
+        # Direct instagram.com URLs first.
+        url_match = re.search(
+            r"https?://(?:www\.)?instagram\.com/([A-Za-z0-9._]+)",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if url_match:
+            handle = url_match.group(1).strip("/").strip(".")
+            if handle and not self._is_gps_coordinate_handle(handle):
+                return f"https://www.instagram.com/{handle}/"
+        # Fallback: @handle near "instagram"/"insta" mention.
+        nearby = re.search(
+            r"(?:instagram|insta|ig)\b[^@a-zA-Z0-9]{0,30}@?([A-Za-z][A-Za-z0-9._]{2,29})",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if nearby:
+            handle = nearby.group(1).strip("/").strip(".")
+            if handle and not self._is_gps_coordinate_handle(handle):
+                return f"https://www.instagram.com/{handle}/"
+        return None
+
+    @staticmethod
+    def _is_gps_coordinate_handle(handle: str) -> bool:
+        """Reject GPS-coordinate-looking strings (e.g. 17.4456,78.4123)."""
+        return bool(re.match(r"^[\d\.,\-]+$", handle))
+
+    def _enrich_doctor_instagram_profiles(
+        self,
+        doctors: List[Dict[str, Any]],
+        *,
+        clinic_instagram_url: Optional[str] = None,
+        fast_mode: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """For each doctor with an IG handle, fetch lightweight HTML metrics.
+
+        Doctors with personal IG followings are real demand/trust signal -
+        many clinics ride on a doctor's brand. We enrich up to 4 doctors so
+        scoring can use their followers/posts. Skips:
+          - the clinic IG handle (already enriched separately)
+          - GPS-coordinate-looking strings
+          - fast_mode runs (HTML fetch is too slow for bulk scans)
+        """
+        if fast_mode or not doctors:
+            return doctors
+        clinic_handle = self._extract_instagram_username(clinic_instagram_url or "") or ""
+        clinic_handle = clinic_handle.lower().strip("/").strip(".")
+        enriched_count = 0
+        for doctor in doctors:
+            if enriched_count >= 4:
+                break
+            ig_url = doctor.get("instagram_url")
+            if not ig_url:
+                continue
+            doctor_handle = (self._extract_instagram_username(ig_url) or "").lower().strip("/").strip(".")
+            if not doctor_handle or doctor_handle == clinic_handle:
+                continue
+            try:
+                snapshot = self._fetch_instagram_profile_snapshot(ig_url)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Doctor IG snapshot failed for %s: %s", doctor_handle, exc)
+                snapshot = {}
+            if snapshot:
+                # Sparse-Apify guard mirror: keep all keys with real values,
+                # never overwrite a positive metric with an empty fallback.
+                doctor_profile: Dict[str, Any] = {
+                    "username": doctor_handle,
+                    "profile_url": ig_url,
+                    "source": snapshot.get("source") or "instagram_public_html",
+                    "owner": "doctor",
+                    "doctor_name": doctor.get("name"),
+                }
+                for key in ("full_name", "followers_count", "following_count", "posts_count"):
+                    val = snapshot.get(key)
+                    if val not in (None, "", [], {}):
+                        doctor_profile[key] = val
+                doctor["instagram_profile"] = doctor_profile
+                enriched_count += 1
+        return doctors
 
     def _extract_branch_contacts(self, raw_content: str) -> List[Dict[str, Any]]:
         contacts: List[Dict[str, Any]] = []

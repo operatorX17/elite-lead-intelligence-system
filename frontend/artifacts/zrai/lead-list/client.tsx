@@ -24,6 +24,7 @@ import {
   type FounderIntelPayload,
 } from "@/lib/zrai/founder-intelligence";
 import { ensurePersistedLead, isUuidLeadId } from "@/lib/zrai/lead-resolution";
+import { sanitizeOperatorError } from "@/lib/zrai/sanitize-error";
 import type { AnalysisBundle, Lead, SignalFacts } from "@/lib/zrai/types";
 import { getZRAILeadByIdEndpoint, ZRAI_ENDPOINTS } from "@/lib/zrai/constants";
 
@@ -1907,7 +1908,7 @@ function serializeLeadListPayload(
 ) {
   return JSON.stringify({
     autoAnalyzeCompletedToken: metadata?.autoAnalyzeCompletedToken || null,
-    autoAnalyzeEnabled: metadata?.autoAnalyzeEnabled ?? true,
+    autoAnalyzeEnabled: metadata?.autoAnalyzeEnabled ?? false,
     filter: metadata?.filter || "",
     leads,
     processedDetails: metadata?.processedDetails || {},
@@ -2156,7 +2157,7 @@ function parseLeadListPayload(content: string): {
       leads: [],
       processedDetails: {},
       autoAnalyzeCompletedToken: null,
-      autoAnalyzeEnabled: true,
+      autoAnalyzeEnabled: false,
       selectedLeadId: null,
       sortBy: "score",
       sortOrder: "desc",
@@ -2177,7 +2178,7 @@ function parseLeadListPayload(content: string): {
       leads: canonical.leads,
       processedDetails: canonical.processedDetails,
       autoAnalyzeCompletedToken: payload.autoAnalyzeCompletedToken || null,
-      autoAnalyzeEnabled: payload.autoAnalyzeEnabled ?? true,
+      autoAnalyzeEnabled: payload.autoAnalyzeEnabled ?? false,
       selectedLeadId: canonical.selectedLeadId,
       sortBy: payload.sortBy || "score",
       sortOrder: payload.sortOrder === "asc" ? "asc" : "desc",
@@ -2188,7 +2189,7 @@ function parseLeadListPayload(content: string): {
       leads: [],
       processedDetails: {},
       autoAnalyzeCompletedToken: null,
-      autoAnalyzeEnabled: true,
+      autoAnalyzeEnabled: false,
       selectedLeadId: null,
       sortBy: "score",
       sortOrder: "desc",
@@ -2255,7 +2256,7 @@ function LeadListContent({
       : [];
   const persistedSelectedLeadId = canonicalState.selectedLeadId || null;
   const autoAnalyzeEnabled =
-    metadata?.autoAnalyzeEnabled ?? contentPayload.autoAnalyzeEnabled ?? true;
+    metadata?.autoAnalyzeEnabled ?? contentPayload.autoAnalyzeEnabled ?? false;
   const autoAnalyzeCompletedToken =
     metadata?.autoAnalyzeCompletedToken ||
     contentPayload.autoAnalyzeCompletedToken ||
@@ -3006,7 +3007,7 @@ function LeadListContent({
         toast.success("Lead processing stopped.");
         return false;
       }
-      toast.error(error instanceof Error ? error.message : "Lead processing failed");
+      toast.error(sanitizeOperatorError(error instanceof Error ? error.message : "Lead processing failed") || "Lead processing failed");
       return false;
     } finally {
       clearProcessing(activeLeadIds);
@@ -3132,7 +3133,7 @@ function LeadListContent({
     try {
       await analyzeSelectedLead(true);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Lead truth refresh failed");
+      toast.error(sanitizeOperatorError(error instanceof Error ? error.message : "Lead truth refresh failed") || "Lead truth refresh failed");
     } finally {
       setIsRefreshingTruth(false);
     }
@@ -3382,7 +3383,7 @@ function LeadListContent({
           nextSelectedLeadId: activeLeadId,
         });
         setSelectedLeadLiveDetails(failedDetails);
-        toast.error(error instanceof Error ? error.message : "Lead analysis failed");
+        toast.error(sanitizeOperatorError(error instanceof Error ? error.message : "Lead analysis failed") || "Lead analysis failed");
       }
     } finally {
       const currentLeadIds = Array.from(
@@ -3498,69 +3499,124 @@ function LeadListContent({
             />
         </div>
 
-        <div className="flex gap-4 border-zinc-200 border-b bg-zinc-50 p-3 text-sm dark:border-zinc-700 dark:bg-zinc-800">
-          <span>Total: {leads.length}</span>
-          <span>Filtered: {filteredLeads.length}</span>
-          <span>
-            {avgScoreLabel}:{" "}
-            {Math.round(
+        <div className="flex items-center gap-4 border-zinc-200 border-b bg-zinc-50 p-3 text-sm dark:border-zinc-700 dark:bg-zinc-800">
+          <span className="text-zinc-600 dark:text-zinc-400">
+            <span className="font-semibold text-zinc-900 dark:text-zinc-100">{leads.length}</span> total
+          </span>
+          {filteredLeads.length !== leads.length && (
+            <span className="text-zinc-500">
+              <span className="font-semibold">{filteredLeads.length}</span> filtered
+            </span>
+          )}
+          {(() => {
+            const visible = dedupeLeadRows(displayLeads);
+            const analyzed = visible.filter(
+              (lead) => isTerminalAnalysisState(lead, getProcessedDetailsForLead(processedDetails, leads, lead))
+            ).length;
+            const allAnalyzed = visible.length > 0 && analyzed === visible.length;
+            return (
+              <span
+                className="inline-flex items-center gap-1.5 transition-all duration-300"
+                data-testid="lead-list-analyzed-counter"
+              >
+                <span
+                  aria-hidden
+                  className={`size-2 rounded-full transition-colors duration-300 ${
+                    allAnalyzed
+                      ? "bg-emerald-500"
+                      : analyzed > 0
+                        ? "bg-amber-400"
+                        : "bg-zinc-300 dark:bg-zinc-600"
+                  }`}
+                />
+                <span
+                  className={`font-semibold tabular-nums transition-colors duration-300 ${
+                    allAnalyzed ? "text-emerald-600 dark:text-emerald-400" : "text-zinc-900 dark:text-zinc-100"
+                  }`}
+                >
+                  {analyzed}
+                </span>
+                <span className="text-zinc-500">/ {visible.length} analyzed</span>
+              </span>
+            );
+          })()}
+          <span className="text-zinc-500">
+            avg <span className="font-semibold text-zinc-700 dark:text-zinc-300 tabular-nums">{Math.round(
               leads.reduce((sum, lead) => sum + (lead.score || 0), 0) /
-                leads.length
-            ) || 0}
+                Math.max(leads.length, 1)
+            ) || 0}</span>
           </span>
           <div className="ml-auto flex items-center gap-2">
-            <label className="flex items-center gap-2 rounded-md border border-zinc-300 px-3 py-2 text-xs text-zinc-600 dark:border-zinc-700 dark:text-zinc-300">
-              <input
-                checked={autoAnalyzeEnabled}
-                className="accent-emerald-500"
-                onChange={(event) => {
-                  const nextAutoAnalyzeEnabled = event.target.checked;
-                  setMetadata((prev: LeadListMetadata) => ({
-                    ...prev,
-                    autoAnalyzeCompletedToken: nextAutoAnalyzeEnabled
-                      ? null
-                      : prev.autoAnalyzeCompletedToken,
-                    autoAnalyzeEnabled: nextAutoAnalyzeEnabled,
-                  }));
-                  persistLeadListContent({
-                    nextAutoAnalyzeCompletedToken: nextAutoAnalyzeEnabled
-                      ? null
-                      : autoAnalyzeCompletedToken,
-                    nextAutoAnalyzeEnabled,
-                  });
-                  if (nextAutoAnalyzeEnabled) {
-                    autoAnalyzeRunRef.current = null;
+            {(() => {
+              const visible = dedupeLeadRows(displayLeads);
+              const unanalyzed = visible.filter(
+                (lead) => !isTerminalAnalysisState(lead, getProcessedDetailsForLead(processedDetails, leads, lead))
+              );
+              const allAnalyzed = visible.length > 0 && unanalyzed.length === 0;
+              const isProcessing = !!processingIds.length;
+              return (
+                <button
+                  className={`group relative inline-flex items-center gap-2 rounded-full px-5 py-2 text-sm font-semibold tracking-wide shadow-sm transition-all duration-200 ease-out
+                    disabled:cursor-not-allowed
+                    ${allAnalyzed
+                      ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-300 dark:ring-emerald-900"
+                      : isProcessing
+                        ? "bg-emerald-600 text-white"
+                        : "bg-emerald-600 text-white hover:bg-emerald-500 hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 active:shadow-sm"}
+                    ${unanalyzed.length === 0 || isProcessing ? "" : "animate-[zrai-pulse-subtle_2.4s_ease-in-out_infinite]"}
+                  `}
+                  data-testid="lead-list-analyze-new-btn"
+                  disabled={!unanalyzed.length || isProcessing}
+                  onClick={() =>
+                    void processLeads(
+                      unanalyzed.map((lead) => lead.id),
+                      {
+                        includeOutreach: false,
+                        forceRefresh: false,
+                        successMessage: `Analyzed ${unanalyzed.length} new lead${unanalyzed.length === 1 ? "" : "s"}.`,
+                        emptyMessage: "No new leads were analyzed.",
+                      }
+                    )
                   }
-                }}
-                type="checkbox"
-              />
-              Auto fast analyze
-            </label>
-            <button
-              className="rounded-md bg-emerald-600 px-3 py-2 text-xs text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={!dedupeLeadRows(displayLeads).length || !!processingIds.length}
-              onClick={() =>
-                void processLeads(
-                  dedupeLeadRows(displayLeads).map((lead) => lead.id),
-                  {
-                    includeOutreach: false,
-                    forceRefresh: true,
-                    successMessage: `Analyzed ${dedupeLeadRows(displayLeads).length} visible lead${dedupeLeadRows(displayLeads).length === 1 ? "" : "s"}.`,
-                    emptyMessage: "No visible leads were analyzed successfully.",
+                  title={
+                    allAnalyzed
+                      ? "Every visible lead has stored analysis. Open a lead and click Re-analyze if you want fresh data."
+                      : isProcessing
+                        ? `Analyzing ${processingIds.length} lead${processingIds.length === 1 ? "" : "s"}...`
+                        : `Run analysis on ${unanalyzed.length} new lead${unanalyzed.length === 1 ? "" : "s"} (uses cached data when available, costs credits only on new ones).`
                   }
-                )
-              }
-              type="button"
-            >
-              Analyze visible
-            </button>
+                  type="button"
+                >
+                  {isProcessing ? (
+                    <>
+                      <span aria-hidden className="inline-block size-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                      <span>Analyzing {processingIds.length}…</span>
+                    </>
+                  ) : allAnalyzed ? (
+                    <>
+                      <span aria-hidden className="inline-block size-1.5 rounded-full bg-emerald-500" />
+                      <span>All {visible.length} analyzed</span>
+                    </>
+                  ) : (
+                    <>
+                      <span
+                        aria-hidden
+                        className="inline-block size-1.5 rounded-full bg-white/90 transition-transform duration-200 group-hover:scale-150"
+                      />
+                      <span>Analyze {unanalyzed.length}{unanalyzed.length === visible.length ? "" : " new"}</span>
+                    </>
+                  )}
+                </button>
+              );
+            })()}
             {!!processingIds.length && (
               <button
-                className="rounded-md border border-red-500/50 px-3 py-2 text-xs text-red-300 transition hover:bg-red-500/10"
+                className="rounded-full border border-red-300 px-3 py-1.5 text-xs text-red-600 transition-all duration-150 hover:border-red-400 hover:bg-red-50 active:scale-95 dark:border-red-500/40 dark:text-red-300 dark:hover:bg-red-500/10"
+                data-testid="lead-list-stop-btn"
                 onClick={() => stopProcessing()}
                 type="button"
               >
-                Stop all
+                Stop
               </button>
             )}
           </div>
@@ -3724,11 +3780,14 @@ function LeadListContent({
                   {getLeadSummary(inspectorLead)}
                 </div>
               )}
-              {selectedLeadDetails?.error && (
-                <div className="mt-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
-                  {selectedLeadDetails.error}
-                </div>
-              )}
+              {(() => {
+                const sanitized = sanitizeOperatorError(selectedLeadDetails?.error);
+                return sanitized ? (
+                  <div className="mt-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200" data-testid="lead-inspector-error-banner">
+                    {sanitized}
+                  </div>
+                ) : null;
+              })()}
               <div className="mt-2 text-sm text-zinc-500">
                 {scoreNarrative.whyThisLead ||
                   scoreNarrative.nextBestAction ||
@@ -4404,7 +4463,7 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
       sortOrder: prev?.sortOrder ?? "desc",
       filter: prev?.filter ?? "",
       autoAnalyzeCompletedToken: prev?.autoAnalyzeCompletedToken ?? null,
-      autoAnalyzeEnabled: prev?.autoAnalyzeEnabled ?? true,
+      autoAnalyzeEnabled: prev?.autoAnalyzeEnabled ?? false,
       selectedLeadId: prev?.selectedLeadId ?? null,
       processedDetails: prev?.processedDetails ?? {},
     }));
@@ -4425,7 +4484,7 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
           filter: payload.filter || prev.filter || "",
           autoAnalyzeCompletedToken:
             payload.autoAnalyzeCompletedToken || prev.autoAnalyzeCompletedToken || null,
-          autoAnalyzeEnabled: payload.autoAnalyzeEnabled ?? prev.autoAnalyzeEnabled ?? true,
+          autoAnalyzeEnabled: payload.autoAnalyzeEnabled ?? prev.autoAnalyzeEnabled ?? false,
           leads: dedupeLeadRows(
             mergeLeadRows(
               dedupeLeadRows(sanitizeLeadRows(prev?.leads || [])),
@@ -4479,7 +4538,7 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
               currentPayload.autoAnalyzeCompletedToken ||
               null,
             autoAnalyzeEnabled:
-              payload.autoAnalyzeEnabled ?? currentPayload.autoAnalyzeEnabled ?? true,
+              payload.autoAnalyzeEnabled ?? currentPayload.autoAnalyzeEnabled ?? false,
             filter: payload.filter || currentPayload.filter || "",
             processedDetails: mergedDetails,
             selectedLeadId:
@@ -4592,18 +4651,32 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
             toast.error("No leads available to process.");
             return;
           }
+          // Default behaviour: skip already-analyzed leads to save credits.
+          // Use the lead-card "Re-analyze" or the toolbar "Re-analyze all"
+          // button when you explicitly want to refresh.
+          const candidateLeads = visibleLeads.filter(
+            (lead) =>
+              !isTerminalAnalysisState(
+                lead,
+                getProcessedDetailsForLead(mergedProcessedDetails, canonicalLeads, lead)
+              )
+          );
+          if (candidateLeads.length === 0) {
+            toast.success("All visible leads are already analyzed - nothing to do.");
+            return;
+          }
           const persistedTopLeads = await Promise.all(
-            visibleLeads.map((lead) =>
+            candidateLeads.map((lead) =>
               isUuidLeadId(lead.id) ? Promise.resolve(lead) : ensurePersistedLead(lead)
             )
           );
-          const replacedLeadRows = visibleLeads.reduce((nextLeads, lead, index) => {
+          const replacedLeadRows = candidateLeads.reduce((nextLeads, lead, index) => {
             const importedLead = persistedTopLeads[index];
             return importedLead.id === lead.id
               ? nextLeads
               : replaceLeadRow(nextLeads, lead.id, importedLead);
           }, canonicalLeads);
-          const replacedProcessedDetails = visibleLeads.reduce(
+          const replacedProcessedDetails = candidateLeads.reduce(
             (nextDetails, lead, index) =>
               persistedTopLeads[index].id === lead.id
                 ? nextDetails
@@ -4625,7 +4698,7 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
             body: JSON.stringify({
               lead_ids: Array.from(new Set(persistedTopLeads.map((lead) => lead.id))),
               include_outreach: false,
-              force_refresh: true,
+              force_refresh: false,
             }),
           });
           if (!response.ok) {
@@ -4694,7 +4767,7 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
           );
           const nextContent = serializeLeadListPayload(nextLeads, {
             autoAnalyzeCompletedToken: baseMetadata.autoAnalyzeCompletedToken || null,
-            autoAnalyzeEnabled: baseMetadata.autoAnalyzeEnabled ?? true,
+            autoAnalyzeEnabled: baseMetadata.autoAnalyzeEnabled ?? false,
             filter: baseMetadata.filter || "",
             processedDetails: nextProcessedDetails,
             selectedLeadId: nextSelectedLeadId,
@@ -4717,7 +4790,7 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
             `Analyzed ${processedLeads.length} visible lead${processedLeads.length === 1 ? "" : "s"}.`
           );
         } catch (error) {
-          toast.error(error instanceof Error ? error.message : "Processing failed");
+          toast.error(sanitizeOperatorError(error instanceof Error ? error.message : "Processing failed") || "Processing failed");
         }
       },
     },
@@ -4786,7 +4859,7 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
 
           toast.success(`Enriched ${enrichedLeads.length} lead${enrichedLeads.length === 1 ? "" : "s"}.`);
         } catch (error) {
-          toast.error(error instanceof Error ? error.message : "Enrichment failed");
+          toast.error(sanitizeOperatorError(error instanceof Error ? error.message : "Enrichment failed") || "Enrichment failed");
         }
       },
     },
@@ -4867,7 +4940,7 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
 
           toast.success(`Scored ${scoredLeads.length} lead${scoredLeads.length === 1 ? "" : "s"}.`);
         } catch (error) {
-          toast.error(error instanceof Error ? error.message : "Scoring failed");
+          toast.error(sanitizeOperatorError(error instanceof Error ? error.message : "Scoring failed") || "Scoring failed");
         }
       },
     },
