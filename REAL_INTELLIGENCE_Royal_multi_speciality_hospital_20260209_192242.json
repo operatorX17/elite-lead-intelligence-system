@@ -1,0 +1,104 @@
+{
+  "business_name": "Royal multi speciality hospital",
+  "location": "Hyderabad, Telangana",
+  "timestamp": "2026-02-09T19:22:32.379193",
+  "sources": [
+    {
+      "type": "google_maps",
+      "url": "https://www.google.com/maps/place/PRK+Hospitals+%7C+Best+Super+Speciality+Hospital+in+Chandanagar,+Hyderabad+%7C+24/7+Emergency+&+Ambulance+Services/@17.494099,78.3195372,17.5z/data=!4m6!3m5!1s0x3bcb929154b3c47b:0x9e56459887f55e90!8m2!3d17.4945867!4d78.3217072!16s/g/11f4pn7ml3?entry=ttu",
+      "title": "PRK Hospitals \u00b7 Sy No - 360, No - 5, 4 - 12-16, NH 65, Gangaram, Chanda Nagar, Hyderabad, Telangana 500050, India"
+    },
+    {
+      "type": "google",
+      "url": "https://www.google.com/maps/place/PRK+Hospitals+%7C+Best+Super+Speciality+Hospital+in+Chandanagar,+Hyderabad+%7C+24/7+Emergency+&+Ambulance+Services/@17.494099,78.3195372,17.5z/data=!4m6!3m5!1s0x3bcb929154b3c47b:0x9e56459887f55e90!8m2!3d17.4945867!4d78.3217072!16s/g/11f4pn7ml3?entry=ttu",
+      "title": "PRK Hospitals \u00b7 Sy No - 360, No - 5, 4 - 12-16, NH 65, Gangaram, Chanda Nagar, Hyderabad, Telangana 500050, India",
+      "description": "\u2605\u2605\u2605\u2605\u2606 \u00b7 Hospital"
+    }
+  ],
+  "signals": {
+    "pain_evidence": {
+      "missed_calls": [],
+      "booking_issues": [],
+      "delays": [],
+      "communication": []
+    }
+  },
+  "intelligence": {
+    "total_reviews": 0,
+    "avg_rating": 0,
+    "volume_score": 0,
+    "volume_level": "LOW",
+    "problem_count": 0,
+    "pain_mentions": 0,
+    "problem_score": 0,
+    "final_score": 0,
+    "tier": "C (COLD)"
+  },
+  "original_data": {
+    "hospital": {
+      "business_name": "Royal multi speciality hospital",
+      "location": "Hyderabad, Telangana",
+      "website": null,
+      "phone": "+91 99126 25247",
+      "bed_count": 100
+    },
+    "website_analysis": {
+      "status": "no_website"
+    },
+    "decision_makers": [
+      {
+        "role": "CEO/Managing Director",
+        "name": "To be found via LinkedIn",
+        "linkedin": "To be scraped",
+        "email_pattern": "ceo@royalmultispecialityhospital.com",
+        "priorities": [
+          "Revenue growth",
+          "Market share",
+          "Reputation"
+        ],
+        "pain_points": [
+          "Cash flow from claims",
+          "Competition",
+          "Regulatory compliance"
+        ],
+        "best_pitch": "Show ROI: \u20b935k/month to recover \u20b98-15 lakhs/month"
+      },
+      {
+        "role": "CFO/Finance Head",
+        "name": "To be found via LinkedIn",
+        "priorities": [
+          "Cost reduction",
+          "Revenue recovery",
+          "Financial reporting"
+        ],
+        "pain_points": [
+          "Claim rejections",
+          "Payment delays",
+          "Budget constraints"
+        ],
+        "best_pitch": "Free audit showing exact \u20b9 being lost"
+      }
+    ],
+    "revenue_opportunity": {
+      "estimated_bed_count": 100,
+      "monthly_claims": 1000,
+      "rejected_claims": 350,
+      "monthly_loss_inr": "\u20b987.5 lakhs",
+      "annual_loss_inr": "\u20b91050.0 lakhs",
+      "recoverable_70_percent": "\u20b961.2 lakhs/month",
+      "our_pricing": "\u20b935,000/month",
+      "roi": "175.0x",
+      "payback_period": "< 1 month"
+    },
+    "outreach": {
+      "to": "ceo@royalmultispecialityhospital.com",
+      "subject": "Recovering \u20b987.5 lakhs/month for Royal multi speciality hospital",
+      "body": "Dear To be found via LinkedIn,\n\nI hope this email finds you well.\n\nI came across Royal multi speciality hospital in Hyderabad, Telangana and noticed you're processing approximately 1000 insurance claims monthly.\n\nBased on industry benchmarks, you're likely losing \u20b987.5 lakhs every month due to:\n\u2022 30-40% claim rejection rate\n\u2022 Manual processing delays (45-90 days)\n\u2022 Data entry errors causing rejections\n\n**We've built an AI system specifically for Indian hospitals that:**\n\u2705 Validates claims BEFORE submission (reduces rejections to <10%)\n\u2705 Auto-fills insurance forms in seconds (zero errors)\n\u2705 Tracks and recovers rejected claims automatically\n\n**The Numbers:**\n\u2022 Your estimated monthly loss: \u20b987.5 lakhs\n\u2022 Recoverable with our system: \u20b961.2 lakhs/month\n\u2022 Our cost: \u20b935,000/month\n\u2022 Your ROI: 175.0x return\n\u2022 Payback: < 1 month\n\n**Free Audit Offer:**\nLet me analyze your last 100 claims and show you:\n1. Exact rejection patterns\n2. Exact \u20b9 amount being lost\n3. Exact recovery potential\n\nTakes 2 days. No cost. No commitment.\n\nWould you be open to a 15-minute call this week?\n\nBest regards,\n[Your Name]\n[Your Company]\n[Your Phone/WhatsApp]\n\nP.S. We've already helped hospitals in Hyderabad and Bangalore recover \u20b95-12 lakhs/month. Happy to share case studies.\n",
+      "follow_up_1": "Quick follow-up - did you get a chance to review my email about recovering \u20b987.5 lakhs/month?",
+      "follow_up_2": "Would a free claim audit be helpful? Takes 2 days, shows exact \u20b9 being lost.",
+      "call_script": "Hi, this is [Name]. I sent you an email about recovering \u20b987.5 lakhs/month in rejected claims. Do you have 2 minutes?"
+    },
+    "intelligence_score": 85,
+    "action_priority": "HIGH"
+  }
+}

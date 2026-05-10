@@ -1,0 +1,257 @@
+---
+inclusion: always
+---
+These rules exist to preserve determinism, safety, and long-term evolvability. They are intentionally strict.
+
+# ZRAI Lead OS — MASTER RULES
+
+You are the **only** engineer on ZRAI Lead OS. If you break these rules, the work is invalid.
+
+## 0. Scope & Authority
+
+- You MUST treat the ZRAI requirements + design docs as **law**.
+- You MAY NOT change architecture, stack, or flows unless explicitly requested in the spec.
+- If anything is ambiguous, you MUST ask for clarification via comments instead of guessing.
+
+---
+
+## 1. Spec Obedience
+
+1. Implement EXACTLY what is written in:
+   - `requirements.md` (ZRAI Lead OS Requirements)
+   - `design.md` / `paste.txt` design document
+   - DB schemas in the spec (Supabase/Postgres tables)
+2. Do NOT:
+   - Invent new features.
+   - Simplify/remove safety layers (governance, audit, eval, budget guards).
+   - Change field names, types, or enum values.
+3. If you need to deviate, you MUST:
+   - Explain why.
+   - Propose a minimal, explicit change.
+   - Mark it clearly as `// DEVIATION: ...` or `<!-- DEVIATION: ... -->`.
+
+---
+
+## 2. MCP USAGE (DEV-TIME ONLY)
+
+You MUST use MCP servers during **development/code generation**, NOT at runtime.
+
+- Use Context 7 / Brave Search MCP for:
+  - API docs and examples:  
+    `@brave "Apify Meta Ads actor input schema 2026"`  
+    `@brave "Steel.dev screenshot API example"`
+- Use other docs MCPs when available:
+  - Apify MCP: actor schemas, input/output docs.
+  - Steel.dev MCP: browser API reference and best practices.
+  - LangGraph MCP: node/checkpointer examples, conditional routing patterns.
+
+Rules:
+
+- BEFORE implementing any integration with Apify, Steel.dev, or LangGraph,
+  you MUST query the relevant MCP server for:
+  - Current endpoint paths.
+  - Request/response schema.
+  - Auth patterns.
+- You MUST align code with what MCP docs show.
+- You MUST NOT call MCP servers from production runtime code:
+  - Runtime MUST use official SDKs / HTTP clients only.
+  - MCP is for **design, scaffolding, and debugging**.
+
+---
+
+## 3. Runtime Architecture (Non-Negotiable)
+
+Runtime MUST follow this structure:
+
+- **LangGraph** as the orchestration engine:
+  - Each agent is a separate LangGraph node function.
+  - Use typed `LeadState` / per-table state objects.
+  - Use conditional edges for routing (e.g., skip audit when budget/circuit open).
+
+- **SDKs, NOT MCP, at runtime**:
+  - Apify: use the official `apify-client` or REST API.
+  - Steel.dev: use official SDK or direct HTTP/WebSocket calls.
+  - Pinecone (or chosen vector DB): use official SDK.
+  - Supabase/Postgres: use official client for queries/checkpointing.
+
+- **Checkpoints**:
+  - Use Postgres/Supabase as LangGraph checkpointer.
+  - EVERY node must checkpoint after successful completion.
+
+You MUST NOT wrap production network calls behind MCP servers.
+
+---
+
+## 4. Modularity & Nodes
+
+- Each “agent” in the design doc MUST be its **own node**:
+  - `Discovery_Agent` → `discovery_node`
+  - `Enrichment_Agent` → `enrichment_node`
+  - `Intent_Agent` → `intent_node`
+  - `Audit_Agent` (Steel) → `audit_node`
+  - `Scoring_Agent` → `scoring_node`
+  - `Outreach_Agent` → `outreach_node`
+  - `Conversation_Agent` → `conversation_node`
+  - `Governance_Agent` → `governance_node`
+  - `Eval_Agent` → `eval_node`
+- Nodes MUST:
+  - Take a well-typed state object.
+  - Return the updated state (pure function style, plus persisted side effects).
+  - Not reach across into other nodes’ internals.
+
+If logic grows, create **subgraphs**, not monolithic nodes.
+
+---
+
+## 5. Database & Schemas
+
+- You MUST implement schemas exactly as in the design:
+  - `leads`, `leadstate`, `enrichmentdata`, `intentdata`, `proofartifacts`,
+    `scoringresults`, `outreachqueue`, `conversations`, `negativesignals`,
+    `donotcontact`, `auditlog`, `usagemetrics`, `playbooks`, `circuitbreakers`, etc.
+- You MUST:
+  - Generate SQL migrations that match the spec.
+  - Keep field names, types, and constraints exactly aligned.
+  - Add indexes as specified.
+
+You may not “simplify” or rename fields for convenience.
+
+---
+
+## 6. Config-Driven Everything
+
+- NO hard-coded:
+  - Niches, geos, scoring weights.
+  - Rate limits, budgets, disqualification rules.
+- All such values MUST live in config files:
+  - `config/niches.yaml`
+  - `config/policies.yaml`
+  - `config/agents.yaml`
+  - `config/budgets.yaml`
+- The graph must read configs at startup and apply them.
+
+If a behavior differs by niche/geo/offer, it MUST be configuration, not code.
+
+---
+
+## 7. Safety & Governance
+
+You MUST implement:
+
+- Idempotency for ALL external writes:
+  - Use `idempotency_key` stored in `auditlog`.
+- Circuit breakers per node/tool:
+  - `circuitbreakers` table.
+  - OPEN → route around, respect timeouts.
+- Kill switches:
+  - Global and per-module flags in config.
+- Rate limits & cool-downs:
+  - Per-domain, per-channel, per-day caps.
+  - Negative signals trigger longer cool-downs.
+- Negative memory:
+  - `negativesignals` and `donotcontact` tables must be enforced on every send.
+
+Any shortcut that skips these protections is forbidden.
+
+---
+
+## 8. CLI & Execution Modes
+
+You MUST expose a CLI with at least:
+
+- `run_daily --config <path>`
+- `replay_run --run_id <id>`
+- `resume_failed --since <timestamp>`
+- `dry_run --limit N`
+
+Rules:
+
+- `dry_run` MUST NOT perform external writes.
+- `replay_run` MUST be deterministic for same inputs/config.
+- Output MUST include summary: successes, failures, errors.
+
+---
+
+## 9. Evaluation, Metrics, Observability
+
+You MUST:
+
+- Implement the Eval_Harness:
+  - Golden dataset.
+  - Offline replay.
+  - A/B testing and rollback rules.
+- Track metrics:
+  - `reply_rate`, `meeting_rate`, `cost_per_qualified_meeting`,
+    `false_positive_rate`, `human_override_rate`, daily LLM/browser/Apify usage.
+- Log:
+  - Full execution traces per lead (node latency, LLM tokens, errors).
+
+If a change cannot be evaluated via replay/A-B, do not make it silently.
+
+---
+
+## 10. Use of RAG & Playbooks
+
+- You MUST use the `playbooks` table + vector store (e.g., Pinecone) to:
+  - Retrieve outreach examples.
+  - Objection handling snippets.
+  - Niche-specific notes.
+- For any generated outreach or conversation:
+  - Retrieve relevant chunks first.
+  - Condition the LLM on these chunks (RAG).
+- Version playbooks and link to `run_id` for reproducibility.
+
+No “freestyle” LLM output without grounding on playbooks.
+
+---
+
+## 11. Persuasion & Compliance in Outreach
+
+- Outreach MUST:
+  - Use the required 4-part structure: Observation → Impact → Offer → Single CTA.
+  - Include clear opt-out for email.
+  - Use conservative, believable numbers.
+- Persuasion:
+  - Prefer social proof, specificity, and loss aversion.
+  - Never fabricate results; if not sure, stay generic.
+
+If a message could be considered spammy or misleading, revise it.
+
+---
+
+## 12. Error Handling & Budget Guards
+
+You MUST:
+
+- Retry transient errors with exponential backoff.
+- Respect all budget limits from config:
+  - LLM tokens, browser sessions, Apify runs.
+- On budget exceed:
+  - Stop new work for that resource.
+  - Log `budget_exceeded`.
+  - Surface visible alert.
+
+Fatal errors MUST never crash the whole system; only the affected lead/run.
+
+---
+
+## 13. Clarification Protocol
+
+If any of the following is true:
+
+- Spec is ambiguous.
+- API docs (via MCP) conflict with current code.
+- A requirement cannot be implemented as written.
+
+Then you MUST:
+
+- Stop and write a clear question:
+  - `NEED CLARIFICATION: [short description of conflict/question]`
+- Propose exactly one or two minimal options.
+
+Never silently guess or delete functionality.
+
+---
+
+If you follow these rules, your output is valid ZRAI Lead OS code.  
+If you break them, your work is rejected.

@@ -1,0 +1,12 @@
+Checking WhatsApp Senders for SID ACa672dc6713e59996194f4843a01ff46c
+
+--- INCOMING PHONE NUMBERS ---
+Phone: +15574674237 SID: PN21b02bf6423b2f1abf0df6eef6febc0f SMS URL: https://creations-corner-color-libraries.trycloudflare.com/webhook/whatsapp StatusCallback: 
+Phone: +18457738083 SID: PN0a4698828d7e64604cdf73b6ba1aa33c SMS URL: https://creations-corner-color-libraries.trycloudflare.com/webhook/whatsapp StatusCallback: None
+
+--- MESSAGING SERVICES ---
+Service: Ssmileathon WhatsApp Bot SID: MG97e29c78ccb2c195b513cbf1dcc8b1ae Inbound URL: https://58af-157-50-177-79.ngrok-free.app/webhook/whatsapp
+Service: smileathonZ SID: MGa5e1908946698744dae2a95c90ec5088 Inbound URL: https://58af-157-50-177-79.ngrok-free.app/webhook/whatsapp
+  -> Sender: +15574674237
+Service: Default Messaging Service for Conversations SID: MGe9f747a4231fb92cb62296a5354d9ffa Inbound URL: https://58af-157-50-177-79.ngrok-free.app/webhook/whatsapp
+Service: Ssmileathon WhatsApp Bot SID: MGf885abe10feb46868631f5fbfe0294a1 Inbound URL: https://58af-157-50-177-79.ngrok-free.app/webhook/whatsapp

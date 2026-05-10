@@ -1,0 +1,92 @@
+# Budget Configuration for ZRAI Lead OS
+# Requirements: 23 (Cost Guardrails and Budget Controls)
+
+# Daily budget limits
+daily_limits:
+  # LLM token limits
+  llm:
+    tokens: 1000000  # 1M tokens per day
+    cost_usd: 50.00  # $50 max per day
+  
+  # Browser session limits (Steel.dev)
+  browser:
+    sessions: 500  # 500 sessions per day
+    cost_usd: 25.00  # $25 max per day
+  
+  # Scraper run limits (Apify)
+  scraper:
+    runs: 100  # 100 actor runs per day
+    cost_usd: 20.00  # $20 max per day
+
+# Per-operation costs (for tracking)
+operation_costs:
+  llm:
+    # Cost per 1K tokens (input + output average)
+    gemini_flash: 0.0001
+    gpt4o: 0.005
+    claude_sonnet: 0.003
+  
+  browser:
+    # Cost per session
+    steel_session: 0.05
+  
+  scraper:
+    # Cost per run (varies by actor)
+    meta_ads_scraper: 0.10
+    google_maps_scraper: 0.05
+    website_crawler: 0.02
+
+# Alert thresholds (percentage of daily limit)
+alert_thresholds:
+  warning: 0.80  # Alert at 80% usage
+  critical: 0.95  # Critical alert at 95% usage
+
+# Reset configuration
+reset:
+  # Time to reset daily counters (UTC)
+  reset_time_utc: "00:00"
+  
+  # Timezone for reporting
+  reporting_timezone: "America/New_York"
+
+# Budget allocation by agent
+agent_budgets:
+  discovery:
+    scraper_percentage: 0.60  # 60% of scraper budget
+  
+  audit:
+    browser_percentage: 0.80  # 80% of browser budget
+  
+  outreach:
+    llm_percentage: 0.40  # 40% of LLM budget
+  
+  conversation:
+    llm_percentage: 0.40  # 40% of LLM budget
+  
+  scoring:
+    llm_percentage: 0.10  # 10% of LLM budget
+  
+  enrichment:
+    llm_percentage: 0.10  # 10% of LLM budget
+
+# Emergency budget (for critical operations)
+emergency_reserve:
+  enabled: true
+  percentage: 0.10  # Reserve 10% for emergencies
+  
+  # Operations that can use emergency reserve
+  allowed_operations:
+    - "escalation_notification"
+    - "critical_alert"
+    - "rollback_operation"
+
+# Cost tracking
+tracking:
+  # Store detailed cost breakdown
+  detailed_tracking: true
+  
+  # Retention period for cost data (days)
+  retention_days: 90
+  
+  # Export format
+  export_format: "csv"

@@ -1,0 +1,9 @@
+﻿Checking Twilio logs for SID ACa672dc6713e59996194f4843a01ff46c
+
+--- RECENT MESSAGES ---
+[inbound] From: whatsapp:+918310002656 To: whatsapp:+15558485374 Status: received Error: None
+[inbound] From: whatsapp:+918310002656 To: whatsapp:+15558485374 Status: received Error: None
+[inbound] From: whatsapp:+918310002656 To: whatsapp:+15558485374 Status: received Error: None
+[inbound] From: whatsapp:+918310002656 To: whatsapp:+15558485374 Status: received Error: None
+[inbound] From: whatsapp:+918310002656 To: whatsapp:+15558485374 Status: received Error: None
+Error fetching alerts: HTTP Error 404: Not Found

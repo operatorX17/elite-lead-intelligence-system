@@ -1,0 +1,100 @@
+﻿to be reachable):  |
+2026-03-09T16:30:55Z 
+INF |  https://creation
+s-corner-color-librarie
+s.trycloudflare.com    
+                       
+     |
+2026-03-09T16:30:55Z 
+INF +------------------
+-----------------------
+-----------------------
+-----------------------
+-----+
+2026-03-09T16:30:55Z 
+INF Cannot determine 
+default configuration 
+path. No file 
+[config.yml 
+config.yaml] in 
+[~/.cloudflared 
+~/.cloudflare-warp 
+~/cloudflare-warp]
+2026-03-09T16:30:55Z 
+INF Version 2026.2.0 
+(Checksum b3279f2186a1c
+3c438ad5865e802bbbec260
+90c5d3fdb4ac1113f1143a9
+4837a)
+2026-03-09T16:30:55Z 
+INF GOOS: windows, 
+GOVersion: go1.24.13, 
+GoArch: amd64
+2026-03-09T16:30:55Z 
+INF Settings: 
+map[ha-connections:1 
+protocol:quic url:http:
+//localhost:8000]
+2026-03-09T16:30:55Z 
+INF cloudflared will 
+not automatically 
+update on Windows 
+systems.
+2026-03-09T16:30:55Z 
+INF Generated 
+Connector ID: ea6f8125-
+2998-4b63-bf06-010037a1
+6437
+2026-03-09T16:30:55Z 
+INF Initial protocol 
+quic
+2026-03-09T16:30:55Z 
+INF ICMP proxy will 
+use 192.168.31.246 as 
+source for IPv4
+2026-03-09T16:30:55Z 
+INF ICMP proxy will 
+use fe80::7a91:8120:8af
+1:60c4 in zone 
+Ethernet as source for 
+IPv6
+2026-03-09T16:30:55Z 
+INF cloudflared does 
+not support loading 
+the system root 
+certificate pool on 
+Windows. Please use 
+--origin-ca-pool 
+<PATH> to specify the 
+path to the 
+certificate pool
+2026-03-09T16:30:55Z 
+INF ICMP proxy will 
+use 192.168.31.246 as 
+source for IPv4
+2026-03-09T16:30:55Z 
+INF Tunnel connection 
+curve preferences: 
+[X25519MLKEM768 
+CurveP256] connIndex=0 
+event=0 
+ip=198.41.192.107
+2026-03-09T16:30:55Z 
+INF ICMP proxy will 
+use fe80::7a91:8120:8af
+1:60c4 in zone 
+Ethernet as source for 
+IPv6
+2026-03-09T16:30:55Z 
+INF Starting metrics 
+server on 
+127.0.0.1:20241/metrics
+2026-03-09T16:30:56Z 
+INF Registered tunnel 
+connection connIndex=0 
+connection=e6c88666-292
+e-4828-9522-5980e92dc86
+c event=0 
+ip=198.41.192.107 
+location=blr01 
+protocol=quic
