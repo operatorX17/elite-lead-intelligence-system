@@ -322,6 +322,27 @@ class ApifyClient:
             logger.error("Google Ads scraper error: %s", e)
             raise
 
+    def run_instagram_profile_scraper(
+        self,
+        profile_url: str,
+        **_: Any,
+    ) -> Dict[str, Any]:
+        """Stub for the deprecated Apify Instagram Profile Scraper actor.
+
+        The system used to call a paid Instagram profile actor here; it has
+        been replaced by `_fetch_instagram_profile_snapshot` in the
+        EnrichmentAgent, which scrapes public OG metadata directly. We keep
+        this method on ApifyClient as a graceful no-op so any older code path
+        (or stale persisted error) cannot raise AttributeError. Returns {} so
+        callers fall through to the lighter-weight extractor without
+        emitting a red error banner in the inspector UI.
+        """
+        logger.debug(
+            "run_instagram_profile_scraper called for %s; returning empty (stub).",
+            profile_url,
+        )
+        return {}
+
     def run_instagram_bio_extractor(
         self,
         username: str,

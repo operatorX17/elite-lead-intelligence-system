@@ -2889,6 +2889,40 @@ def _truth_state_label(state: str) -> str:
     }.get(state, "Needs verification")
 
 
+# Mirror of ScoringAgent.MIN_TRUTH_COVERAGE_FOR_JUDGMENT - kept here so the
+# read-time gate doesn't import the full agent (which pulls in LangGraph).
+_MIN_TRUTH_COVERAGE_FOR_JUDGMENT = 2
+
+
+def _apply_read_time_judgment_gate(
+    scoring: Dict[str, Any], signal_facts: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Apply the sparse-truth scoring gate to a legacy scoring row.
+
+    Stored scoring rows from before the judgment-gate landed lack
+    `judgment_state` and `truth_coverage`. We compute them on the fly at
+    read time so the inspector never shows a confident A/B commercial
+    judgment on a row with sparse verified truth - even for legacy data.
+    """
+    coverage = _commercial_truth_coverage(signal_facts)
+    out = dict(scoring)
+    out["truth_coverage"] = coverage
+    if coverage < _MIN_TRUTH_COVERAGE_FOR_JUDGMENT:
+        out["judgment_state"] = "needs_verification"
+        out["judgment_label"] = "Needs verification"
+        out["original_lead_tier"] = scoring.get("lead_tier")
+        out["lead_tier"] = "C"
+        out["should_skip_outreach"] = True
+        out["score_gating_reason"] = (
+            f"only {coverage} verified commercial fact(s); minimum is "
+            f"{_MIN_TRUTH_COVERAGE_FOR_JUDGMENT}"
+        )
+    else:
+        out["judgment_state"] = "ready"
+        out["judgment_label"] = "Ready for outreach"
+    return out
+
+
 def build_site_truth_summary_from_signal_facts(signal_facts: Optional[Dict[str, Any]]) -> Optional[str]:
     if not signal_facts:
         return None
@@ -4008,6 +4042,13 @@ def get_processed_details_for_lead(db, lead_id: str) -> Dict[str, Any]:
         for item in outreach_rows
     ]
 
+    # Read-time scoring gate: stored scoring rows from before the
+    # judgment-gate landed lack `judgment_state`/`truth_coverage`. Apply the
+    # same gating logic at read time so the inspector never shows a confident
+    # commercial judgment on sparse truth, even for legacy rows.
+    if scoring and signal_facts and not scoring.get("judgment_state"):
+        scoring = _apply_read_time_judgment_gate(scoring, signal_facts)
+
     analysis_state = derive_analysis_state(
         enrichment=enrichment,
         intent=intent,
@@ -4047,6 +4088,17 @@ def get_processed_details_for_lead(db, lead_id: str) -> Dict[str, Any]:
         "analysis_updated_at": analysis_updated_at,
         "signals_version": SIGNALS_VERSION,
         "analysis_bundle": analysis_bundle,
+        # Stale-error guard: if the lead is currently `analyzed`, suppress any
+        # last_error inherited from a prior failed run (e.g. the deprecated
+        # `run_instagram_profile_scraper` AttributeError that we already
+        # handle gracefully via a no-op stub on ApifyClient). The frontend
+        # inspector renders this as a red banner; surfacing a stale error on
+        # a successfully-analyzed lead destroys operator trust.
+        "error": (
+            None
+            if analysis_state == "analyzed"
+            else (lead_state or {}).get("last_error") or None
+        ),
     }
 
 

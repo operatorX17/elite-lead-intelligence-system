@@ -1761,7 +1761,14 @@ function mergeProcessedLeadDetailsRecords(
     analysis_state: primary.analysis_state ?? secondary.analysis_state,
     analysis_updated_at: primary.analysis_updated_at ?? secondary.analysis_updated_at,
     signals_version: primary.signals_version ?? secondary.signals_version,
-    error: primary.error ?? secondary.error,
+    // Clear stale error banner when the latest state is a successful analysis.
+    // Prevents an old failed-run error (like the deprecated
+    // run_instagram_profile_scraper AttributeError) from haunting the UI
+    // after a re-analysis succeeded.
+    error:
+      primary.analysis_state === "analyzed"
+        ? undefined
+        : primary.error ?? (secondary.analysis_state === "analyzed" ? undefined : secondary.error),
     outreach: primary.outreach ?? secondary.outreach ?? [],
   };
 }
