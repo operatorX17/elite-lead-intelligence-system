@@ -132,20 +132,20 @@ def test_lead_list_primary_analyze_button_skips_analyzed():
     )
 
 
-def test_keyboard_shortcut_analyze_visible_skips_already_analyzed():
-    """The artifact actions[] entry for "Analyze visible" is the keyboard
+def test_keyboard_shortcut_analyze_new_leads_skips_already_analyzed():
+    """The artifact actions[] entry for "Analyze new leads" is the keyboard
     shortcut equivalent of the toolbar button. It must also skip already-
     analyzed leads and run cache-first."""
     text = _read("frontend", "artifacts", "zrai", "lead-list", "client.tsx")
-    # Find the action with label "Analyze visible".
-    block_start = text.index('label: "Analyze visible"')
+    # Find the action with label "Analyze new leads".
+    block_start = text.index('label: "Analyze new leads"')
     block = text[block_start:block_start + 6000]
     assert "isTerminalAnalysisState" in block, (
-        "The 'Analyze visible' shortcut must filter out already-analyzed "
+        "The 'Analyze new leads' shortcut must filter out already-analyzed "
         "leads before sending them to the backend."
     )
     assert "force_refresh: false" in block, (
-        "The 'Analyze visible' shortcut must request cache-first so the "
+        "The 'Analyze new leads' shortcut must request cache-first so the "
         "backend skips re-running the LangGraph pipeline on analyzed leads."
     )
 

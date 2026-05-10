@@ -3065,7 +3065,7 @@ function LeadListContent({
         includeOutreach: false,
         forceRefresh: false,
         successMessage: `Auto-analyzed ${candidates.length} lead${candidates.length === 1 ? "" : "s"} for the inspector.`,
-        emptyMessage: "Auto-analysis did not finish any leads yet. Use Analyze visible to retry.",
+        emptyMessage: "Auto-analysis did not finish any leads yet. Use Analyze new leads to retry.",
       }
     ).then((completed) => {
       if (!completed) {
@@ -4466,7 +4466,7 @@ function LeadListContent({
             </div>
             {isSelectedLeadProcessing && (
               <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-200">
-                Running fast lead analysis for this lead: enrichment, intent fit, scoring, and backend truth sync. Click{" "}
+                Running lead intelligence for this lead: enrichment, intent fit, scoring, and backend truth sync. Click{" "}
                 Stop analyze to cancel it.
               </div>
             )}
@@ -4638,8 +4638,8 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
     },
     {
       icon: <span className="font-semibold text-[10px]">AI</span>,
-      label: "Analyze visible",
-      description: "Run analysis truth, scoring, and proof for all visible leads",
+      label: "Analyze new leads",
+      description: "Analyze only visible leads that do not already have stored backend truth",
       onClick: async ({ content, metadata, setArtifact, setMetadata }) => {
         try {
           const contentPayload = parseLeadListPayload(content);
@@ -4678,8 +4678,8 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
             return;
           }
           // Default behaviour: skip already-analyzed leads to save credits.
-          // Use the lead-card "Re-analyze" or the toolbar "Re-analyze all"
-          // button when you explicitly want to refresh.
+          // Use the lead inspector "Re-analyze" button when you explicitly want
+          // to spend credits refreshing an already-analyzed lead.
           const candidateLeads = visibleLeads.filter(
             (lead) =>
               !isTerminalAnalysisState(
@@ -4688,7 +4688,7 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
               )
           );
           if (candidateLeads.length === 0) {
-            toast.success("All visible leads are already analyzed - nothing to do.");
+            toast.success("All visible leads already have stored backend truth - nothing to do.");
             return;
           }
           const persistedTopLeads = await Promise.all(
