@@ -845,7 +845,7 @@ function LeadCardContent({
       return;
     }
 
-    toast.success("Analysis is still running. Use Refresh truth in a moment.");
+    toast.success("Analysis is still running. Try Re-analyze in a moment.");
   };
 
   const analyzeLead = async (forceRefresh: boolean = false) => {
@@ -1817,7 +1817,7 @@ export const leadCardArtifact = new Artifact<"lead-card", LeadCardMetadata>({
             return;
           }
 
-          toast.success("Analysis is still running. Use Refresh truth in a moment.");
+          toast.success("Analysis is still running. Try Re-analyze in a moment.");
           return;
         }
 
