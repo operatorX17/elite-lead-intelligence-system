@@ -964,6 +964,153 @@ function formatSocialMetric(value: number | null | undefined) {
   return new Intl.NumberFormat("en-US", { notation: value >= 1000 ? "compact" : "standard" }).format(value);
 }
 
+function coerceSocialMetric(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const normalized = value.replace(/[,\s]/g, "").trim().toLowerCase();
+    const match = normalized.match(/^(\d+(?:\.\d+)?)([km])?$/);
+    if (!match) {
+      return undefined;
+    }
+    const amount = Number(match[1]);
+    if (!Number.isFinite(amount)) {
+      return undefined;
+    }
+    return Math.round(amount * (match[2] === "m" ? 1_000_000 : match[2] === "k" ? 1_000 : 1));
+  }
+  return undefined;
+}
+
+function firstDefinedMetric(...values: unknown[]) {
+  for (const value of values) {
+    const metric = coerceSocialMetric(value);
+    if (metric != null) {
+      return metric;
+    }
+  }
+  return undefined;
+}
+
+function getFirstSocialUrl(signalFacts: SignalFacts, key: "instagram" | "youtube") {
+  const value = signalFacts.social_profiles?.[key];
+  const candidate = Array.isArray(value) ? value[0] : value;
+  return typeof candidate === "string" && candidate ? candidate : undefined;
+}
+
+function usernameFromInstagramUrl(url: string | undefined) {
+  if (!url) {
+    return undefined;
+  }
+  const match = url.match(/instagram\.com\/([^/?#]+)/i);
+  return match?.[1] && !["p", "reel", "stories"].includes(match[1].toLowerCase())
+    ? match[1].replace(/^@/, "")
+    : undefined;
+}
+
+function getDisplayInstagramProfile(signalFacts: SignalFacts) {
+  const raw = signalFacts as any;
+  const profile = { ...(signalFacts.instagram_profile || raw.instagram || {}) };
+  const profileUrl = profile.profile_url || profile.url || getFirstSocialUrl(signalFacts, "instagram");
+  const followers = firstDefinedMetric(
+    profile.followers_count,
+    profile.followers,
+    raw.instagram_followers,
+    raw.instagram_followers_count,
+    raw.instagram_profile_followers,
+    raw.social_metrics?.instagram_followers,
+    raw.social_metrics?.instagram?.followers_count,
+    raw.social_metrics?.instagram?.followers
+  );
+  const posts = firstDefinedMetric(
+    profile.posts_count,
+    profile.posts,
+    raw.instagram_posts,
+    raw.instagram_posts_count,
+    raw.social_metrics?.instagram_posts,
+    raw.social_metrics?.instagram?.posts_count
+  );
+  const following = firstDefinedMetric(
+    profile.following_count,
+    profile.following,
+    raw.instagram_following,
+    raw.instagram_following_count,
+    raw.social_metrics?.instagram?.following_count
+  );
+
+  if (!profileUrl && followers == null && posts == null && !signalFacts.instagram_present) {
+    return null;
+  }
+
+  return {
+    ...profile,
+    profile_url: profileUrl,
+    username: profile.username || usernameFromInstagramUrl(profileUrl),
+    followers_count: followers,
+    following_count: following,
+    posts_count: posts,
+  };
+}
+
+function getDisplayYouTubeChannel(signalFacts: SignalFacts) {
+  const raw = signalFacts as any;
+  const channel = { ...(signalFacts.youtube_channel || raw.youtube || {}) };
+  const channelUrl = channel.channel_url || channel.url || getFirstSocialUrl(signalFacts, "youtube");
+  const subscribers = firstDefinedMetric(
+    channel.subscriber_count,
+    channel.subscribers,
+    raw.youtube_subscribers,
+    raw.youtube_subscriber_count,
+    raw.social_metrics?.youtube_subscribers,
+    raw.social_metrics?.youtube?.subscriber_count
+  );
+  const totalViews = firstDefinedMetric(
+    channel.total_views,
+    channel.views,
+    raw.youtube_views,
+    raw.youtube_total_views,
+    raw.social_metrics?.youtube_views,
+    raw.social_metrics?.youtube?.total_views
+  );
+  const totalVideos = firstDefinedMetric(
+    channel.total_videos,
+    channel.videos,
+    raw.youtube_videos,
+    raw.youtube_total_videos,
+    raw.social_metrics?.youtube?.total_videos
+  );
+
+  if (!channelUrl && subscribers == null && totalViews == null && !signalFacts.youtube_present) {
+    return null;
+  }
+
+  return {
+    ...channel,
+    channel_url: channelUrl,
+    subscriber_count: subscribers,
+    total_views: totalViews,
+    total_videos: totalVideos,
+  };
+}
+
+function getDoctorInstagramProfiles(signalFacts: SignalFacts) {
+  const directProfiles = Array.isArray(signalFacts.doctor_instagram_profiles)
+    ? signalFacts.doctor_instagram_profiles
+    : [];
+  const nestedProfiles = (signalFacts.doctor_profiles || [])
+    .map((doctor) => doctor.instagram_profile)
+    .filter(Boolean);
+  return [...directProfiles, ...nestedProfiles]
+    .map((profile: any) => ({
+      ...profile,
+      followers_count: firstDefinedMetric(profile.followers_count, profile.followers),
+      posts_count: firstDefinedMetric(profile.posts_count, profile.posts),
+    }))
+    .filter((profile: any) => profile.profile_url || profile.username || profile.followers_count != null)
+    .slice(0, 5);
+}
+
 function formatSocialDate(value: string | null | undefined) {
   if (!value) {
     return "-";
@@ -1908,7 +2055,7 @@ function serializeLeadListPayload(
 ) {
   return JSON.stringify({
     autoAnalyzeCompletedToken: metadata?.autoAnalyzeCompletedToken || null,
-    autoAnalyzeEnabled: metadata?.autoAnalyzeEnabled ?? false,
+    autoAnalyzeEnabled: false,
     filter: metadata?.filter || "",
     leads,
     processedDetails: metadata?.processedDetails || {},
@@ -2178,7 +2325,9 @@ function parseLeadListPayload(content: string): {
       leads: canonical.leads,
       processedDetails: canonical.processedDetails,
       autoAnalyzeCompletedToken: payload.autoAnalyzeCompletedToken || null,
-      autoAnalyzeEnabled: payload.autoAnalyzeEnabled ?? false,
+      // Never trust saved artifact content to auto-run analysis on open.
+      // Analysis must be an explicit operator action to avoid burning credits.
+      autoAnalyzeEnabled: false,
       selectedLeadId: canonical.selectedLeadId,
       sortBy: payload.sortBy || "score",
       sortOrder: payload.sortOrder === "asc" ? "asc" : "desc",
@@ -2255,8 +2404,9 @@ function LeadListContent({
       ? dedupeLeadRows([sanitizeLeadRecord(fallbackVisibleLead)])
       : [];
   const persistedSelectedLeadId = canonicalState.selectedLeadId || null;
-  const autoAnalyzeEnabled =
-    metadata?.autoAnalyzeEnabled ?? contentPayload.autoAnalyzeEnabled ?? false;
+  // Hard-disabled: older saved canvases may contain autoAnalyzeEnabled=true.
+  // Opening or refreshing the canvas must never re-run lead analysis.
+  const autoAnalyzeEnabled = false;
   const autoAnalyzeCompletedToken =
     metadata?.autoAnalyzeCompletedToken ||
     contentPayload.autoAnalyzeCompletedToken ||
@@ -2346,11 +2496,7 @@ function LeadListContent({
         snapshotPayload.autoAnalyzeCompletedToken ||
         currentPayload.autoAnalyzeCompletedToken ||
         null,
-      autoAnalyzeEnabled:
-        metadata?.autoAnalyzeEnabled ??
-        snapshotPayload.autoAnalyzeEnabled ??
-        currentPayload.autoAnalyzeEnabled ??
-        true,
+      autoAnalyzeEnabled: false,
       filter: metadata?.filter || snapshotPayload.filter || currentPayload.filter || "",
       processedDetails: canonicalSnapshotState.processedDetails,
       selectedLeadId: canonicalSnapshotState.selectedLeadId,
@@ -2369,11 +2515,7 @@ function LeadListContent({
         snapshotPayload.autoAnalyzeCompletedToken ||
         currentPayload.autoAnalyzeCompletedToken ||
         null,
-      autoAnalyzeEnabled:
-        prev.autoAnalyzeEnabled ??
-        snapshotPayload.autoAnalyzeEnabled ??
-        currentPayload.autoAnalyzeEnabled ??
-        true,
+      autoAnalyzeEnabled: false,
       filter: prev.filter || snapshotPayload.filter || currentPayload.filter || "",
       sortBy: prev.sortBy || snapshotPayload.sortBy || currentPayload.sortBy || "score",
       sortOrder:
@@ -2429,10 +2571,7 @@ function LeadListContent({
         nextAutoAnalyzeCompletedToken !== undefined
           ? nextAutoAnalyzeCompletedToken
           : autoAnalyzeCompletedToken,
-      autoAnalyzeEnabled:
-        nextAutoAnalyzeEnabled !== undefined
-          ? nextAutoAnalyzeEnabled
-          : autoAnalyzeEnabled,
+      autoAnalyzeEnabled: false,
       filter: nextFilter ?? filter,
       processedDetails: canonical.processedDetails,
       selectedLeadId: canonical.selectedLeadId,
@@ -3448,6 +3587,12 @@ function LeadListContent({
     signalFacts,
     analysisBundle
   );
+  const displayInstagramProfile = signalFacts ? getDisplayInstagramProfile(signalFacts) : null;
+  const displayYouTubeChannel = signalFacts ? getDisplayYouTubeChannel(signalFacts) : null;
+  const displayDoctorInstagramProfiles = signalFacts ? getDoctorInstagramProfiles(signalFacts) : [];
+  const displayDoctorFollowerTotal =
+    firstDefinedMetric(signalFacts?.doctor_followers_total) ??
+    displayDoctorInstagramProfiles.reduce((sum, profile) => sum + (profile.followers_count || 0), 0);
   const scoreNarrative = buildLeadScoreNarrative(inspectorLead, selectedLeadDetails);
   const proofExtraction = selectedLeadDetails?.proof?.extraction_data as Record<string, unknown> | undefined;
   const proofFacts = getCanonicalProofFacts(signalFacts, proofExtraction);
@@ -4086,8 +4231,10 @@ function LeadListContent({
                   <div className="rounded-md bg-zinc-100 p-2 dark:bg-zinc-900">
                     <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Instagram</div>
                     <div className="mt-1">
-                      {signalFacts.instagram_profile?.followers_count != null
-                        ? formatSocialCount(signalFacts.instagram_profile.followers_count, "followers")
+                      {displayInstagramProfile?.followers_count != null
+                        ? formatSocialCount(displayInstagramProfile.followers_count, "followers")
+                        : displayDoctorFollowerTotal > 0
+                          ? formatSocialCount(displayDoctorFollowerTotal, "doctor followers")
                         : signalFacts.instagram_present
                           ? "Present"
                           : "No"}
@@ -4099,8 +4246,8 @@ function LeadListContent({
                   <div className="rounded-md bg-zinc-100 p-2 dark:bg-zinc-900">
                     <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">YouTube</div>
                     <div className="mt-1">
-                      {signalFacts.youtube_channel?.subscriber_count != null
-                        ? formatSocialCount(signalFacts.youtube_channel.subscriber_count, "subs")
+                      {displayYouTubeChannel?.subscriber_count != null
+                        ? formatSocialCount(displayYouTubeChannel.subscriber_count, "subs")
                         : signalFacts.youtube_present
                           ? "Present"
                           : "No"}
@@ -4110,27 +4257,63 @@ function LeadListContent({
                     </div>
                   </div>
                 </div>
-                {(signalFacts.instagram_profile || signalFacts.youtube_channel) && (
+                {(displayInstagramProfile || displayYouTubeChannel || displayDoctorInstagramProfiles.length > 0) && (
                   <div className="mt-3 space-y-3">
-                    {signalFacts.instagram_profile && (
+                    {displayDoctorInstagramProfiles.length > 0 && (
+                      <div className="rounded-md bg-emerald-50 p-3 ring-1 ring-emerald-200 dark:bg-emerald-950/30 dark:ring-emerald-900">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="text-[10px] uppercase tracking-[0.16em] text-emerald-700 dark:text-emerald-300">Doctor social demand</div>
+                            <div className="mt-1 text-sm font-semibold text-emerald-900 dark:text-emerald-100">
+                              {displayDoctorFollowerTotal > 0
+                                ? `${formatSocialMetric(displayDoctorFollowerTotal)} doctor followers`
+                                : `${displayDoctorInstagramProfiles.length} doctor profile${displayDoctorInstagramProfiles.length === 1 ? "" : "s"}`}
+                            </div>
+                            <div className="mt-1 text-xs text-emerald-700/80 dark:text-emerald-300/80">
+                              Doctor-owned audience counts as demand proof, not just clinic branding.
+                            </div>
+                          </div>
+                        </div>
+                        <div className="mt-2 space-y-1 text-xs">
+                          {displayDoctorInstagramProfiles.map((profile, index) => (
+                            <div key={`${profile.username || profile.profile_url || index}`} className="flex items-center justify-between gap-3 rounded border border-emerald-200 px-2 py-1 dark:border-emerald-900">
+                              <div className="min-w-0">
+                                <div className="truncate font-medium">
+                                  {profile.doctor_name || profile.full_name || (profile.username ? `@${profile.username}` : "Doctor Instagram")}
+                                </div>
+                                {profile.profile_url && (
+                                  <a className="break-all text-blue-500 hover:underline" href={profile.profile_url} rel="noreferrer" target="_blank">
+                                    {profile.username ? `@${profile.username}` : profile.profile_url}
+                                  </a>
+                                )}
+                              </div>
+                              <div className="shrink-0 text-right font-semibold">
+                                {formatSocialMetric(profile.followers_count)}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {displayInstagramProfile && (
                       <div className="rounded-md bg-zinc-100 p-3 dark:bg-zinc-900">
                         <div className="flex items-start justify-between gap-3">
                           <div>
                             <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Instagram demand</div>
                             <div className="mt-1 text-sm font-medium">
-                              {signalFacts.instagram_profile.full_name ||
-                                (signalFacts.instagram_profile.username
-                                  ? `@${signalFacts.instagram_profile.username}`
+                              {displayInstagramProfile.full_name ||
+                                (displayInstagramProfile.username
+                                  ? `@${displayInstagramProfile.username}`
                                   : "Instagram profile")}
                             </div>
                             <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
                               {getFactSourceLabel(signalFacts, "instagram")}
                             </div>
                           </div>
-                          {signalFacts.instagram_profile.profile_url && (
+                          {displayInstagramProfile.profile_url && (
                             <a
                               className="text-xs text-blue-500 hover:underline"
-                              href={signalFacts.instagram_profile.profile_url}
+                              href={displayInstagramProfile.profile_url}
                               rel="noreferrer"
                               target="_blank"
                             >
@@ -4141,69 +4324,69 @@ function LeadListContent({
                         <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
                           <div className="rounded-md border border-zinc-200 p-2 dark:border-zinc-700">
                             <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Followers</div>
-                            <div className="mt-1">{formatSocialMetric(signalFacts.instagram_profile.followers_count)}</div>
+                            <div className="mt-1">{formatSocialMetric(displayInstagramProfile.followers_count)}</div>
                           </div>
                           <div className="rounded-md border border-zinc-200 p-2 dark:border-zinc-700">
                             <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Posts</div>
-                            <div className="mt-1">{formatSocialMetric(signalFacts.instagram_profile.posts_count)}</div>
+                            <div className="mt-1">{formatSocialMetric(displayInstagramProfile.posts_count)}</div>
                           </div>
                           <div className="rounded-md border border-zinc-200 p-2 dark:border-zinc-700">
                             <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Following</div>
-                            <div className="mt-1">{formatSocialMetric(signalFacts.instagram_profile.following_count)}</div>
+                            <div className="mt-1">{formatSocialMetric(displayInstagramProfile.following_count)}</div>
                           </div>
                           <div className="rounded-md border border-zinc-200 p-2 dark:border-zinc-700">
                             <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Recent posts</div>
-                            <div className="mt-1">{formatSocialMetric(signalFacts.instagram_profile.latest_post_count)}</div>
+                            <div className="mt-1">{formatSocialMetric(displayInstagramProfile.latest_post_count)}</div>
                           </div>
                         </div>
                         <div className="mt-2 text-sm text-zinc-500">
                           {buildInstagramBehaviorSummary(signalFacts)}
                         </div>
-                        {(signalFacts.instagram_profile.business_category ||
-                          signalFacts.instagram_profile.email ||
-                          signalFacts.instagram_profile.external_url) && (
+                        {(displayInstagramProfile.business_category ||
+                          displayInstagramProfile.email ||
+                          displayInstagramProfile.external_url) && (
                           <div className="mt-2 space-y-1 text-sm text-zinc-500">
-                            {signalFacts.instagram_profile.business_category && (
-                              <div>Category: {signalFacts.instagram_profile.business_category}</div>
+                            {displayInstagramProfile.business_category && (
+                              <div>Category: {displayInstagramProfile.business_category}</div>
                             )}
-                            {signalFacts.instagram_profile.email && (
-                              <div className="break-all">Email: {signalFacts.instagram_profile.email}</div>
+                            {displayInstagramProfile.email && (
+                              <div className="break-all">Email: {displayInstagramProfile.email}</div>
                             )}
-                            {signalFacts.instagram_profile.external_url && (
+                            {displayInstagramProfile.external_url && (
                               <a
                                 className="break-all text-blue-500 hover:underline"
-                                href={signalFacts.instagram_profile.external_url}
+                                href={displayInstagramProfile.external_url}
                                 rel="noreferrer"
                                 target="_blank"
                               >
-                                {signalFacts.instagram_profile.external_url}
+                                {displayInstagramProfile.external_url}
                               </a>
                             )}
                           </div>
                         )}
-                        {signalFacts.instagram_profile.bio && (
+                        {displayInstagramProfile.bio && (
                           <div className="mt-2 rounded-md border border-zinc-200 p-2 text-sm text-zinc-500 dark:border-zinc-700">
-                            {signalFacts.instagram_profile.bio}
+                            {displayInstagramProfile.bio}
                           </div>
                         )}
                       </div>
                     )}
-                    {signalFacts.youtube_channel && (
+                    {displayYouTubeChannel && (
                       <div className="rounded-md bg-zinc-100 p-3 dark:bg-zinc-900">
                         <div className="flex items-start justify-between gap-3">
                           <div>
                             <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">YouTube demand</div>
                             <div className="mt-1 text-sm font-medium">
-                              {signalFacts.youtube_channel.channel_name || "YouTube channel"}
+                              {displayYouTubeChannel.channel_name || "YouTube channel"}
                             </div>
                             <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
                               {getFactSourceLabel(signalFacts, "youtube")}
                             </div>
                           </div>
-                          {signalFacts.youtube_channel.channel_url && (
+                          {displayYouTubeChannel.channel_url && (
                             <a
                               className="text-xs text-blue-500 hover:underline"
-                              href={signalFacts.youtube_channel.channel_url}
+                              href={displayYouTubeChannel.channel_url}
                               rel="noreferrer"
                               target="_blank"
                             >
@@ -4214,19 +4397,19 @@ function LeadListContent({
                         <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
                           <div className="rounded-md border border-zinc-200 p-2 dark:border-zinc-700">
                             <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Subscribers</div>
-                            <div className="mt-1">{formatSocialMetric(signalFacts.youtube_channel.subscriber_count)}</div>
+                            <div className="mt-1">{formatSocialMetric(displayYouTubeChannel.subscriber_count)}</div>
                           </div>
                           <div className="rounded-md border border-zinc-200 p-2 dark:border-zinc-700">
                             <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Total views</div>
-                            <div className="mt-1">{formatSocialMetric(signalFacts.youtube_channel.total_views)}</div>
+                            <div className="mt-1">{formatSocialMetric(displayYouTubeChannel.total_views)}</div>
                           </div>
                           <div className="rounded-md border border-zinc-200 p-2 dark:border-zinc-700">
                             <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Videos</div>
-                            <div className="mt-1">{formatSocialMetric(signalFacts.youtube_channel.total_videos)}</div>
+                            <div className="mt-1">{formatSocialMetric(displayYouTubeChannel.total_videos)}</div>
                           </div>
                           <div className="rounded-md border border-zinc-200 p-2 dark:border-zinc-700">
                             <div className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">Avg recent views</div>
-                            <div className="mt-1">{formatSocialMetric(signalFacts.youtube_channel.avg_recent_views)}</div>
+                            <div className="mt-1">{formatSocialMetric(displayYouTubeChannel.avg_recent_views)}</div>
                           </div>
                         </div>
                         <div className="mt-2 text-sm text-zinc-500">
@@ -4489,7 +4672,7 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
       sortOrder: prev?.sortOrder ?? "desc",
       filter: prev?.filter ?? "",
       autoAnalyzeCompletedToken: prev?.autoAnalyzeCompletedToken ?? null,
-      autoAnalyzeEnabled: prev?.autoAnalyzeEnabled ?? false,
+      autoAnalyzeEnabled: false,
       selectedLeadId: prev?.selectedLeadId ?? null,
       processedDetails: prev?.processedDetails ?? {},
     }));
@@ -4510,7 +4693,7 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
           filter: payload.filter || prev.filter || "",
           autoAnalyzeCompletedToken:
             payload.autoAnalyzeCompletedToken || prev.autoAnalyzeCompletedToken || null,
-          autoAnalyzeEnabled: payload.autoAnalyzeEnabled ?? prev.autoAnalyzeEnabled ?? false,
+          autoAnalyzeEnabled: false,
           leads: dedupeLeadRows(
             mergeLeadRows(
               dedupeLeadRows(sanitizeLeadRows(prev?.leads || [])),
@@ -4563,8 +4746,7 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
               payload.autoAnalyzeCompletedToken ||
               currentPayload.autoAnalyzeCompletedToken ||
               null,
-            autoAnalyzeEnabled:
-              payload.autoAnalyzeEnabled ?? currentPayload.autoAnalyzeEnabled ?? false,
+            autoAnalyzeEnabled: false,
             filter: payload.filter || currentPayload.filter || "",
             processedDetails: mergedDetails,
             selectedLeadId:
@@ -4793,7 +4975,7 @@ export const leadListArtifact = new Artifact<"lead-list", LeadListMetadata>({
           );
           const nextContent = serializeLeadListPayload(nextLeads, {
             autoAnalyzeCompletedToken: baseMetadata.autoAnalyzeCompletedToken || null,
-            autoAnalyzeEnabled: baseMetadata.autoAnalyzeEnabled ?? false,
+            autoAnalyzeEnabled: false,
             filter: baseMetadata.filter || "",
             processedDetails: nextProcessedDetails,
             selectedLeadId: nextSelectedLeadId,

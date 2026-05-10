@@ -81,14 +81,13 @@ def test_cached_payload_marked_from_cache():
 
 def test_auto_analyze_default_off_in_lead_list():
     text = _read("frontend", "artifacts", "zrai", "lead-list", "client.tsx")
-    # The default value handed to React state must be false now.
-    assert "metadata?.autoAnalyzeEnabled ?? false" in text, (
-        "Auto-analyze must default to OFF so opening the canvas does not "
-        "trigger background re-runs that burn credits."
-    )
-    # The hydration helpers must also default to false to stop stale
-    # `true` defaults from old localStorage reviving.
-    assert "autoAnalyzeEnabled: payload.autoAnalyzeEnabled ?? false" in text
+    # The runtime flag is hard-disabled. Old saved canvases can contain
+    # autoAnalyzeEnabled=true, so the component must not read it back into the
+    # open-on-load processing effect.
+    assert "const autoAnalyzeEnabled = false" in text
+    assert "autoAnalyzeEnabled: false" in text
+    assert "autoAnalyzeEnabled: payload.autoAnalyzeEnabled" not in text
+    assert "metadata?.autoAnalyzeEnabled ??" not in text
     # Must NOT default to true anywhere via the `?? true` shortcut for the
     # auto-analyze flag specifically.
     assert "autoAnalyzeEnabled ?? true" not in text, (
