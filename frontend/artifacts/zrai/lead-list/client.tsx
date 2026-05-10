@@ -3215,7 +3215,7 @@ function LeadListContent({
     }
 
     clearProcessing([leadId]);
-    toast.success("Analysis is still running. Use Refresh truth in a moment.");
+    toast.success("Analysis is still running. Try Re-analyze in a moment.");
   };
 
   const analyzeSelectedLead = async (forceRefresh: boolean = true) => {
@@ -3772,7 +3772,7 @@ function LeadListContent({
                     : false;
                 })() && (
                   <div className="mt-2 text-xs text-zinc-500">
-                    Inspector is showing fresher backend truth. Use <span className="font-medium">Refresh truth</span> to sync the row.
+                    Inspector is showing fresher backend truth. Click <span className="font-medium">Re-analyze</span> on the row to sync.
                   </div>
                 )}
               {getLeadSummary(inspectorLead) && (
@@ -4383,10 +4383,27 @@ function LeadListContent({
                 )}
               </details>
             )}
-            <div className="flex flex-wrap gap-2">
+            <div className="sticky bottom-0 -mx-4 mt-4 flex flex-wrap items-center justify-end gap-2 border-zinc-200 border-t bg-zinc-50/95 px-4 py-3 backdrop-blur dark:border-zinc-800 dark:bg-zinc-900/95">
+              <button
+                className="inline-flex items-center gap-1.5 rounded-full border border-zinc-300 px-4 py-2 text-sm text-zinc-700 transition-all duration-200 ease-out hover:-translate-y-0.5 hover:border-zinc-400 hover:bg-white hover:shadow-sm active:translate-y-0 active:shadow-none disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                data-testid="inspector-copy-summary-btn"
+                disabled={!inspectorLead}
+                onClick={() => {
+                  navigator.clipboard.writeText(
+                    formatLeadForClipboard(inspectorLead, selectedLeadDetails || null)
+                  );
+                  toast.success("Lead summary copied.");
+                }}
+                title="Copy a clean text summary of this lead to your clipboard."
+                type="button"
+              >
+                <span aria-hidden>⧉</span>
+                <span>Copy</span>
+              </button>
               {isSelectedLeadProcessing ? (
                 <button
-                  className="rounded-md bg-red-600 px-3 py-2 text-sm text-white transition hover:bg-red-500"
+                  className="inline-flex items-center gap-2 rounded-full bg-red-600 px-5 py-2 text-sm font-semibold tracking-wide text-white shadow-sm transition-all duration-200 ease-out hover:-translate-y-0.5 hover:bg-red-500 hover:shadow-md active:translate-y-0 active:shadow-sm"
+                  data-testid="inspector-stop-analyze-btn"
                   onClick={() => {
                     if (!selectedLead?.id) {
                       return;
@@ -4395,47 +4412,56 @@ function LeadListContent({
                   }}
                   type="button"
                 >
-                  Stop analyze
+                  <span aria-hidden className="inline-block size-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                  <span>Stop</span>
                 </button>
               ) : (
-                <button
-                  className="rounded-md bg-emerald-600 px-3 py-2 text-sm text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={isSelectedLeadProcessing}
-                  onClick={() => void analyzeSelectedLead(true)}
-                  type="button"
-                >
-                  Analyze lead
-                </button>
-              )}
-              <button
-                className="rounded-md border border-zinc-300 px-3 py-2 text-sm transition hover:bg-zinc-100 dark:border-zinc-600 dark:hover:bg-zinc-900"
-                disabled={!inspectorLead}
-                onClick={() => {
-                  navigator.clipboard.writeText(
-                    formatLeadForClipboard(inspectorLead, selectedLeadDetails || null)
+                (() => {
+                  const isLeadAnalyzed =
+                    inspectorLead?.analysis_state === "analyzed" ||
+                    inspectorLead?.score_kind === "final_score";
+                  const isBusy = isRefreshingTruth;
+                  return (
+                    <button
+                      className={`group inline-flex items-center gap-2 rounded-full px-5 py-2 text-sm font-semibold tracking-wide shadow-sm transition-all duration-200 ease-out
+                        disabled:cursor-not-allowed disabled:opacity-90
+                        ${isBusy
+                          ? "bg-emerald-600 text-white"
+                          : isLeadAnalyzed
+                            ? "bg-white text-emerald-700 ring-1 ring-emerald-200 hover:-translate-y-0.5 hover:bg-emerald-50 hover:shadow-md hover:ring-emerald-300 active:translate-y-0 dark:bg-zinc-900 dark:text-emerald-300 dark:ring-emerald-900 dark:hover:bg-emerald-950/40"
+                            : "bg-emerald-600 text-white hover:-translate-y-0.5 hover:bg-emerald-500 hover:shadow-md active:translate-y-0 active:shadow-sm animate-[zrai-pulse-subtle_2.4s_ease-in-out_infinite]"}
+                      `}
+                      data-testid="inspector-analyze-btn"
+                      disabled={isBusy || !inspectorLead}
+                      onClick={() => void analyzeSelectedLead(isLeadAnalyzed)}
+                      title={
+                        isBusy
+                          ? "Re-analyzing this lead..."
+                          : isLeadAnalyzed
+                            ? "Re-run the full pipeline on this lead. Costs credits. Use only when data is stale."
+                            : "Run analysis: Maps, doctors, social, scoring, contacts. Stored after - won't re-run on next open."
+                      }
+                      type="button"
+                    >
+                      {isBusy ? (
+                        <>
+                          <span aria-hidden className="inline-block size-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                          <span>Analyzing…</span>
+                        </>
+                      ) : isLeadAnalyzed ? (
+                        <>
+                          <span aria-hidden>↻</span>
+                          <span>Re-analyze</span>
+                        </>
+                      ) : (
+                        <>
+                          <span aria-hidden className="inline-block size-1.5 rounded-full bg-white/90 transition-transform duration-200 group-hover:scale-150" />
+                          <span>Analyze</span>
+                        </>
+                      )}
+                    </button>
                   );
-                  toast.success("Live lead summary copied.");
-                }}
-                type="button"
-              >
-                Copy summary
-              </button>
-              <button
-                className="rounded-md border border-zinc-300 px-3 py-2 text-sm transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-600 dark:hover:bg-zinc-900"
-                disabled={isRefreshingTruth || isSelectedLeadProcessing}
-                onClick={() => void refreshSelectedLeadTruth()}
-                type="button"
-              >
-                {isRefreshingTruth ? "Refreshing..." : "Refresh truth"}
-              </button>
-              {!!processingIds.length && !isSelectedLeadProcessing && (
-                <button
-                  className="rounded-md border border-red-500/50 px-3 py-2 text-sm text-red-300 transition hover:bg-red-500/10"
-                  onClick={() => stopProcessing()}
-                  type="button"
-                >
-                  Stop all
-                </button>
+                })()
               )}
             </div>
             {isSelectedLeadProcessing && (
