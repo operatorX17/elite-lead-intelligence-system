@@ -233,6 +233,44 @@ Response:
 
 Set `auto_create_session_link` to `true` only when Palate wants this same request to create a WhatsApp session link.
 
+## Dynamic Order, Payment, And Review Links
+
+Palate remains the source of truth for menu, cart, bill, payment, and review screens. This backend does not create those pages. It accepts the final dynamic URLs from Palate, stores them against the order context, wraps them in tracked links, and sends them on WhatsApp.
+
+Supported dynamic fields on `POST /api/v1/captain/orders`:
+
+```text
+menu_url
+order_url
+bill_url
+payment_url
+feedback_url
+dish_reviews[].review_url
+```
+
+The same endpoint is an upsert by `external_order_id`, so Palate can first create the order with partial context and later call it again with payment/review URLs when those become available.
+
+Message endpoints use the latest stored order context:
+
+```text
+POST /api/v1/orders/{order_id}/send-whatsapp-summary
+POST /api/v1/orders/{order_id}/send-bill
+POST /api/v1/orders/{order_id}/send-feedback
+```
+
+Razorpay webhooks map back to orders through:
+
+```json
+{
+  "notes": {
+    "order_id": "<palate_whatsapp_order_uuid>",
+    "external_order_id": "<palate_external_order_id>"
+  }
+}
+```
+
+If a matching order has a verified WhatsApp phone, captured/paid Razorpay events send a payment-success WhatsApp message as a best-effort utility update. Failed payment events send a payment-pending message when a retry link exists.
+
 ## Provider Switch
 
 Use one provider at runtime:
@@ -373,6 +411,19 @@ Run against deployed backend:
 ```bash
 python -m app.preflight --base-url https://your-public-api-domain.com
 ```
+
+Run the API smoke harness against a configured deployment:
+
+```bash
+python scripts/smoke_test_local.py \
+  --base-url https://your-public-api-domain.com \
+  --api-key <internal_api_key> \
+  --meta-verify-token <meta_verify_token> \
+  --meta-app-secret <meta_app_secret> \
+  --razorpay-webhook-secret <razorpay_webhook_secret>
+```
+
+This smoke harness exercises health, readiness, captain order upsert, session-link creation, simulated WhatsApp webhook verification, session polling, direct send, template send, order summary, bill, feedback, and Razorpay webhook mapping.
 
 ## Security Notes
 

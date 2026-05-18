@@ -104,7 +104,7 @@ def _apply_tracking_context(
     order.payment_url = _maybe_track_url(db, base_url, captain_request.payment_url, stage="payment", action="open_payment", order=order)
     order.feedback_url = _maybe_track_url(db, base_url, captain_request.feedback_url, stage="feedback", action="open_feedback", order=order)
 
-    notes = dict(captain_request.notes)
+    notes = {**(order.notes or {}), **captain_request.notes}
     if captain_request.dish_reviews:
         tracked_reviews: list[dict[str, object]] = []
         for index, item in enumerate(captain_request.dish_reviews, start=1):

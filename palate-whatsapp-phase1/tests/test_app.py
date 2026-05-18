@@ -467,6 +467,111 @@ def test_captain_order_wraps_urls_and_dish_review_links(tmp_path: Path) -> None:
         assert notes["dish_reviews"][0]["original_review_url"] == "https://palate.test/review/dish_1?order_id=ORD-TRACK-1"
 
 
+def test_captain_order_update_preserves_existing_dynamic_review_links(tmp_path: Path) -> None:
+    client, settings = create_test_client(tmp_path)
+    payload = {
+        "external_order_id": "ORD-PRESERVE-1",
+        "external_customer_id": "CUST-PRESERVE-1",
+        "customer_name": "Tracked User",
+        "customer_phone": "+919333333333",
+        "restaurant_id": "rest-track",
+        "restaurant_name": "Tracked Bistro",
+        "total_amount": "450.00",
+        "payment_url": "https://palate.test/pay/ORD-PRESERVE-1",
+        "dish_reviews": [
+            {
+                "dish_id": "dish_1",
+                "dish_name": "Truffle Pasta",
+                "review_url": "https://palate.test/review/dish_1?order_id=ORD-PRESERVE-1",
+            }
+        ],
+    }
+    first_response = client.post("/api/v1/captain/orders", headers={"X-API-Key": "internal-test-key"}, json=payload)
+    assert first_response.status_code == 200
+    order_id = first_response.json()["order_id"]
+
+    update_response = client.post(
+        "/api/v1/captain/orders",
+        headers={"X-API-Key": "internal-test-key"},
+        json={**payload, "total_amount": "500.00", "dish_reviews": [], "notes": {"captain_note": "updated"}},
+    )
+    assert update_response.status_code == 200
+    assert update_response.json()["order_id"] == order_id
+
+    session_factory = get_session_factory(settings)
+    with session_factory() as db:
+        order = db.get(Order, uuid.UUID(order_id))
+        assert order is not None
+        assert str(order.total_amount) == "500.00"
+        assert order.notes["captain_note"] == "updated"
+        assert order.notes["dish_reviews"][0]["review_url"].startswith("http://testserver/r/")
+
+
+def test_razorpay_payment_success_sends_dynamic_payment_status_message(tmp_path: Path, monkeypatch) -> None:
+    client, settings = create_test_client(tmp_path)
+    sent_bodies: list[str] = []
+
+    async def fake_send_text_message(self, to_phone: str, body: str, preview_url: bool = False):
+        sent_bodies.append(body)
+        return {"messages": [{"id": "wamid.payment-success"}], "contacts": [{"input": to_phone}]}
+
+    monkeypatch.setattr("app.services.meta.MetaWhatsAppClient.send_text_message", fake_send_text_message)
+
+    order_response = client.post(
+        "/api/v1/captain/orders",
+        headers={"X-API-Key": "internal-test-key"},
+        json={
+            "external_order_id": "ORD-PAY-1",
+            "external_customer_id": "CUST-PAY-1",
+            "customer_name": "Paid User",
+            "customer_phone": "+919444444444",
+            "restaurant_id": "rest-pay",
+            "restaurant_name": "Payment Bistro",
+            "total_amount": "850.00",
+            "payment_url": "https://palate.test/pay/ORD-PAY-1",
+            "feedback_url": "https://palate.test/feedback/ORD-PAY-1",
+        },
+    )
+    assert order_response.status_code == 200
+    order_id = order_response.json()["order_id"]
+
+    session_factory = get_session_factory(settings)
+    with session_factory() as db:
+        db.execute(
+            text("UPDATE customers SET phone_verified_at = CURRENT_TIMESTAMP WHERE phone_e164 = :phone"),
+            {"phone": "+919444444444"},
+        )
+        db.commit()
+
+    payload = {
+        "event": "payment.captured",
+        "payload": {
+            "payment": {
+                "entity": {
+                    "id": "pay_dynamic_1",
+                    "amount": 85000,
+                    "currency": "INR",
+                    "order_id": "rzp_order_1",
+                    "notes": {"order_id": order_id, "external_order_id": "ORD-PAY-1"},
+                }
+            }
+        },
+    }
+    raw_body = json.dumps(payload).encode("utf-8")
+    signature = hmac.new(settings.razorpay_webhook_secret.get_secret_value().encode("utf-8"), raw_body, sha256).hexdigest()
+    response = client.post(
+        "/webhooks/payments/razorpay",
+        headers={"X-Razorpay-Signature": signature, "x-razorpay-event-id": "evt_dynamic_pay_1"},
+        content=raw_body,
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    assert len(sent_bodies) == 1
+    assert "Payment Bistro: payment received for order ORD-PAY-1." in sent_bodies[0]
+    assert "Paid amount: INR 850.00" in sent_bodies[0]
+    assert "Share feedback: http://testserver/r/" in sent_bodies[0]
+
+
 def test_tracking_summary_reports_verified_screen_funnel(tmp_path: Path, monkeypatch) -> None:
     client, settings = create_test_client(tmp_path)
 

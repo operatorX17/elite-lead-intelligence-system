@@ -22,9 +22,9 @@ from app.core.security import (
     verify_twilio_signature,
 )
 from app.db.models import Customer, MessageLog, Order, PaymentEvent, WebhookEvent, WhatsAppSession
-from app.services.dispatch import send_text_and_log
+from app.services.dispatch import resolve_target, send_text_and_log
 from app.services.first_session_message import compose_first_session_followup, should_send_first_session_welcome
-from app.services.orders import compose_post_verification_message
+from app.services.orders import compose_payment_failed_message, compose_payment_success_message, compose_post_verification_message
 from app.services.session_tokens import extract_session_token, hash_session_token
 from app.services.tracking import log_journey_event, log_session_verified
 
@@ -122,10 +122,13 @@ def _find_order_by_reference(db: Session, reference: str | None) -> Order | None
     if reference is None:
         return None
     try:
-        return db.get(Order, reference)
+        order = db.get(Order, reference)
+        if order is not None:
+            return order
     except Exception:
-        statement = select(Order).where(Order.external_order_id == reference)
-        return db.execute(statement).scalar_one_or_none()
+        pass
+    statement = select(Order).where(Order.external_order_id == reference)
+    return db.execute(statement).scalar_one_or_none()
 
 
 def _find_existing_customer_for_verified_sender(
@@ -508,7 +511,7 @@ async def receive_razorpay_webhook(
 
     payment_entity = ((payload.get("payload") or {}).get("payment") or {}).get("entity") or {}
     notes = payment_entity.get("notes") or {}
-    order = _find_order_by_reference(db, notes.get("order_id") or notes.get("external_order_id"))
+    order = _find_order_by_reference(db, notes.get("order_id")) or _find_order_by_reference(db, notes.get("external_order_id"))
 
     payment_event = PaymentEvent(
         provider="razorpay",
@@ -524,15 +527,36 @@ async def receive_razorpay_webhook(
     )
     db.add(payment_event)
 
+    payment_status_message: str | None = None
+    payment_event_type = payload.get("event")
+
     if order is not None and payment_event.amount is not None:
         order.amount_paid = payment_event.amount
-        if payload.get("event") in {"payment.captured", "order.paid"}:
+        if payment_event_type in {"payment.captured", "order.paid", "payment_link.paid"}:
             order.order_status = "paid"
+            payment_status_message = compose_payment_success_message(order)
             log_journey_event(
                 db,
                 event_type="payment_confirmed",
                 stage="payment",
-                action=payload.get("event"),
+                action=payment_event_type,
+                restaurant_id=order.restaurant_id,
+                order_id=order.id,
+                target_url=order.payment_url,
+                metadata={
+                    "provider": "razorpay",
+                    "payment_id": payment_event.payment_id,
+                    "amount": str(payment_event.amount),
+                },
+            )
+        elif payment_event_type in {"payment.failed", "payment_link.cancelled"}:
+            order.order_status = "payment_failed"
+            payment_status_message = compose_payment_failed_message(order)
+            log_journey_event(
+                db,
+                event_type="payment_failed",
+                stage="payment",
+                action=payment_event_type,
                 restaurant_id=order.restaurant_id,
                 order_id=order.id,
                 target_url=order.payment_url,
@@ -546,5 +570,38 @@ async def receive_razorpay_webhook(
     webhook_event.status = "processed"
     webhook_event.processed_at = _now_utc()
     db.commit()
+
+    if order is not None and payment_status_message:
+        try:
+            to_phone, customer, _, whatsapp_session = resolve_target(
+                db,
+                to_phone=None,
+                customer_id=order.customer_id,
+                order_id=order.id,
+                session_id=None,
+                require_verified=True,
+            )
+            await send_text_and_log(
+                db,
+                settings,
+                to_phone=to_phone,
+                body=payment_status_message,
+                preview_url=True,
+                customer=customer,
+                order=order,
+                whatsapp_session=whatsapp_session,
+            )
+        except AppError as exc:
+            log_journey_event(
+                db,
+                event_type="payment_message_skipped",
+                stage="payment",
+                action=payment_event_type,
+                restaurant_id=order.restaurant_id,
+                order_id=order.id,
+                target_url=order.payment_url,
+                metadata={"reason": exc.code},
+            )
+            db.commit()
 
     return {"status": "ok", "payment_event_id": str(payment_event.id)}

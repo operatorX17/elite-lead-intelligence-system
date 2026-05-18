@@ -70,6 +70,13 @@ def main() -> int:
             "payment_url": "https://pay.palate.example/ORD-SMOKE-1001",
             "feedback_url": "https://app.palate.example/feedback/ORD-SMOKE-1001",
             "notes": {"table": "T7"},
+            "dish_reviews": [
+                {
+                    "dish_id": "dish_smoke_pasta",
+                    "dish_name": "Truffle Pasta",
+                    "review_url": "https://app.palate.example/review/dish_smoke_pasta?order_id=ORD-SMOKE-1001",
+                }
+            ],
             "line_items": [
                 {"name": "Truffle Pasta", "quantity": 2},
                 {"name": "Tiramisu", "quantity": 1},
@@ -190,6 +197,30 @@ def main() -> int:
         )
         send_template.raise_for_status()
         results["send_template"] = send_template.json()
+
+        summary_send = client.post(
+            f"/api/v1/orders/{order_id}/send-whatsapp-summary",
+            headers=private_headers,
+            json={"preview_url": True},
+        )
+        summary_send.raise_for_status()
+        results["send_order_summary"] = summary_send.json()
+
+        bill_send = client.post(
+            f"/api/v1/orders/{order_id}/send-bill",
+            headers=private_headers,
+            json={"preview_url": True},
+        )
+        bill_send.raise_for_status()
+        results["send_bill"] = bill_send.json()
+
+        feedback_send = client.post(
+            f"/api/v1/orders/{order_id}/send-feedback",
+            headers=private_headers,
+            json={"preview_url": True},
+        )
+        feedback_send.raise_for_status()
+        results["send_feedback"] = feedback_send.json()
 
         razorpay_payload = {
             "entity": "event",
