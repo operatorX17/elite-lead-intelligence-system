@@ -264,13 +264,14 @@ def test_capture_anywhere_session_without_order_creates_verified_customer(tmp_pa
 def test_first_session_sends_welcome_and_one_delayed_followup(tmp_path: Path, monkeypatch) -> None:
     client, settings = create_test_client(tmp_path)
 
-    calls = {"bodies": []}
+    calls = {"bodies": [], "sleeps": []}
 
     async def fake_send_text_message(self, to_phone: str, body: str, preview_url: bool = False):
         calls["bodies"].append(body)
         return {"messages": [{"id": f"wamid.followup-{len(calls['bodies'])}"}], "contacts": [{"input": to_phone}]}
 
     async def fake_sleep(_seconds: float) -> None:
+        calls["sleeps"].append(_seconds)
         return None
 
     monkeypatch.setattr("app.services.meta.MetaWhatsAppClient.send_text_message", fake_send_text_message)
@@ -299,6 +300,7 @@ def test_first_session_sends_welcome_and_one_delayed_followup(tmp_path: Path, mo
     assert "you rate the dish, not the restaurant" not in calls["bodies"][0]
     assert "you rate the dish, not the restaurant" in calls["bodies"][1]
     assert len(calls["bodies"]) == 2
+    assert calls["sleeps"] == [10]
 
 
 def test_session_link_stores_palate_screen_context_metadata(tmp_path: Path) -> None:

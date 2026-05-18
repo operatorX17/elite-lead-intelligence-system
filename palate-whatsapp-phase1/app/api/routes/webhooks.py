@@ -30,7 +30,7 @@ from app.services.tracking import log_journey_event, log_session_verified
 
 router = APIRouter(tags=["webhooks"])
 
-FIRST_SESSION_FOLLOWUP_DELAY_SECONDS = 3
+FIRST_SESSION_FOLLOWUP_DELAY_SECONDS = 10
 
 
 def _as_utc(value: datetime | None) -> datetime | None:

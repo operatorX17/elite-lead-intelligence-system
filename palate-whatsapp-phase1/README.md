@@ -16,7 +16,8 @@ Included:
 - Twilio WhatsApp adapter for testing or fallback provider use
 - Verified WhatsApp sender phone capture
 - Customer/session/order/restaurant mapping
-- Immediate first-session welcome/menu WhatsApp message after verification
+- First-session welcome/menu WhatsApp message after verification
+- One short separate first-session follow-up message after the menu link
 - Order summary, bill/payment, payment success/failure, and feedback/review message helpers
 - Razorpay webhook signature verification and event dedupe
 - Internal API key protection for private endpoints
@@ -65,7 +66,7 @@ Content-Type: application/json
 6. Backend extracts the `PALATE_XXXXXXXX` token and matches the stored hash.
 7. Backend links phone, customer, session, restaurant, and order context.
 8. Backend marks the session verified.
-9. Backend sends the immediate welcome/menu or order-context message.
+9. Backend sends the welcome/menu or order-context message.
 10. Palate polls `GET /api/v1/whatsapp/sessions/{session_id}` and saves `verified_phone`.
 
 ## Exact First-Session Messages
@@ -77,18 +78,22 @@ Start my Palate session and show me <Restaurant>'s menu
 Token: PALATE_XXXXXXXX
 ```
 
-Immediate backend reply after successful verification on menu/landing flow:
+First backend reply after successful verification on menu/landing flow:
 
 ```text
 Welcome to Palate.
 Here is <Restaurant>'s menu. Tap any dish to leave a review:
 <menu_url>
+```
 
+Separate short follow-up message:
+
+```text
 One thing that makes us different: you rate the dish, not the restaurant.
 Because one place can have a brilliant dal and a forgettable paneer, and you deserve to know which is which.
 ```
 
-No delayed message sequence is part of this Phase 1 package.
+No long timed onboarding automation sequence is part of this Phase 1 package.
 
 ## Main Endpoints
 
