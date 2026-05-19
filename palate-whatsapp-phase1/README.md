@@ -4,6 +4,8 @@ Lean FastAPI backend for Palate WhatsApp verification, verified phone capture, s
 
 This project is intentionally a backend/integration layer. Palate continues to own the web app screens, menu, cart, payment page, review page, and production hosting.
 
+Final handover, go-live support boundary, and Phase 2 separation are documented in [`PHASE1_FINAL_HANDOVER_AND_SUPPORT.md`](./PHASE1_FINAL_HANDOVER_AND_SUPPORT.md).
+
 ## Current Scope
 
 Included:
