@@ -278,6 +278,16 @@ Secrets must be stored in the hosting provider's secret manager or environment v
 
 After Phase 1 handover/go-live, support is included for 10 calendar days for the agreed Phase 1 implementation.
 
+Support is limited to the delivered Phase 1 WhatsApp backend scope. It is not an open-ended product, operations, or strategy support arrangement.
+
+Default support window:
+
+```text
+6:00 PM - 7:00 PM IST on working days during the 10-day support period
+```
+
+For urgent go-live blockers directly related to the delivered Phase 1 backend, support can be handled outside this window on a best-effort basis during the same 10-day period.
+
 Support includes:
 
 - Setup clarification.
@@ -287,6 +297,7 @@ Support includes:
 - WhatsApp delivery checks for the implemented onboarding flow.
 - Fixes for issues directly related to the delivered Phase 1 backend flow.
 - Guidance for running preflight/smoke tests.
+- Clarification on existing endpoint payloads and expected responses.
 
 Support does not include:
 
@@ -300,6 +311,8 @@ Support does not include:
 - Payment gateway development inside Palate.
 - Review/camera/photo upload development inside Palate.
 - Ongoing operational support beyond the support window.
+- Daily meetings or open-ended coordination unrelated to Phase 1 backend defects/setup.
+- Product redesign, new flow design, or new commercial planning.
 
 Any additional feature work after Phase 1 should be scoped separately before implementation.
 
