@@ -280,13 +280,17 @@ After Phase 1 handover/go-live, support is included for 10 calendar days for the
 
 Support is limited to the delivered Phase 1 WhatsApp backend scope. It is not an open-ended product, operations, or strategy support arrangement.
 
-Default support window:
+Support availability:
 
 ```text
-6:00 PM - 7:00 PM IST on working days during the 10-day support period
+Mutually scheduled support slots during the 10-day support period.
 ```
 
-For urgent go-live blockers directly related to the delivered Phase 1 backend, support can be handled outside this window on a best-effort basis during the same 10-day period.
+Support calls should be booked only when needed for Phase 1 setup, testing, bugs, or go-live blockers. Each support call should be limited to 45 minutes unless both sides agree otherwise.
+
+Support effort is capped to reasonable Phase 1 issue resolution and clarification. It is not a daily standing commitment, full-time availability, or open-ended product consultation.
+
+For urgent go-live blockers directly related to the delivered Phase 1 backend, support can be handled on a best-effort basis during the same 10-day period.
 
 Support includes:
 
